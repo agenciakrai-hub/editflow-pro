@@ -1,74 +1,74 @@
-// Exposure engine (wedding-raw-ai) — computes the 13 basic adjustments from a
-// photometric analysis of the photo. Self-contained (no cross-module imports)
-// so the editor module stays isolated and testable on its own.
+// Editor module — IA editing motor (wedding-raw-ai two-layer architecture).
+//  Tool 1 (IA, no color): technical baseline (computeTechnicalBaseline from real
+//    photometric stats) + contextual IA delta via the rawAiStudioAnalyze backend.
+//    Only touches tone/presence/sharpness (Exposure/Contrast/Highlights/Shadows/
+//    Whites/Blacks/Vibrance/Saturation/Clarity/Sharpness). Never WB, curves, HSL.
+//  Tag names (Lightroom crs) <-> flat keys used by the editor UI.
+// CSS preview helpers (adjustmentsToCssFilter / cropToCssTransform) kept intact.
+import { base44 } from "@/api/base44Client";
+import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis.js";
+import { computeTechnicalBaseline } from "@/lib/rawaistudio/exposureEngine.js";
 
-const TARGET_LUMA = 0.5;
+// Lightroom crs tag -> editor flat key.
+const TAG_TO_FLAT = {
+  Exposure2012: "exposure",
+  Contrast2012: "contrast",
+  Highlights2012: "highlights",
+  Shadows2012: "shadows",
+  Whites2012: "whites",
+  Blacks2012: "blacks",
+  Vibrance: "vibrance",
+  Saturation: "saturation",
+  Clarity2012: "clarity",
+  Sharpness: "sharpness",
+};
 
-async function analyzeFromUrl(url) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = async () => {
-      const maxDim = 256;
-      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
-      const w = Math.max(1, Math.round(img.naturalWidth * scale));
-      const h = Math.max(1, Math.round(img.naturalHeight * scale));
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(img, 0, 0, w, h);
-      const { data } = ctx.getImageData(0, 0, w, h);
-      const n = w * h;
-      let sum = 0, varSum = 0, sharpSum = 0, sharpN = 0;
-      const gray = new Float32Array(n);
-      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-        const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-        gray[p] = lum;
-        sum += lum;
-      }
-      const mean = sum / n;
-      for (let p = 0; p < n; p++) varSum += (gray[p] - mean) ** 2;
-      const std = Math.sqrt(varSum / n);
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
-          const idx = y * w + x;
-          const lap = 4 * gray[idx] - gray[idx - 1] - gray[idx + 1] - gray[idx - w] - gray[idx + w];
-          sharpSum += lap * lap;
-          sharpN++;
-        }
-      }
-      resolve({ meanLuminance: mean / 255, contrast: std / 128, sharpness: sharpN ? sharpSum / sharpN : 0 });
-    };
-    img.onerror = () => resolve({ meanLuminance: 0.5, contrast: 0.5, sharpness: 0 });
-    img.src = url;
-  });
-}
+const ENABLED_TAGS = Object.keys(TAG_TO_FLAT);
 
-export async function computeAutoAdjustments(photo) {
-  let metrics = { meanLuminance: 0.5, contrast: 0.5, sharpness: 0 };
-  if (photo.file_url || photo.thumbnail_url) {
-    metrics = await analyzeFromUrl(photo.file_url || photo.thumbnail_url);
+async function urlToBase64(url) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result).split(",")[1]);
+      r.onerror = reject;
+      r.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
   }
-
-  return {
-    exposure: clamp((TARGET_LUMA - metrics.meanLuminance) * 200),
-    contrast: clamp((0.5 - metrics.contrast) * 120),
-    highlights: clamp(metrics.meanLuminance > 0.6 ? -(metrics.meanLuminance - 0.6) * 200 : 10),
-    shadows: clamp(metrics.meanLuminance < 0.4 ? (0.4 - metrics.meanLuminance) * 180 : 8),
-    whites: clamp(metrics.meanLuminance > 0.65 ? -15 : 5),
-    blacks: clamp(metrics.meanLuminance < 0.4 ? 12 : -4),
-    temperature: clamp((metrics.meanLuminance - TARGET_LUMA) * -30),
-    tint: 0,
-    vibrance: clamp(15 - metrics.contrast * 20),
-    saturation: clamp(5),
-    clarity: clamp(8 + metrics.sharpness / 60),
-    sharpness: clamp(20 + metrics.sharpness / 40, 0, 100),
-  };
 }
 
-function clamp(v, min = -100, max = 100) {
-  return Math.round(Math.max(min, Math.min(max, v)));
+// Computes the IA develop layer for one photo. Returns ONLY the 10 flat tone/
+// presence/sharpness keys — never temperature/tint/color (those come from the
+// uploaded Lightroom preset, the second tool).
+export async function computeAutoAdjustments(photo, precisionMode = "balanced") {
+  const url = photo?.file_url || photo?.thumbnail_url;
+  const base64 = url ? await urlToBase64(url) : null;
+  const out = {};
+
+  if (base64) {
+    try {
+      const stats = await analyzePhotometrics(base64);
+      const baseline = computeTechnicalBaseline(stats, precisionMode);
+      const id = String(photo.id ?? "0");
+      const res = await base44.functions.invoke("rawAiStudioAnalyze", {
+        photos: [{ id, preview_base64: base64, baseline: baseline.values, technical_confidence: baseline.confidence }],
+        enabled_params: ENABLED_TAGS,
+        preferences: {},
+        precision_mode: precisionMode,
+      });
+      const data = res?.data ?? res;
+      const vals = data?.results?.[id] || {};
+      for (const [tag, flat] of Object.entries(TAG_TO_FLAT)) {
+        if (typeof vals[tag] === "number") out[flat] = vals[tag];
+      }
+    } catch {
+      // On failure, leave adjustments untouched (no fallback heuristic).
+    }
+  }
+  return out;
 }
 
 // CSS filter approximation for the before/after preview. Lightroom's tone

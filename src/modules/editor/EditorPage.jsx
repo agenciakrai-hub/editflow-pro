@@ -11,6 +11,7 @@ import { applyCreativeLayer } from "./utils/presetProfile.js";
 import ToolPanels from "./components/ToolPanels.jsx";
 import BeforeAfterPreview from "./components/BeforeAfterPreview.jsx";
 import PresetStrip from "./components/PresetStrip.jsx";
+import PresetUpload from "./components/PresetUpload.jsx";
 
 export default function EditorPage() {
   const navigate = useNavigate();
@@ -35,6 +36,11 @@ export default function EditorPage() {
   const applyPreset = (preset) => {
     setActivePreset(preset);
     setAdjustments((prev) => ({ ...applyCreativeLayer(prev, preset), curve: prev.curve, hsl: prev.hsl, grading: prev.grading, crop: prev.crop }));
+  };
+
+  // Tool 2 — color layer from an uploaded Lightroom .xmp preset (only temperature/tint).
+  const applyPresetColor = (color) => {
+    setAdjustments((prev) => ({ ...prev, ...color }));
   };
 
   const runAuto = async () => {
@@ -71,6 +77,8 @@ export default function EditorPage() {
       <BeforeAfterPreview photo={selected} adjustments={adjustments} showBefore={showBefore} onToggle={() => setShowBefore(!showBefore)} />
 
       <PresetStrip presets={presets} activePreset={activePreset} onApplyPreset={applyPreset} />
+
+      <PresetUpload onApplyColor={applyPresetColor} />
 
       <div className="bg-card rounded-2xl border border-border p-4">
         <label className="text-sm font-medium mb-1.5 block">Perfil de cámara</label>
