@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
-import { Menu, Bell, X, Home, Image as ImageIcon, Palette, Download, CreditCard, Users, LogOut, Sparkles } from "lucide-react";
+import { Menu, Bell, X, Home, Image as ImageIcon, Palette, Download, CreditCard, Users, LogOut, Sparkles, Plug } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const navItems = [
@@ -8,6 +8,7 @@ const navItems = [
   { to: "/seleccion", label: "Selección IA", icon: ImageIcon },
   { to: "/editor", label: "Editor", icon: Palette },
   { to: "/exportar", label: "Exportación XMP", icon: Download },
+  { to: "/lightroom", label: "Plugin Lightroom", icon: Plug },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },
   { to: "/admin", label: "Administración", icon: Users },
 ];
