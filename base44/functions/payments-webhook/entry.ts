@@ -143,29 +143,23 @@ async function handleOrderApproved(db: any, eventData: any): Promise<Response> {
   const buyerEmail: string | null = purchase.buyerEmail ?? extractBuyerEmail(order);
 
   // ===== APP-SPECIFIC =====
-  // Grant whatever the buyer paid for. This runs BEFORE we mark the purchase paid: if it
-  // throws or times out, the status stays "pending", so Wix's retry re-runs the grant
-  // rather than hitting the "already paid" short-circuit above and skipping it forever.
-  //
-  // It MUST therefore be idempotent — Wix can also deliver duplicates CONCURRENTLY, so the
-  // "pending" check above is NOT a lock: two invocations can both reach this block. Make every
-  // effect safe to run twice by keying it on a stable id (purchase.id / checkoutId), never
-  // blind-create/blind-send:
-  //   - unlock a feature:   await db.entities.User.update(purchase.appUserId, { plan: purchase.productId });  // update is naturally idempotent
-  //   - create entitlement: const existing = await db.entities.Entitlement.filter({ purchaseId: purchase.id });
-  //                         if (!existing.length) await db.entities.Entitlement.create({ purchaseId: purchase.id, ... });
-  //   - one-time side effects (email/webhook): guard them the same way — record a marker keyed
-  //     on purchase.id and skip if it already exists, so a duplicate delivery can't send twice.
-  //   - QUANTITY: for a multi-unit purchase grant `purchase.quantity` (seats/credits/items), not a
-  //     single unit — it's the validated count create-checkout charged for. Fixed-entitlement = 1.
-  //   - subscriptions:      subscriptionId is persisted automatically below, for later revoke.
-  //   - GRANT TARGET: use purchase.appUserId when set (the built-in `User` entity — there is no
-  //     `AppUser`). For an anonymous buyer (appUserId null) match `buyerEmail` (resolved above)
-  //     against User; User records CANNOT be created here (invite-only), so when no user matches,
-  //     grant to an Entitlement row keyed on the email and claim it when they sign up.
-  //   - Gate paid access on a WRITABLE field you set here (e.g. plan / has_paid on the user or an
-  //     Entitlement row) — NEVER on is_verified: it is platform-protected and cannot be set here,
-  //     even as service role, so gating access on it locks the paying buyer out.
+  // Grant: activate the subscription plan on the user's record.
+  // Signed-in buyer → update by appUserId. Anonymous buyer → match by email
+  // (they registered before paying, so a User row should exist).
+  if (purchase.appUserId) {
+    await db.entities.User.update(purchase.appUserId, {
+      plan: purchase.productId,
+      subscription_status: "active",
+    });
+  } else if (buyerEmail) {
+    const users = await db.entities.User.filter({ email: buyerEmail });
+    if (users?.[0]) {
+      await db.entities.User.update(users[0].id, {
+        plan: purchase.productId,
+        subscription_status: "active",
+      });
+    }
+  }
   // ===== END APP-SPECIFIC =====
 
   // Mark paid LAST, so "paid" always implies the grant above completed. The idempotency
@@ -217,10 +211,15 @@ async function handleSubscriptionEnded(db: any, eventData: any): Promise<Respons
   }
 
   // ===== APP-SPECIFIC =====
-  // Revoke whatever access the subscription granted (mirror of the grant). Runs BEFORE we
-  // mark the purchase canceled: if it throws, the status stays as-is so Wix's retry re-runs
-  // the revoke rather than hitting the "already canceled" short-circuit and leaving access on.
-  // Must be idempotent.
+  // Revoke: mark the user's subscription as canceled (access expires with the billing cycle).
+  if (purchase.appUserId) {
+    await db.entities.User.update(purchase.appUserId, { subscription_status: "canceled" });
+  } else if (purchase.buyerEmail) {
+    const users = await db.entities.User.filter({ email: purchase.buyerEmail });
+    if (users?.[0]) {
+      await db.entities.User.update(users[0].id, { subscription_status: "canceled" });
+    }
+  }
   // ===== END APP-SPECIFIC =====
 
   // Mark canceled LAST, so "canceled" always implies access was actually revoked.

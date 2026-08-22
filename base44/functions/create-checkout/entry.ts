@@ -74,26 +74,27 @@ Deno.serve(async (req: Request) => {
     // product identifier; look up the authoritative price here (a Product entity, a config map,
     // etc.). For a subscription, set `subscriptionInfo` (frequency/interval/billingCycles).
     const productId = String(body.productId ?? "");
-    // Quantity is buyer-controlled, so VALIDATE it server-side. Check the RAW value is a positive
-    // integer BEFORE using it — do NOT Math.trunc first, or a fractional POST (e.g. 1.9) silently
-    // passes as 1 and charges a quantity the UI never allowed. For a plan / fixed-entitlement product,
-    // hard-code `1` and ignore the body; for a genuine multi-unit product, also enforce YOUR own max.
-    const quantity = Number(body.quantity ?? 1);
-    if (!Number.isInteger(quantity) || quantity < 1) {
-      return new Response(JSON.stringify({ error: "Invalid quantity" }), { status: 400 });
+    // Fixed-entitlement subscription plans — one seat per purchase.
+    const quantity = 1;
+    // Server-side product catalog — authoritative prices, never trust the client.
+    const PLANS: Record<string, { name: string; price: string }> = {
+      starter: { name: "EditKR Starter", price: "19.00" },
+      pro: { name: "EditKR Pro", price: "49.00" },
+      studio: { name: "EditKR Studio", price: "99.00" },
+    };
+    const plan = PLANS[productId];
+    if (!plan) {
+      return new Response(JSON.stringify({ error: "Unknown plan" }), { status: 400 });
     }
-    // Example — replace with your real trusted product source:
-    //   const product = (await base44.asServiceRole.entities.Product.filter({ id: productId }))[0];
-    //   if (!product) return new Response(JSON.stringify({ error: "Unknown product" }), { status: 400 });
-    //   const productName = product.name; const price = String(product.price); const currency = product.currency ?? "USD";
-    const productName = "Purchase"; // TODO: from your trusted product source
-    const price = "0.00";           // TODO: authoritative per-unit price (major units), resolved server-side
-    const currency = "USD";
-    // For a SUBSCRIPTION set this to Wix's subscriptionInfo; leave null for a one-time payment.
-    const subscriptionInfo = null;
-    // Where Wix returns the buyer. Both MUST be real, PUBLICLY reachable routes in this app: the
-    // returning buyer is often anonymous, so a missing or login-gated route strands a paid customer.
-    // Match your router exactly — `/ThankYou`, not `/thank-you`.
+    const productName = plan.name;
+    const price = plan.price;
+    const currency = "EUR";
+    // Monthly auto-renewing subscription.
+    const subscriptionInfo = {
+      subscriptionSettings: { frequency: "MONTH" },
+      title: plan.name,
+      description: "Plan mensual EditKR Foto — post-producción con IA para fotógrafos",
+    };
     const thankYouPath = "/ThankYou";
     const postFlowPath = "/";
     // ===== END APP-SPECIFIC =====
