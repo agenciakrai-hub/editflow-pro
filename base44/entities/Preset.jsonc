@@ -1,0 +1,74 @@
+{
+  "name": "Preset",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "portrait",
+        "wedding",
+        "landscape",
+        "editorial",
+        "custom"
+      ],
+      "default": "custom"
+    },
+    "description": {
+      "type": "string"
+    },
+    "thumbnail_url": {
+      "type": "string"
+    },
+    "adjustments": {
+      "type": "object",
+      "properties": {
+        "exposure": {
+          "type": "number"
+        },
+        "contrast": {
+          "type": "number"
+        },
+        "highlights": {
+          "type": "number"
+        },
+        "shadows": {
+          "type": "number"
+        },
+        "whites": {
+          "type": "number"
+        },
+        "blacks": {
+          "type": "number"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "tint": {
+          "type": "number"
+        },
+        "vibrance": {
+          "type": "number"
+        },
+        "saturation": {
+          "type": "number"
+        },
+        "clarity": {
+          "type": "number"
+        },
+        "sharpness": {
+          "type": "number"
+        }
+      }
+    },
+    "is_public": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

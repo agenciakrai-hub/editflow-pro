@@ -1,0 +1,105 @@
+{
+  "name": "Photo",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string"
+    },
+    "file_url": {
+      "type": "string"
+    },
+    "thumbnail_url": {
+      "type": "string"
+    },
+    "filename": {
+      "type": "string"
+    },
+    "culling_status": {
+      "type": "string",
+      "enum": [
+        "unreviewed",
+        "selected",
+        "rejected",
+        "maybe"
+      ],
+      "default": "unreviewed"
+    },
+    "star_rating": {
+      "type": "number",
+      "default": 0
+    },
+    "color_label": {
+      "type": "string",
+      "enum": [
+        "none",
+        "red",
+        "yellow",
+        "green",
+        "blue",
+        "purple"
+      ],
+      "default": "none"
+    },
+    "edit_applied": {
+      "type": "boolean",
+      "default": false
+    },
+    "preset_id": {
+      "type": "string"
+    },
+    "adjustments": {
+      "type": "object",
+      "properties": {
+        "exposure": {
+          "type": "number"
+        },
+        "contrast": {
+          "type": "number"
+        },
+        "highlights": {
+          "type": "number"
+        },
+        "shadows": {
+          "type": "number"
+        },
+        "whites": {
+          "type": "number"
+        },
+        "blacks": {
+          "type": "number"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "tint": {
+          "type": "number"
+        },
+        "vibrance": {
+          "type": "number"
+        },
+        "saturation": {
+          "type": "number"
+        },
+        "clarity": {
+          "type": "number"
+        },
+        "sharpness": {
+          "type": "number"
+        }
+      }
+    },
+    "export_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "exported",
+        "failed"
+      ],
+      "default": "pending"
+    }
+  },
+  "required": [
+    "project_id",
+    "file_url"
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "name": "Project",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "event_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "selection",
+        "editing",
+        "exporting",
+        "completed"
+      ],
+      "default": "draft"
+    },
+    "photo_count": {
+      "type": "number",
+      "default": 0
+    },
+    "selected_count": {
+      "type": "number",
+      "default": 0
+    },
+    "edited_count": {
+      "type": "number",
+      "default": 0
+    },
+    "cover_url": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "title"
+  ]
+}
