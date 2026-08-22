@@ -33,14 +33,15 @@ const AuthenticatedApp = () => {
     );
   }
 
-  if (authError) {
-    if (authError.type === 'user_not_registered') {
-      return <UserNotRegisteredError />;
-    } else if (authError.type === 'auth_required') {
-      navigateToLogin();
-      return null;
-    }
+  if (authError?.type === 'user_not_registered') {
+    return <UserNotRegisteredError />;
   }
+
+  // For auth_required (private app, no session) we must NOT redirect here:
+  // that would reload the page and re-trigger the same error, looping forever
+  // and preventing the login/register pages from ever rendering. The Routes
+  // below already expose the auth pages publicly, and ProtectedRoute redirects
+  // unauthenticated users from protected routes to /login.
 
   return (
     <Routes>
