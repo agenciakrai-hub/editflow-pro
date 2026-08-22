@@ -5,10 +5,10 @@ import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 import { Image } from "@/components/ui/image";
 import { useAutoEdit } from "./hooks/useAutoEdit.js";
-import { DEFAULT_ADJUSTMENTS } from "./utils/paramDefs.js";
+import { DEFAULT_ADJUSTMENTS, ensureDefaults } from "./utils/paramDefs.js";
 import { CAMERA_PROFILES, DEFAULT_PROFILE } from "./utils/cameraProfiles.js";
 import { applyCreativeLayer } from "./utils/presetProfile.js";
-import ParameterPanel from "./components/ParameterPanel.jsx";
+import ToolPanels from "./components/ToolPanels.jsx";
 import BeforeAfterPreview from "./components/BeforeAfterPreview.jsx";
 import PresetStrip from "./components/PresetStrip.jsx";
 
@@ -25,32 +25,33 @@ export default function EditorPage() {
 
   const selectPhoto = (ph) => {
     setSelected(ph);
-    setAdjustments(ph.adjustments || DEFAULT_ADJUSTMENTS);
-    setBaseAdjustments(ph.adjustments || DEFAULT_ADJUSTMENTS);
+    const adj = ensureDefaults(ph.adjustments);
+    setAdjustments(adj);
+    setBaseAdjustments(adj);
+    setProfile(ph.adjustments?.cameraProfile || DEFAULT_PROFILE);
     setActivePreset(null);
-  };
-
-  const handleSlider = (key, value) => {
-    setAdjustments((prev) => ({ ...prev, [key]: value }));
   };
 
   const applyPreset = (preset) => {
     setActivePreset(preset);
-    setAdjustments(applyCreativeLayer(baseAdjustments, preset));
+    setAdjustments((prev) => ({ ...applyCreativeLayer(prev, preset), curve: prev.curve, hsl: prev.hsl, grading: prev.grading, crop: prev.crop }));
   };
 
   const runAuto = async () => {
     if (!selected) return;
     const auto = await autoEditOne(selected);
-    setBaseAdjustments(auto);
-    setAdjustments(activePreset ? applyCreativeLayer(auto, activePreset) : auto);
-    setSelected((prev) => ({ ...prev, adjustments: auto, edit_applied: true }));
+    const merged = ensureDefaults({ ...adjustments, ...auto });
+    setBaseAdjustments(merged);
+    setAdjustments(merged);
+    setSelected((prev) => ({ ...prev, adjustments: merged, edit_applied: true }));
     toast({ title: "Ajuste IA aplicado", description: selected.filename });
   };
 
   const save = async () => {
     if (!selected) return;
-    await base44.entities.Photo.update(selected.id, { adjustments, edit_applied: true });
+    const payload = { ...adjustments, cameraProfile: profile, edit_applied: true };
+    await base44.entities.Photo.update(selected.id, { adjustments: payload });
+    setSelected((prev) => ({ ...prev, adjustments: payload }));
     toast({ title: "Edición guardada", description: selected.filename });
   };
 
@@ -78,7 +79,7 @@ export default function EditorPage() {
         </select>
       </div>
 
-      <ParameterPanel adjustments={adjustments} onChange={handleSlider} />
+      <ToolPanels adjustments={adjustments} setAdjustments={setAdjustments} />
 
       {loading ? (
         <div className="flex gap-2 overflow-x-auto scrollbar-hide">{[...Array(4)].map((_, i) => <div key={i} className="w-16 h-16 bg-card rounded-lg animate-pulse shrink-0" />)}</div>

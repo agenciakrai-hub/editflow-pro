@@ -49,6 +49,7 @@
     },
     "adjustments": {
       "type": "object",
+      "additionalProperties": true,
       "properties": {
         "exposure": {
           "type": "number"
@@ -80,11 +81,147 @@
         "saturation": {
           "type": "number"
         },
+        "texture": {
+          "type": "number"
+        },
         "clarity": {
+          "type": "number"
+        },
+        "dehaze": {
           "type": "number"
         },
         "sharpness": {
           "type": "number"
+        },
+        "sharpRadius": {
+          "type": "number"
+        },
+        "sharpDetail": {
+          "type": "number"
+        },
+        "sharpMasking": {
+          "type": "number"
+        },
+        "noiseLuminance": {
+          "type": "number"
+        },
+        "noiseLumDetail": {
+          "type": "number"
+        },
+        "noiseContrast": {
+          "type": "number"
+        },
+        "colorNoise": {
+          "type": "number"
+        },
+        "colorDetail": {
+          "type": "number"
+        },
+        "colorSmoothness": {
+          "type": "number"
+        },
+        "distortion": {
+          "type": "number"
+        },
+        "chromaticAb": {
+          "type": "number"
+        },
+        "defringePurple": {
+          "type": "number"
+        },
+        "defringeGreen": {
+          "type": "number"
+        },
+        "lensVignette": {
+          "type": "number"
+        },
+        "lensVignetteMid": {
+          "type": "number"
+        },
+        "transformVertical": {
+          "type": "number"
+        },
+        "transformHorizontal": {
+          "type": "number"
+        },
+        "transformRotate": {
+          "type": "number"
+        },
+        "transformScale": {
+          "type": "number"
+        },
+        "transformAspect": {
+          "type": "number"
+        },
+        "transformOffsetX": {
+          "type": "number"
+        },
+        "transformOffsetY": {
+          "type": "number"
+        },
+        "pcvAmount": {
+          "type": "number"
+        },
+        "pcvMidpoint": {
+          "type": "number"
+        },
+        "pcvRoundness": {
+          "type": "number"
+        },
+        "pcvFeather": {
+          "type": "number"
+        },
+        "pcvHighlights": {
+          "type": "number"
+        },
+        "grainAmount": {
+          "type": "number"
+        },
+        "grainSize": {
+          "type": "number"
+        },
+        "grainRoughness": {
+          "type": "number"
+        },
+        "shadowTint": {
+          "type": "number"
+        },
+        "redHue": {
+          "type": "number"
+        },
+        "redSaturation": {
+          "type": "number"
+        },
+        "greenHue": {
+          "type": "number"
+        },
+        "greenSaturation": {
+          "type": "number"
+        },
+        "blueHue": {
+          "type": "number"
+        },
+        "blueSaturation": {
+          "type": "number"
+        },
+        "cameraProfile": {
+          "type": "string"
+        },
+        "curve": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "hsl": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "grading": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "crop": {
+          "type": "object",
+          "additionalProperties": true
         }
       }
     },
