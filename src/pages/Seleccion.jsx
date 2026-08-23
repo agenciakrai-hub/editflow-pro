@@ -7,7 +7,7 @@ import { selectBursts } from "@/lib/ai/aiGateway";
 import { addRatingAndLabel } from "@/lib/rawaistudio/xmpTagPatcher";
 import { base44 } from "@/api/base44Client";
 import { setSession } from "@/lib/rawaistudio/localSession";
-import { COLOR_LABELS } from "@/lib/rawaistudio/labels";
+import { COLOR_LABELS, lightroomLabelFor } from "@/lib/rawaistudio/labels";
 import { useToast } from "@/components/ui/use-toast";
 import PhotoCard from "@/components/rawaistudio/PhotoCard";
 import ReviewFilters from "@/components/rawaistudio/ReviewFilters";
@@ -136,18 +136,18 @@ export default function Seleccion() {
     navigate("/editor");
   };
 
-  // Descarga determinista del XMP de selección: un sidecar por CADA foto, con su
-  // rating + label reales (TOP_PICK/SELECT = 5★ verde, REVIEW = 0, REJECT = 0/rojo).
+  // Descarga determinista del XMP de selección: un sidecar por CADA foto. Usa el rating y
+  // color REALES de la foto (los que dejó la IA o el fotógrafo en la revisión) y NUNCA los
+  // rederiva del estado: así el verde + 5★ que la selección marcó se respetan tal cual en
+  // el sidecar y Lightroom los reconoce, sin que ningún paso posterior los sobrescriba.
   // Sin ajustes de revelado, sin IA, sin UploadFile. ZIP vía editflow-engine zip-xmp.
   const downloadSelectionXmp = async () => {
     if (!photos.length) return;
     setDownloadingSel(true);
     try {
       const jobs = photos.map((p) => {
-        const isSel = p.status === "TOP_PICK" || p.status === "SELECT";
-        const isRej = p.status === "REJECT";
-        const rating = isSel ? 5 : 0;
-        const label = isSel ? "Green" : isRej ? "Red" : null;
+        const rating = p.rating || 0;
+        const label = p.colorLabel && p.colorLabel !== "none" ? lightroomLabelFor(p.colorLabel) : null;
         let xmp = SELECTION_XMP_TEMPLATE;
         xmp = addRatingAndLabel(xmp, { rating, label });
         return { filename: p.file.name, xmp_content: xmp };
