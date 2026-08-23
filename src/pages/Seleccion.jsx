@@ -33,6 +33,7 @@ export default function Seleccion() {
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState(null);
+  const [selectionFallback, setSelectionFallback] = useState(null);
 
   const [quickFilter, setQuickFilter] = useState("select");
   const [colorFilter, setColorFilter] = useState(new Set(COLOR_LABELS.map((c) => c.key)));
@@ -56,9 +57,10 @@ export default function Seleccion() {
     setStage("selecting");
     setTotal(withPreview.length);
     setDone(0);
-    const { keep, meta } = await selectBursts(withPreview, (d) => setDone(d));
+    const { keep, meta, selection_fallback, fallback_reason } = await selectBursts(withPreview, (d) => setDone(d));
     const built = withPreview.map((p) => buildPhotoFromSelection(p, keep, meta));
     setPhotos(built);
+    setSelectionFallback(selection_fallback ? { active: true, reason: fallback_reason } : null);
     setStage("review");
   };
 
@@ -126,7 +128,7 @@ export default function Seleccion() {
   };
 
   const reset = () => {
-    setFiles([]); setPhotos([]); setStage("idle"); setDone(0); setTotal(0); setError(null);
+    setFiles([]); setPhotos([]); setStage("idle"); setDone(0); setTotal(0); setError(null); setSelectionFallback(null);
   };
 
   return (
@@ -180,6 +182,11 @@ export default function Seleccion() {
                 <span className="text-red-400">{rejectCount} descartadas</span> ·{" "}
                 <span className="text-emerald-400">{editCount} en cola de edición</span>
               </p>
+              {selectionFallback?.active && (
+                <p className="mt-2 text-xs text-amber-300">
+                  selection_fallback=true · fallback_reason={selectionFallback.reason} — la IA no devolvió TOP_PICK; se promocionó deterministamente la mejor candidata (sin nueva llamada IA, sin créditos).
+                </p>
+              )}
             </div>
             <button onClick={reset}
               className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">

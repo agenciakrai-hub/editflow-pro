@@ -213,7 +213,11 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   // significativa de momento/expresión/composición → NO se consideran duplicados.
   await dedupAcrossGroups(keep, meta, withPreview);
 
-  return { keep, meta };
+  // GARANTÍA determinista (post-procesado, sin IA, sin créditos): siempre >=1 TOP_PICK
+  // global. Solo actúa si el resultado IA deja 0 TOP_PICK.
+  const fallback = ensureAtLeastOneTopPick(keep, meta, withPreview);
+
+  return { keep, meta, selection_fallback: fallback.selection_fallback, fallback_reason: fallback.fallback_reason };
 }
 
 function ctxOf(m) {
@@ -267,6 +271,55 @@ async function dedupAcrossGroups(keep, meta, withPreview) {
   }
 }
 
+// Puntuación utilizable para el fallback determinista: prioriza el overall de la IA
+// (ya producido por el motor); si no está disponible (p.ej. fallback técnico), usa la
+// métrica técnica local (sharpness + exposición). NUNCA llama a la IA.
+function fallbackScoreOf(m, p) {
+  const ov = m?.scores?.overall;
+  if (typeof ov === "number" && isFinite(ov)) return ov;
+  if (p) return scoreOf(p);
+  return 0;
+}
+
+// GARANTÍA determinista: el resultado de selección SIEMPRE debe tener al menos una
+// foto seleccionada (TOP_PICK). Post-procesado puro del resultado IA existente: no
+// hace una segunda llamada a IA ni gasta créditos. Reglas:
+//   1. Si ya existe >=1 TOP_PICK → no hacer nada (comportamiento normal).
+//   2. Si 0 TOP_PICK pero hay SELECT → promocionar el SELECT de mayor puntuación a TOP_PICK.
+//   3. Si tampoco hay SELECT → elegir la mejor candidata no rechazada (REVIEW) por
+//      puntuación y promocionarla a TOP_PICK (implica SELECT/5★/verde/cola de edición).
+//   4. Si todo está REJECT → promocionar la de mayor puntuación de todas (último recurso).
+// Devuelve { selection_fallback, fallback_reason } y marca la foto promocionada.
+function ensureAtLeastOneTopPick(keep, meta, withPreview) {
+  const byId = new Map(withPreview.map((p) => [p.id, p]));
+  const entries = Array.from(meta.entries());
+
+  if (entries.some(([, m]) => m.status === "TOP_PICK")) {
+    return { selection_fallback: false, fallback_reason: null };
+  }
+
+  let chosen = entries.filter(([, m]) => m.status === "SELECT");
+  let fallback_reason = "no_top_pick";
+  if (!chosen.length) {
+    chosen = entries.filter(([, m]) => m.status !== "REJECT" && !m.previewWarning);
+  }
+  if (!chosen.length) {
+    chosen = entries; // último recurso: incluso entre REJECT
+    fallback_reason = "no_selectable";
+  }
+  if (!chosen.length) return { selection_fallback: false, fallback_reason: null };
+
+  chosen.sort((a, b) => fallbackScoreOf(b[1], byId.get(b[0])) - fallbackScoreOf(a[1], byId.get(a[0])));
+  const [id, m] = chosen[0];
+  m.status = "TOP_PICK";
+  m.groupRank = 1;
+  m.rejectReasons = [];
+  keep.add(id);
+  m.selection_fallback = true;
+  m.fallback_reason = fallback_reason;
+  return { selection_fallback: true, fallback_reason };
+}
+
 // ADAPTADOR: produce la forma que el Editor espera (aiSelected, selectedForEdit,
 // colorLabel, rating, groupId, reason, overallScore) + campos extra del culling
 // (status, scores, rejectReasons, confidence, category, groupRank, analysisComplete,
@@ -298,5 +351,7 @@ export function buildPhotoFromSelection(p, keep, meta) {
     analysisComplete: m.analysisComplete ?? false,
     missingDimensions: m.missingDimensions || [],
     previewWarning: m.previewWarning || false,
+    selectionFallback: !!m.selection_fallback,
+    fallbackReason: m.fallback_reason || null,
   };
 }
