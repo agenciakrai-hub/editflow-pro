@@ -62,19 +62,16 @@ export function patchXmpAttributes(xmpTemplateText, values) {
 // si NO tuviera ningún ajuste de revelado y ignora todos los crs:* aunque estén presentes
 // (el preset original, al ser un preset de Develop y no un sidecar de foto, normalmente no
 // lo incluye) — esto es lo que hacía que el RAW se importara "sin ninguna modificación".
-// setXmpProperty — escribe una propiedad XMP simple (xmp:Rating, xmp:Label) en
-// CUALQUIERA de las dos formas que Lightroom usa en sus sidecars .xmp:
-//   1. Elemento hijo: <xmp:Tag>valor</xmp:Tag>  (forma habitual en sidecars de foto)
-//   2. Atributo:      xmp:Tag="valor"            (forma habitual en presets de Develop)
-// Si la propiedad ya existe en cualquiera de las dos formas, se reemplaza el valor
-// existente. Si no existe, se añade como atributo en el primer rdf:Description.
+// setXmpProperty — escribe una propiedad XMP simple (xmp:Rating, xmp:Label) SIEMPRE
+// como ELEMENTO HIJO del primer rdf:Description. Esta es la forma CANÓNICA que el
+// propio Lightroom escribe en sus sidecars .xmp y la que lee de forma fiable al
+// "Leer metadatos del archivo". Escribirlos como atributo (xmp:Rating="5") es XMP
+// válido, pero Lightroom a veces no los aplica al importar el sidecar — por eso se
+// fuerza el elemento hijo: <xmp:Rating>5</xmp:Rating> y <xmp:Label>Green</xmp:Label>.
 //
-// Esto es CRÍTICO: setAttribute solo maneja atributos, pero los sidecars .xmp de
-// Lightroom suelen escribir xmp:Label como ELEMENTO HIJO. Si el template tiene
-// <xmp:Label>Red</xmp:Label> y añadimos xmp:Label="Green" como atributo, Lightroom
-// lee el elemento hijo (Red) e ignora el atributo (Green) — el verde nunca aparece.
-// El rating sí funcionaba porque el template no tenía <xmp:Rating> como elemento hijo,
-// solo como atributo (o no lo tenía y se añadía como atributo nuevo).
+// Si la propiedad ya existe (como elemento hijo o como atributo), se normaliza a
+// elemento hijo con el valor nuevo. Si el rdf:Description es autocerrado, se
+// convierte en apertura+cierre para poder colgar el elemento hijo dentro.
 function setXmpProperty(xmpText, tag, value) {
   // 1. Elemento hijo con contenido: <xmp:Tag>old</xmp:Tag> → reemplazar texto.
   const elemRegex = new RegExp(`(<xmp:${tag}>)([^<]*)(</xmp:${tag}>)`);
@@ -82,11 +79,21 @@ function setXmpProperty(xmpText, tag, value) {
   // 2. Elemento hijo autocerrado: <xmp:Tag/> → convertir en elemento con contenido.
   const selfCloseRegex = new RegExp(`<xmp:${tag}\\s*/>`);
   if (selfCloseRegex.test(xmpText)) return xmpText.replace(selfCloseRegex, `<xmp:${tag}>${value}</xmp:${tag}>`);
-  // 3. Atributo: xmp:Tag="old" → reemplazar valor.
-  const attrRegex = new RegExp(`(xmp:${tag}\\s*=\\s*")([^"]*)(")`);
-  if (attrRegex.test(xmpText)) return xmpText.replace(attrRegex, `$1${value}$3`);
-  // 4. No existe → añadir como atributo en rdf:Description.
-  return setAttribute(xmpText, "xmp", tag, value);
+  // 3. Atributo: xmp:Tag="old" → eliminarlo; se reescribe como elemento hijo abajo.
+  let result = xmpText;
+  const attrRegex = new RegExp(`\\s*xmp:${tag}\\s*=\\s*"[^"]*"`);
+  if (attrRegex.test(result)) result = result.replace(attrRegex, "");
+  // 4. Insertar como elemento hijo en el primer rdf:Description.
+  const selfClosingDesc = /<rdf:Description\b([^>]*?)\/>/;
+  if (selfClosingDesc.test(result)) {
+    return result.replace(selfClosingDesc, `<rdf:Description$1>\n      <xmp:${tag}>${value}</xmp:${tag}>\n    </rdf:Description>`);
+  }
+  const closeRegex = /(<\/rdf:Description>)/;
+  if (closeRegex.test(result)) {
+    return result.replace(closeRegex, `      <xmp:${tag}>${value}</xmp:${tag}>\n    $1`);
+  }
+  // Fallback final (XMP sin rdf:Description cerrado): atributo.
+  return setAttribute(result, "xmp", tag, value);
 }
 
 export function addRatingAndLabel(xmpText, { rating, label } = {}) {
