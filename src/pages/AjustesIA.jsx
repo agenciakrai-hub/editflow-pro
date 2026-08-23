@@ -210,7 +210,7 @@ export default function AjustesIA() {
         const aiValues = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams);
         const needsCorrection = Object.values(aiValues).some((v) => v);
         const allZero = !needsCorrection;
-        let xmp = DEFAULT_TEMPLATE;
+        let xmp = presetTemplateText || DEFAULT_TEMPLATE;
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
@@ -421,6 +421,14 @@ export default function AjustesIA() {
                   look coherente. El motor local adapta ese perfil a cada foto corrigiendo exposición/luces/sombras
                   según su histograma real. Muy económico: 1 llamada de IA para toda la sesión, no 1 por foto. Selecciona
                   parámetros y preferencia (0 = sin desplazar).
+                </p>
+                <PresetLoadSection
+                  presetFile={presetFile}
+                  onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
+                />
+                <p className="mt-2 text-xs text-zinc-500">
+                  Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…) como plantilla
+                  base; la IA solo rellena los básicos sobre él. No afecta al cálculo del revelado IA.
                 </p>
                 <ParameterPanel config={config} onChange={setConfig} />
                 {profile && (
