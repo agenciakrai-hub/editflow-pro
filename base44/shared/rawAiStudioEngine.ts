@@ -1,4 +1,4 @@
-import { invokeVision } from "./aiProviderAdapter.ts";
+import { invokeVision, activeProviderFor } from "./aiProviderAdapter.ts";
 
 // RAW AI Studio — motor de decisiones. Dos capas conceptuales:
 //  1) Motor TÉCNICO (src/lib/rawaistudio/exposureEngine.js, en el cliente): mide la preview
@@ -163,10 +163,31 @@ export const LLM_BATCH_SIZE = 6;
 // Sube un lote de previews a almacenamiento y devuelve sus URLs. Para el flujo local
 // (rawAiStudioAnalyze), donde las previews llegan como base64. El flujo cloud ya tiene
 // las URLs subidas desde el navegador y pasa previewFileUrl directamente.
+// Sube un lote de previews a almacenamiento y devuelve sus URLs. Para el flujo local
+// (rawAiStudioAnalyze), donde las previews llegan como base64. El flujo cloud ya tiene
+// las URLs subidas desde el navegador y pasa previewFileUrl directamente.
+//
+// NVIDIA: cuando el proveedor activo para `task` es nvidia, devuelve data URLs
+// (data:image/jpeg;base64,...) directamente, SIN llamar a UploadFile. El adaptador
+// NVIDIA acepta data URLs en image_url (OpenAI vision). Qwen/Base44 siguen usando
+// UploadFile para obtener file_url http — su flujo no cambia.
 export async function uploadPreviewBatch(
   base44: any,
-  previews: Array<{ id: string; previewBase64: string }>
+  previews: Array<{ id: string; previewBase64: string }>,
+  task?: "seleccion" | "ajustes"
 ): Promise<Record<string, string>> {
+  if (task) {
+    try {
+      const provider = await activeProviderFor(base44, task);
+      if (provider === "nvidia") {
+        const urls: Record<string, string> = {};
+        for (const p of previews) urls[p.id] = `data:image/jpeg;base64,${p.previewBase64}`;
+        return urls;
+      }
+    } catch {
+      // Si no se puede leer la config, se cae al flujo por defecto (UploadFile).
+    }
+  }
   const urls: Record<string, string> = {};
   await Promise.all(previews.map(async (p) => {
     const file = base64ToFile(p.previewBase64);

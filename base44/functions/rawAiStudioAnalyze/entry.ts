@@ -62,7 +62,8 @@ export default async function(req: Request): Promise<Response> {
     // analyzePhotoParams, secuencialmente con cada llamada IA).
     const uploaded = await uploadPreviewBatch(
       base44,
-      validPhotos.map((p: any) => ({ id: String(p.id), previewBase64: String(p.preview_base64) }))
+      validPhotos.map((p: any) => ({ id: String(p.id), previewBase64: String(p.preview_base64) })),
+      "ajustes"
     );
 
     // Agrupar en lotes de LLM_BATCH_SIZE y procesar todos los lotes en paralelo.

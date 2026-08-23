@@ -1,9 +1,19 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
-import { testConnection, isQwenKeyPresent } from '../../shared/aiProviderAdapter.ts';
+import {
+  testConnection,
+  testNvidiaConnection,
+  testNvidiaVision,
+  isQwenKeyPresent,
+  isNvidiaKeyPresent,
+} from '../../shared/aiProviderAdapter.ts';
 
-// Proveedores IA — admin-only. Acciones: get-config, save-config, test-connection.
-// NUNCA devuelve la API Key (solo key_present boolean). La clave vive como secret
-// de Base44 (QWEN_API_KEY) y se lee solo en backend.
+// Proveedores IA — admin-only. Acciones: get-config, save-config, test-connection,
+// test-nvidia-vision. NUNCA devuelve las API Keys (solo *_key_present boolean). Las
+// claves viven como secrets de Base44 (QWEN_API_KEY, NVIDIA_API_KEY) y se leen solo
+// en backend.
+
+const NVIDIA_DEFAULT_ENDPOINT = 'https://integrate.api.nvidia.com/v1';
+const NVIDIA_DEFAULT_MODEL = 'minimaxai/minimax-m3';
 
 export default async function(req: Request): Promise<Response> {
   try {
@@ -18,17 +28,24 @@ export default async function(req: Request): Promise<Response> {
     if (action === 'get-config') {
       const list = await base44.asServiceRole.entities.AiProviderConfig.list();
       const cfg = Array.isArray(list) && list.length ? list[0] : null;
-      return Response.json({ config: cfg, qwen_key_present: isQwenKeyPresent() });
+      return Response.json({
+        config: cfg,
+        qwen_key_present: isQwenKeyPresent(),
+        nvidia_key_present: isNvidiaKeyPresent(),
+      });
     }
 
     if (action === 'save-config') {
       const patch = {
         qwen_enabled: !!body.qwen_enabled,
         qwen_endpoint: typeof body.qwen_endpoint === 'string' ? body.qwen_endpoint.trim() : '',
-        qwen_model: typeof body.qwen_model === 'string' ? body.qwen_model.trim() : 'qwen3-vl-plus',
+        qwen_model: typeof body.qwen_model === 'string' && body.qwen_model.trim() ? body.qwen_model.trim() : 'qwen3-vl-plus',
+        nvidia_enabled: body.nvidia_enabled !== false,
+        nvidia_endpoint: typeof body.nvidia_endpoint === 'string' && body.nvidia_endpoint.trim() ? body.nvidia_endpoint.trim() : NVIDIA_DEFAULT_ENDPOINT,
+        nvidia_model: typeof body.nvidia_model === 'string' && body.nvidia_model.trim() ? body.nvidia_model.trim() : NVIDIA_DEFAULT_MODEL,
         base44_enabled: body.base44_enabled !== false,
-        active_seleccion: ['qwen', 'base44', 'none'].includes(body.active_seleccion) ? body.active_seleccion : 'base44',
-        active_ajustes: ['qwen', 'base44', 'none'].includes(body.active_ajustes) ? body.active_ajustes : 'base44',
+        active_seleccion: ['qwen', 'base44', 'nvidia', 'none'].includes(body.active_seleccion) ? body.active_seleccion : 'base44',
+        active_ajustes: ['qwen', 'base44', 'nvidia', 'none'].includes(body.active_ajustes) ? body.active_ajustes : 'base44',
       };
       const list = await base44.asServiceRole.entities.AiProviderConfig.list();
       const existing = Array.isArray(list) && list.length ? list[0] : null;
@@ -38,11 +55,24 @@ export default async function(req: Request): Promise<Response> {
       } else {
         cfg = await base44.asServiceRole.entities.AiProviderConfig.create(patch);
       }
-      return Response.json({ config: cfg, qwen_key_present: isQwenKeyPresent() });
+      return Response.json({
+        config: cfg,
+        qwen_key_present: isQwenKeyPresent(),
+        nvidia_key_present: isNvidiaKeyPresent(),
+      });
     }
 
     if (action === 'test-connection') {
-      const result = await testConnection(base44);
+      const provider = body?.provider === 'nvidia' ? 'nvidia' : 'qwen';
+      const result = provider === 'nvidia'
+        ? await testNvidiaConnection(base44)
+        : await testConnection(base44);
+      return Response.json(result);
+    }
+
+    if (action === 'test-nvidia-vision') {
+      const previewBase64 = typeof body?.preview_base64 === 'string' ? body.preview_base64.trim() : '';
+      const result = await testNvidiaVision(base44, previewBase64);
       return Response.json(result);
     }
 

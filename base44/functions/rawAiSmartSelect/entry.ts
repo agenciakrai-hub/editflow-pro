@@ -442,7 +442,8 @@ export default async function(req: Request): Promise<Response> {
       try {
         const uploaded = await uploadPreviewBatch(
           base44,
-          candidates.map((c: any) => ({ id: String(c.id), previewBase64: String(c.preview_base64) }))
+          candidates.map((c: any) => ({ id: String(c.id), previewBase64: String(c.preview_base64) })),
+          "seleccion"
         );
 
         let result: any;

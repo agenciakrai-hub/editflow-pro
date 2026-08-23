@@ -15,6 +15,21 @@
       "default": "qwen3-vl-plus",
       "description": "Modelo multimodal de Qwen que admite entrada de imagenes. Ej: qwen3-vl-plus, qwen-vl-max."
     },
+    "nvidia_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Proveedor experimental NVIDIA (MiniMax M3). No es proveedor por defecto."
+    },
+    "nvidia_endpoint": {
+      "type": "string",
+      "default": "https://integrate.api.nvidia.com/v1",
+      "description": "URL base OpenAI-compatible de NVIDIA NIM (sin /chat/completions)."
+    },
+    "nvidia_model": {
+      "type": "string",
+      "default": "minimaxai/minimax-m3",
+      "description": "Modelo VLM de NVIDIA NIM. Ej: minimaxai/minimax-m3."
+    },
     "base44_enabled": {
       "type": "boolean",
       "default": true
@@ -24,6 +39,7 @@
       "enum": [
         "qwen",
         "base44",
+        "nvidia",
         "none"
       ],
       "default": "base44"
@@ -33,6 +49,7 @@
       "enum": [
         "qwen",
         "base44",
+        "nvidia",
         "none"
       ],
       "default": "base44"
