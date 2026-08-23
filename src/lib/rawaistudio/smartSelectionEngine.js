@@ -213,11 +213,17 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   // significativa de momento/expresión/composición → NO se consideran duplicados.
   await dedupAcrossGroups(keep, meta, withPreview);
 
-  // GARANTÍA determinista (post-procesado, sin IA, sin créditos): siempre >=1 TOP_PICK
-  // global. Solo actúa si el resultado IA deja 0 TOP_PICK.
+  // ORDEN: dedup → cobertura por grupo → mínimo 1 TOP_PICK global.
+  const coverage = ensureCoveragePerGroup(keep, meta, withPreview);
   const fallback = ensureAtLeastOneTopPick(keep, meta, withPreview);
 
-  return { keep, meta, selection_fallback: fallback.selection_fallback, fallback_reason: fallback.fallback_reason };
+  return {
+    keep, meta,
+    selection_fallback: fallback.selection_fallback,
+    fallback_reason: fallback.fallback_reason,
+    selection_coverage_fallback: coverage.selection_coverage_fallback,
+    coverage_promotions: coverage.promotions,
+  };
 }
 
 function ctxOf(m) {
@@ -318,6 +324,45 @@ function ensureAtLeastOneTopPick(keep, meta, withPreview) {
   m.selection_fallback = true;
   m.fallback_reason = fallback_reason;
   return { selection_fallback: true, fallback_reason };
+}
+
+// GARANTÍA de cobertura por grupo/ráfaga (post-procesado, sin IA, sin créditos):
+// cada grupo de fotos similares debe tener al menos 1 foto seleccionada. Solo
+// AÑADE representantes; nunca quita selecciones existentes de Qwen. Si un grupo no
+// tiene ninguna TOP_PICK/SELECT, promociona la mejor candidata del grupo a SELECT
+// (preferimos no-REJECT; si todo es REJECT, último recurso la mejor de todas).
+// Trazabilidad: selection_coverage_fallback=true y, por promoción,
+// coverage_fallback_group / coverage_fallback_photo / coverage_fallback_reason.
+function ensureCoveragePerGroup(keep, meta, withPreview) {
+  const byId = new Map(withPreview.map((p) => [p.id, p]));
+  const byGroup = new Map();
+  for (const [id, m] of meta) {
+    if (!m || m.previewWarning) continue; // corrupt: no se promociona
+    const g = m.groupId || "ungrouped";
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push([id, m]);
+  }
+  let coverage = false;
+  const promotions = [];
+  for (const [groupId, items] of byGroup) {
+    const hasSelected = items.some(([, m]) => m.status === "TOP_PICK" || m.status === "SELECT");
+    if (hasSelected) continue;
+    let pool = items.filter(([, m]) => m.status !== "REJECT");
+    if (!pool.length) pool = items; // último recurso: grupo totalmente REJECT
+    if (!pool.length) continue;
+    pool.sort((a, b) => fallbackScoreOf(b[1], byId.get(b[0])) - fallbackScoreOf(a[1], byId.get(a[0])));
+    const [id, m] = pool[0];
+    m.status = "SELECT";
+    m.rejectReasons = [];
+    keep.add(id);
+    m.coverage_fallback = true;
+    m.coverage_fallback_group = groupId;
+    m.coverage_fallback_photo = id;
+    m.coverage_fallback_reason = "no_selected_in_group";
+    coverage = true;
+    promotions.push({ group: groupId, photo: id, reason: "no_selected_in_group" });
+  }
+  return { selection_coverage_fallback: coverage, promotions };
 }
 
 // ADAPTADOR: produce la forma que el Editor espera (aiSelected, selectedForEdit,
