@@ -5,7 +5,7 @@ import { base44 } from "@/api/base44Client";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis";
-import { computeTechnicalBaseline } from "@/lib/rawaistudio/exposureEngine";
+import { computeTechnicalBaseline, computeFreeBaseline } from "@/lib/rawaistudio/exposureEngine";
 import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/lib/rawaistudio/paramDefs";
 import { patchXmpAttributes, addRatingAndLabel, addOrientation } from "@/lib/rawaistudio/xmpTagPatcher";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
@@ -38,6 +38,7 @@ export default function AjustesIA() {
   const [fromSession, setFromSession] = useState(false);
   const [config, setConfig] = useState(defaultParameterConfig());
   const [precisionMode, setPrecisionMode] = useState("balanced");
+  const [mode, setMode] = useState("free"); // "free" (GRATIS, determinista) | "qwen" (IA)
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [results, setResults] = useState([]);
@@ -97,22 +98,30 @@ export default function AjustesIA() {
       try {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
-        const baseline = stats ? computeTechnicalBaseline(stats, precisionMode) : null;
-        const data = await analyzePhotos({
-          photos: [
-            {
-              id: photo.id,
-              preview_base64: base64,
-              baseline: baseline?.values || null,
-              technical_confidence: baseline?.confidence ?? null,
-              camera: photo.cameraInfo?.brand || null,
-            },
-          ],
-          enabledParams,
-          preferences,
-          precisionMode,
-        });
-        const aiValues = data?.results?.[photo.id] || {};
+        let aiValues = {};
+        if (mode === "free") {
+          // Modo GRATIS: 100% determinista, cero llamadas IA/red para análisis.
+          const free = stats ? computeFreeBaseline(stats, precisionMode) : null;
+          aiValues = free?.values || {};
+        } else {
+          // Modo Qwen: motor IA intacto (igual que antes).
+          const baseline = stats ? computeTechnicalBaseline(stats, precisionMode) : null;
+          const data = await analyzePhotos({
+            photos: [
+              {
+                id: photo.id,
+                preview_base64: base64,
+                baseline: baseline?.values || null,
+                technical_confidence: baseline?.confidence ?? null,
+                camera: photo.cameraInfo?.brand || null,
+              },
+            ],
+            enabledParams,
+            preferences,
+            precisionMode,
+          });
+          aiValues = data?.results?.[photo.id] || {};
+        }
         let xmp = DEFAULT_TEMPLATE;
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = addRatingAndLabel(xmp, {
@@ -263,12 +272,37 @@ export default function AjustesIA() {
           </div>
 
           <div className="rounded-xl border border-zinc-800 bg-[#141414] p-6">
+            <div className="mb-4 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setMode("free")}
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "free" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+              >
+                Ajustes automáticos — GRATIS
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("qwen")}
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "qwen" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+              >
+                Ajustes IA — Qwen
+              </button>
+            </div>
             <PrecisionModeSelector value={precisionMode} onChange={setPrecisionMode} />
-            <p className="mt-4 text-sm font-medium text-zinc-100">Parámetros de revelado IA</p>
-            <p className="mt-1 text-xs text-zinc-500">
-              Activa los parámetros que la IA puede tocar. La preferencia es un desplazamiento (0 = sin desplazar).
-            </p>
-            <ParameterPanel config={config} onChange={setConfig} />
+            {mode === "qwen" ? (
+              <>
+                <p className="mt-4 text-sm font-medium text-zinc-100">Parámetros de revelado IA</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Activa los parámetros que la IA puede tocar. La preferencia es un desplazamiento (0 = sin desplazar).
+                </p>
+                <ParameterPanel config={config} onChange={setConfig} />
+              </>
+            ) : (
+              <p className="mt-4 text-xs text-zinc-500">
+                Modo determinista: análisis fotométrico local. Sin IA, sin créditos y sin subida de imágenes.
+                Calcula Exposure, Luces, Sombras, Blancos, Negros y Contraste a partir del histograma real de cada foto.
+              </p>
+            )}
           </div>
 
           <button

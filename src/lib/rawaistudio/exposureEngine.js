@@ -76,3 +76,44 @@ export function computeTechnicalBaseline(stats, mode = "balanced") {
     mode
   };
 }
+
+// Modo GRATIS (/ajustes-ia): baseline técnico + Contrast2012 determinista (corrección
+// tonal conservadora, NO estilo) + guard analítico de clipping. Reutiliza
+// computeTechnicalBaseline sin alterarlo (el modo Qwen sigue usándolo igual que antes).
+// Cero IA, cero red para análisis. Prioridad: precisión fotométrica > naturalidad >
+// conservación de información > intensidad del ajuste.
+export function computeFreeBaseline(stats, mode = "balanced") {
+  const base = computeTechnicalBaseline(stats, mode);
+  const cfg = PRECISION_MODES[mode] || PRECISION_MODES.balanced;
+  const values = { ...base.values };
+
+  // Contrast2012: solo corrección tonal, nunca look creativo. Estira SUAVEMENTE un
+  // histograma poco contrastado (dispersión p5→p95 baja) y SIN clipping severo. Si la
+  // imagen ya tiene contraste suficiente o presenta clipping importante → 0.
+  const spread = (stats.p95 != null && stats.p5 != null) ? (stats.p95 - stats.p5) : 128;
+  const lowContrast = spread < 110;
+  let contrast = 0;
+  if (lowContrast && stats.clipHighlightPct < 0.03 && stats.clipShadowPct < 0.03) {
+    contrast = Math.round(clamp((110 - spread) / 110 * cfg.maxToneUnits * 0.4, 0, cfg.maxToneUnits * 0.4));
+  }
+  values.Contrast2012 = contrast;
+
+  // Guard analítico de clipping (post-baseline, determinista): no empeora el clipping
+  // existente. Mantiene los límites del modo; solo anula correcciones que irían en
+  // contra de la información ya quemada/aplastada.
+  if (stats.clipHighlightPct > 0.03) {
+    if (values.Exposure2012 > 0) values.Exposure2012 = 0;
+    if (values.Highlights2012 > 0) values.Highlights2012 = 0;
+    if (values.Whites2012 > 0) values.Whites2012 = 0;
+  }
+  if (stats.clipShadowPct > 0.03) {
+    if (values.Exposure2012 < 0) values.Exposure2012 = 0;
+    if (values.Shadows2012 < 0) values.Shadows2012 = 0;
+    if (values.Blacks2012 < 0) values.Blacks2012 = 0;
+  }
+
+  const bothClipped = stats.clipHighlightPct > 0.03 && stats.clipShadowPct > 0.03;
+  const confidence = bothClipped ? clamp(base.confidence, 40, 60) : base.confidence;
+
+  return { values, confidence, mode };
+}
