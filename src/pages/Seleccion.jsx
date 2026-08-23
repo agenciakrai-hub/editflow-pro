@@ -133,7 +133,7 @@ export default function Seleccion() {
   const confirmEdit = () => {
     const queue = photos.filter((p) => p.selectedForEdit);
     setSession({ photos: queue });
-    navigate("/editor");
+    navigate("/ajustes-ia");
   };
 
   // Descarga determinista del XMP de selección: un sidecar por CADA foto. Usa el rating y
