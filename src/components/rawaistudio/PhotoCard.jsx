@@ -1,18 +1,57 @@
-import { Star, RotateCw } from "lucide-react";
+import { useState } from "react";
+import { Star, RotateCw, ChevronDown, ChevronUp } from "lucide-react";
 import { Image } from "@/components/ui/image";
 import { COLOR_LABELS, STAR_VALUES } from "@/lib/rawaistudio/labels";
 
+const STATUS_META = {
+  TOP_PICK: { label: "TOP", className: "bg-amber-500 text-black" },
+  SELECT: { label: "OK", className: "bg-emerald-500 text-black" },
+  REVIEW: { label: "REVISAR", className: "bg-yellow-500 text-black" },
+  REJECT: { label: "DESCARTAR", className: "bg-red-500 text-white" },
+};
+
+const SCORE_LABELS = {
+  technical: "Técnica", sharpness: "Nitidez", focus: "Foco", face_quality: "Caras",
+  eye_quality: "Ojos", expression: "Expresión", composition: "Composición",
+  exposure: "Exposición", color_quality: "Color", subject_quality: "Sujeto",
+  moment_quality: "Momento", distraction_penalty: "Limpieza", overall: "Global", confidence: "Confianza",
+};
+
+function ScoreBar({ label, value }) {
+  const v = Math.round(value ?? 0);
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="w-16 shrink-0 text-[10px] text-zinc-500">{label}</span>
+      <div className="h-1.5 flex-1 overflow-hidden rounded bg-zinc-800">
+        <div className="h-full bg-zinc-300" style={{ width: `${v}%` }} />
+      </div>
+      <span className="w-6 text-right text-[10px] tabular-nums text-zinc-400">{v}</span>
+    </div>
+  );
+}
+
 export default function PhotoCard({ photo, onUpdate }) {
+  const [expanded, setExpanded] = useState(false);
   const preview = photo.preview;
   const isPortrait = preview && preview.height > preview.width;
   const isSelected = photo.aiSelected || photo.selectedForEdit;
   const autoRotation = isSelected && isPortrait ? 90 : 0;
   const rotation = photo.manualRotation != null ? photo.manualRotation : autoRotation;
+  const status = photo.status || (isSelected ? "SELECT" : "REVIEW");
+  const meta = STATUS_META[status] || STATUS_META.REVIEW;
 
   return (
     <div className="rounded-md border border-zinc-800 bg-zinc-900 p-2">
       <div className="relative h-28 w-full overflow-hidden rounded" style={{ transform: `rotate(${rotation}deg)` }}>
         <Image src={photo.preview?.dataUrl} className="h-full w-full" fittingType="fill" />
+        <span className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[9px] font-bold ${meta.className}`}>
+          {meta.label}
+        </span>
+        {photo.overallScore != null && (
+          <span className="absolute right-1 top-1 rounded bg-black/70 px-1 py-0.5 text-[9px] font-bold tabular-nums text-white">
+            {Math.round(photo.overallScore)}
+          </span>
+        )}
       </div>
       <button onClick={() => onUpdate({ manualRotation: (rotation + 90) % 360 })}
         className="mt-1 inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300">
@@ -25,8 +64,25 @@ export default function PhotoCard({ photo, onUpdate }) {
       </button>
       {photo.complementary && (
         <p className="mt-1 text-[10px] text-amber-400" title={photo.reason || ""}>
-          Fusión / Photoshop · grupo de {photo.groupSize}
+          Complementaria · grupo de {photo.groupSize}
         </p>
+      )}
+      {photo.scores && (
+        <button onClick={() => setExpanded((e) => !e)}
+          className="mt-1 flex w-full items-center justify-center gap-1 rounded bg-zinc-800 px-1 py-0.5 text-[10px] text-zinc-400 hover:text-zinc-200">
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />} Detalle
+        </button>
+      )}
+      {expanded && photo.scores && (
+        <div className="mt-1 space-y-1 rounded bg-zinc-950 p-2">
+          {Object.entries(SCORE_LABELS).map(([k, label]) => (
+            <ScoreBar key={k} label={label} value={photo.scores[k]} />
+          ))}
+          {photo.rejectReasons?.length > 0 && (
+            <p className="pt-1 text-[10px] text-red-400">Descarte: {photo.rejectReasons.join(", ")}</p>
+          )}
+          {photo.reason && <p className="pt-1 text-[10px] leading-tight text-zinc-500">{photo.reason}</p>}
+        </div>
       )}
       <div className="mt-2 flex items-center gap-1">
         {STAR_VALUES.map((n) => (

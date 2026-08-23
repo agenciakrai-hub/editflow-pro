@@ -1,12 +1,20 @@
 import { COLOR_LABELS, STAR_VALUES } from "@/lib/rawaistudio/labels";
 
-const QUICK_FILTERS = [["selected", "Seleccionadas"], ["all", "Todas"], ["unselected", "No seleccionadas"]];
+// Filtros de culling por estado (TOP_PICK / SELECT / REVIEW / REJECT / Todas).
+// colorFilter y minStars siguen disponibles como filtro secundario sobre el resultado.
+const STATUS_FILTERS = [
+  ["top", "Top Picks"],
+  ["select", "Seleccionadas"],
+  ["review", "Revisar"],
+  ["reject", "Descartadas"],
+  ["all", "Todas"],
+];
 
 export default function ReviewFilters({ quickFilter, onQuickFilter, colorFilter, onToggleColor, minStars, onMinStars }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <div className="flex gap-1 rounded-md bg-zinc-900 p-1">
-        {QUICK_FILTERS.map(([key, label]) => (
+      <div className="flex flex-wrap gap-1 rounded-md bg-zinc-900 p-1">
+        {STATUS_FILTERS.map(([key, label]) => (
           <button key={key} onClick={() => onQuickFilter(key)}
             className={`rounded px-2 py-1 text-xs ${quickFilter === key ? "bg-white text-black" : "text-zinc-400"}`}>
             {label}

@@ -21,7 +21,7 @@ export default function Seleccion() {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState(null);
 
-  const [quickFilter, setQuickFilter] = useState("selected");
+  const [quickFilter, setQuickFilter] = useState("select");
   const [colorFilter, setColorFilter] = useState(new Set(COLOR_LABELS.map((c) => c.key)));
   const [minStars, setMinStars] = useState(0);
 
@@ -60,13 +60,18 @@ export default function Seleccion() {
   const update = (id, patch) => setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
 
   const visible = useMemo(() => photos.filter((p) => {
-    if (quickFilter === "selected" && !p.aiSelected) return false;
-    if (quickFilter === "unselected" && p.aiSelected) return false;
+    if (quickFilter === "top" && p.status !== "TOP_PICK") return false;
+    if (quickFilter === "select" && p.status !== "SELECT") return false;
+    if (quickFilter === "review" && p.status !== "REVIEW") return false;
+    if (quickFilter === "reject" && p.status !== "REJECT") return false;
     return colorFilter.has(p.colorLabel) && p.rating >= minStars;
   }), [photos, quickFilter, colorFilter, minStars]);
 
   const selectedCount = photos.filter((p) => p.aiSelected).length;
   const editCount = photos.filter((p) => p.selectedForEdit).length;
+  const topCount = photos.filter((p) => p.status === "TOP_PICK").length;
+  const reviewCount = photos.filter((p) => p.status === "REVIEW").length;
+  const rejectCount = photos.filter((p) => p.status === "REJECT").length;
 
   const confirmEdit = () => {
     const queue = photos.filter((p) => p.selectedForEdit);
@@ -122,7 +127,13 @@ export default function Seleccion() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">Revisión — {selectedCount} / {photos.length} seleccionadas por la IA</p>
-              <p className="mt-1 text-xs text-emerald-400">{editCount} fotos en la cola de edición</p>
+              <p className="mt-1 text-xs text-zinc-400">
+                <span className="text-amber-400">{topCount} top picks</span> ·{" "}
+                <span className="text-emerald-400">{selectedCount} seleccionadas</span> ·{" "}
+                <span className="text-yellow-500">{reviewCount} a revisar</span> ·{" "}
+                <span className="text-red-400">{rejectCount} descartadas</span> ·{" "}
+                <span className="text-emerald-400">{editCount} en cola de edición</span>
+              </p>
             </div>
             <button onClick={reset}
               className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">
