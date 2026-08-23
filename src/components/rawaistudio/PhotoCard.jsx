@@ -52,6 +52,11 @@ export default function PhotoCard({ photo, onUpdate }) {
             {Math.round(photo.overallScore)}
           </span>
         )}
+        {photo.previewWarning && (
+          <span className="absolute bottom-1 left-1 rounded bg-orange-600 px-1 py-0.5 text-[8px] font-bold text-white" title="Preview no disponible">
+            SIN PREVIEW
+          </span>
+        )}
       </div>
       <button onClick={() => onUpdate({ manualRotation: (rotation + 90) % 360 })}
         className="mt-1 inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300">
@@ -78,6 +83,16 @@ export default function PhotoCard({ photo, onUpdate }) {
           {Object.entries(SCORE_LABELS).map(([k, label]) => (
             <ScoreBar key={k} label={label} value={photo.scores[k]} />
           ))}
+          {!photo.analysisComplete && (
+            <p className="pt-1 text-[10px] text-amber-400" title="Decisión de fallback técnico, no IA">
+              Fallback técnico (IA no disponible)
+            </p>
+          )}
+          {photo.missingDimensions?.length > 0 && (
+            <p className="pt-1 text-[10px] leading-tight text-zinc-500">
+              No evaluado: {photo.missingDimensions.join(", ")}
+            </p>
+          )}
           {photo.rejectReasons?.length > 0 && (
             <p className="pt-1 text-[10px] text-red-400">Descarte: {photo.rejectReasons.join(", ")}</p>
           )}
