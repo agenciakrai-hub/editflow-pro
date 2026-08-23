@@ -22,6 +22,7 @@ import LightroomPage from '@/modules/lightroom/LightroomPage';
 import Hub from '@/pages/Hub';
 import AjustesIA from '@/pages/AjustesIA';
 import PresetXMP from '@/pages/PresetXMP';
+import AIProviders from '@/pages/AIProviders';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -60,6 +61,7 @@ const AuthenticatedApp = () => {
           <Route path="/herramientas" element={<Hub />} />
           <Route path="/ajustes-ia" element={<AjustesIA />} />
           <Route path="/preset-xmp" element={<PresetXMP />} />
+          <Route path="/proveedores-ia" element={<AIProviders />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>

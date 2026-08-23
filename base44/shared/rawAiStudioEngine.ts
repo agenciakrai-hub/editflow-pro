@@ -1,3 +1,5 @@
+import { invokeVision } from "./aiProviderAdapter.ts";
+
 // RAW AI Studio — motor de decisiones. Dos capas conceptuales:
 //  1) Motor TÉCNICO (src/lib/rawaistudio/exposureEngine.js, en el cliente): mide la preview
 //     con estadísticas fotométricas reales (percentiles, clipping) y calcula una propuesta
@@ -115,7 +117,8 @@ Do not imply or apply any change to white balance, tone curves, HSL, camera cali
 Return concrete numeric values and confidence_score.`;
 
   const schema = { type: "object", properties, required: [...enabledParams, "confidence_score"] };
-  const result = await base44.integrations.Core.InvokeLLM({
+  const result = await invokeVision(base44, {
+    task: 'ajustes',
     prompt,
     file_urls: [file_url],
     response_json_schema: schema
@@ -253,7 +256,8 @@ Return a JSON object with keys photo_0, photo_1, ... each containing the numeric
 
   let result: any;
   try {
-    result = await base44.integrations.Core.InvokeLLM({
+    result = await invokeVision(base44, {
+      task: 'ajustes',
       prompt,
       file_urls: fileUrls,
       response_json_schema: schema

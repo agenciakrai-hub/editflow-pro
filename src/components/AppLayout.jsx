@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage } from "lucide-react";
+import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { to: "/lightroom", label: "Lightroom", icon: Plug },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },
   { to: "/admin", label: "Administración", icon: Users },
+  { to: "/proveedores-ia", label: "Proveedores IA", icon: KeyRound },
 ];
 
 function Logo() {

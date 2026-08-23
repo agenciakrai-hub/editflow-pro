@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import { uploadPreviewBatch } from '../../shared/rawAiStudioEngine.ts';
 import { runWithConcurrency } from '../../shared/concurrency.ts';
+import { invokeVision } from '../../shared/aiProviderAdapter.ts';
 
 // RAW AI Studio — POST /rawAiSmartSelect
 //
@@ -284,7 +285,8 @@ Return JSON: finalists (array, one entry per candidate id), each with id, rank (
 async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>, category: string | null = null): Promise<Record<string, any>> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildFinalPrompt(ids, byIdAll);
-  const result: any = await base44.integrations.Core.InvokeLLM({
+  const result: any = await invokeVision(base44, {
+    task: 'seleccion',
     prompt,
     model: MODEL,
     file_urls: fileUrls,
@@ -340,7 +342,8 @@ function mergeConsolidation(candidateIds: string[], h1: any, h2: any, finals: Re
 async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: Record<string, string>, isSingleton: boolean): Promise<any> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildPrompt(ids, isSingleton);
-  const result: any = await base44.integrations.Core.InvokeLLM({
+  const result: any = await invokeVision(base44, {
+    task: 'seleccion',
     prompt,
     model: MODEL,
     file_urls: fileUrls,
