@@ -42,10 +42,29 @@ const SCORE_KEYS = [
   'moment_quality', 'distraction_penalty', 'overall', 'confidence'
 ] as const;
 
+// Dimensiones que solo aplican cuando hay personas/rostros relevantes en la foto.
+const PERSON_DIMS = ['face_quality', 'eye_quality', 'expression'] as const;
+// Géneros sin personas: en ellos las dimensiones faciales son NO aplicables.
+const NO_PEOPLE_GENRES = new Set(['architecture', 'interior', 'landscape', 'product']);
+
+function isPeopleGenre(cat: string | null | undefined): boolean {
+  // Por defecto (categoría desconocida) se asume que hay personas: conservador, no
+  // anula dimensiones faciales salvo que el género sea claramente sin personas.
+  return cat ? !NO_PEOPLE_GENRES.has(cat) : true;
+}
+function applicableDims(cat: string | null | undefined): readonly string[] {
+  const people = isPeopleGenre(cat);
+  return SCORE_KEYS.filter((k) => people || !PERSON_DIMS.includes(k));
+}
+
 function scoreProps() {
   const props: Record<string, any> = {};
   for (const k of SCORE_KEYS) {
-    props[k] = { type: 'number', description: `${k} 0-100. OMIT this field (do not return 0) when it is not applicable or you cannot evaluate it.` };
+    const isPerson = PERSON_DIMS.includes(k);
+    props[k] = {
+      type: ['number', 'null'],
+      description: `${k} 0-100, or null when not applicable${isPerson ? ' (e.g. no people in the frame)' : ''}. NEVER return 0 to mean "not applicable" — return null.`,
+    };
   }
   return props;
 }
@@ -71,12 +90,22 @@ function statusRank(s: string): number {
 
 const VALID_STATUS = ['TOP_PICK', 'SELECT', 'REVIEW', 'REJECT'];
 
-function buildRankingEntry(id: string, r: any): any {
+function buildRankingEntry(id: string, r: any, category: string | null = null): any {
   const status = VALID_STATUS.includes(r?.status) ? r.status : 'REVIEW';
   const scores: Record<string, number | null> = {};
   for (const k of SCORE_KEYS) scores[k] = normScore(r?.[k]);
+  // Guardia de género: en fotos sin personas (arquitectura/interior/paisaje/producto)
+  // las dimensiones faciales son NO aplicables → null, aunque el modelo devuelva 0 o
+  // un número. Así no se penaliza una foto sin personas por carecer de métricas faciales
+  // y el overall (calculado) ignora esas dimensiones.
+  if (!isPeopleGenre(category)) {
+    for (const d of PERSON_DIMS) scores[d] = null;
+  }
   if (typeof scores.overall !== 'number') scores.overall = computeOverall(scores);
+  // missing_dimensions incluye las N/A (null). analysis_complete solo exige que todas
+  // las dimensiones APLICABLES al tipo de foto hayan sido evaluadas.
   const missing = SCORE_KEYS.filter((k) => scores[k] === null);
+  const applicableMissing = applicableDims(category).filter((k) => scores[k] === null);
   return {
     id,
     rank: typeof r?.rank === 'number' ? r.rank : 999,
@@ -84,7 +113,7 @@ function buildRankingEntry(id: string, r: any): any {
     reject_reasons: Array.isArray(r?.reject_reasons) ? r.reject_reasons : [],
     note: typeof r?.note === 'string' ? r.note : '',
     scores,
-    analysis_complete: missing.length === 0,
+    analysis_complete: applicableMissing.length === 0,
     missing_dimensions: missing,
   };
 }
@@ -148,13 +177,13 @@ STEP 2 — Apply the genre's PRIORITY POLICY to weight dimensions (do not use ri
 - architecture / interior: composition > geometry > verticals > exposure > sharpness > absence of distractions. No people → face/eye/expression are NOT APPLICABLE.
 - landscape: composition > light/moment > exposure > sharpness > distractions.
 
-STEP 3 — For EACH candidate, analyze independently across ALL dimensions (0-100 each). Return a number 0-100. For a dimension that is NOT APPLICABLE or you genuinely cannot evaluate it, OMIT the field entirely (do NOT return 0 for "not applicable"):
+STEP 3 — For EACH candidate, analyze independently across ALL dimensions. Each score is 0-100, or null when the dimension is NOT APPLICABLE (e.g. a landscape/interior/product with no people → face_quality, eye_quality, expression = null). NEVER return 0 to mean "not applicable" — return null. Return 0 only for a genuinely evaluated, critically bad dimension:
 - technical: file integrity, noise, artifacts, capture problems
 - sharpness: global sharpness
 - focus: is the SUBJECT (face/person/key element) in sharp focus? Distinguish artistic background blur from accidental subject blur — deliberate bokeh must NOT lower focus.
-- face_quality: if people present, face visibility/quality. If NO people in the frame → OMIT (not applicable), do NOT return 0.
-- eye_quality: eyes open vs closed/blinking for EVERY visible face. No people → OMIT.
-- expression: natural/emotive vs awkward/strained. No people → OMIT.
+- face_quality: if people present, face visibility/quality. If NO people in the frame → return null.
+- eye_quality: eyes open vs closed/blinking for EVERY visible face. No people → return null.
+- expression: natural/emotive vs awkward/strained. No people → return null.
 - composition: balance, framing, lines, geometry, distracting elements, awkward crops
 - exposure: tonal distribution, clipping, severe over/underexposure
 - color_quality: white balance neutrality, color cast, skin tones
@@ -249,7 +278,7 @@ Return JSON: finalists (array, one entry per candidate id), each with id, rank (
 }
 
 // Tercera llamada IA entre finalistas. Devuelve byId de los finalistas re-analizados.
-async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>): Promise<Record<string, any>> {
+async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>, category: string | null = null): Promise<Record<string, any>> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildFinalPrompt(ids, byIdAll);
   const result: any = await base44.integrations.Core.InvokeLLM({
@@ -266,10 +295,10 @@ async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<str
   const out: Record<string, any> = {};
   for (const r of arr) {
     const rid = String(r.id);
-    if (ids.includes(rid)) out[rid] = buildRankingEntry(rid, r);
+    if (ids.includes(rid)) out[rid] = buildRankingEntry(rid, r, category);
   }
   for (const id of ids) {
-    if (!out[id]) out[id] = buildRankingEntry(id, {});
+    if (!out[id]) out[id] = buildRankingEntry(id, {}, category);
   }
   return out;
 }
@@ -319,20 +348,21 @@ async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: 
     },
   });
   const g = result[key] || {};
+  const category = typeof g.category === 'string' ? g.category : null;
   const rankings = Array.isArray(g.rankings) ? g.rankings : [];
   const byId: Record<string, any> = {};
   for (const r of rankings) {
     const rid = String(r.id);
     if (!ids.includes(rid)) continue;
-    byId[rid] = buildRankingEntry(rid, r);
+    byId[rid] = buildRankingEntry(rid, r, category);
   }
   for (const id of ids) {
-    if (!byId[id]) byId[id] = buildRankingEntry(id, {});
+    if (!byId[id]) byId[id] = buildRankingEntry(id, {}, category);
   }
   return {
     byId,
     keep_ids: Array.isArray(g.keep_ids) ? g.keep_ids.map(String).filter((id: string) => ids.includes(id)) : [],
-    category: typeof g.category === 'string' ? g.category : null,
+    category,
     reason: typeof g.reason === 'string' ? g.reason : null,
   };
 }
@@ -438,7 +468,7 @@ export default async function(req: Request): Promise<Response> {
           finalistIds = [...f1, ...f2];
           if (finalistIds.length >= 2) {
             try {
-              const finals = await analyzeFinalists(base44, finalistIds, uploaded, { ...h1.byId, ...h2.byId });
+              const finals = await analyzeFinalists(base44, finalistIds, uploaded, { ...h1.byId, ...h2.byId }, h1.category || h2.category || null);
               finalRan = true;
               iaCalls = 3;
               result = mergeConsolidation(candidateIds, h1, h2, finals);
