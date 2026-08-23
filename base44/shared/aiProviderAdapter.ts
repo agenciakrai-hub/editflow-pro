@@ -77,6 +77,24 @@ function parseJsonContent(content: any): any {
   return JSON.parse(txt.slice(start, end + 1));
 }
 
+// fetch con timeout: evita que una llamada de proveedor colgada (sin respuesta) bloquee
+// indefinidamente el pipeline. Si supera el límite, aborta y lanza → el motor captura el
+// error y aplica el fallback técnico. No afecta a llamadas legítimas lentas dentro del
+// límite (120s es generoso para visión con varias imágenes).
+const PROVIDER_TIMEOUT_MS = 120000;
+async function fetchWithTimeout(url: string, opts: any, ms: number = PROVIDER_TIMEOUT_MS): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: controller.signal });
+  } catch (e: any) {
+    if (controller.signal.aborted) throw new Error(`Proveedor: timeout tras ${ms}ms`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function callQwen(cfg: any, opts: InvokeOpts): Promise<any> {
   const apiKey = secrets.get("QWEN_API_KEY");
   if (!apiKey) {
@@ -93,7 +111,7 @@ async function callQwen(cfg: any, opts: InvokeOpts): Promise<any> {
 
   const body = { model, messages: [{ role: "user", content }], stream: false };
   const t0 = Date.now();
-  const res = await fetch(endpoint, {
+  const res = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -134,7 +152,7 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
     top_p: 0.95,
   };
   const t0 = Date.now();
-  const res = await fetch(endpoint, {
+  const res = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -181,7 +199,7 @@ async function callGeminiOnce(apiKey: string, cfg: any, opts: InvokeOpts): Promi
     generationConfig: { responseMimeType: "application/json" },
   };
   const t0 = Date.now();
-  const res = await fetch(endpoint, {
+  const res = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -270,7 +288,7 @@ export async function testConnection(base44: any): Promise<any> {
 
   const t0 = Date.now();
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -313,7 +331,7 @@ export async function testNvidiaConnection(base44: any): Promise<any> {
 
   const t0 = Date.now();
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -362,7 +380,7 @@ export async function testNvidiaVision(base44: any, previewBase64: string): Prom
   const dataUrl = `data:image/jpeg;base64,${previewBase64}`;
   const t0 = Date.now();
   try {
-    const res = await fetch(endpoint, {
+    const res = await fetchWithTimeout(endpoint, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({

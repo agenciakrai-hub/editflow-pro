@@ -61,7 +61,10 @@ export default function Seleccion() {
     setStage("selecting");
     setTotal(withPreview.length);
     setDone(0);
-    const { keep, meta, selection_fallback, fallback_reason, selection_coverage_fallback, coverage_promotions } = await selectBursts(withPreview, (d) => setDone(d));
+    const { keep, meta, selection_fallback, fallback_reason, selection_coverage_fallback, coverage_promotions } = await selectBursts(withPreview, (d, t) => {
+      setDone(d);
+      if (typeof t === "number") setTotal(t);
+    });
     const built = withPreview.map((p) => buildPhotoFromSelection(p, keep, meta));
     setPhotos(built);
     setSelectionFallback(selection_fallback ? { active: true, reason: fallback_reason } : null);

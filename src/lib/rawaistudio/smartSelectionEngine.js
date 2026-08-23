@@ -20,7 +20,6 @@ import { computePHash, phashDistance } from "./perceptualHash";
 import { readCaptureTimeFromBytes } from "./captureTime";
 import { readCameraMetadataFromBytes } from "./cameraMetadata";
 
-const BATCH_PHOTOS = 30;       // fotos por llamada IA (lote de grupos)
 const PREVIEW_CONCURRENCY = 6;
 const BATCH_CONCURRENCY = 3;
 
@@ -124,28 +123,20 @@ export async function runAiBurstSelection(withPreview, onProgress) {
     });
   });
 
-  // Construir lotes de escenas para la IA (TODO el grupo, sin truncar por técnica).
-  const batches = [];
-  let currentBatch = [];
-  let currentBatchPhotoCount = 0;
-  const pushBatch = () => { if (currentBatch.length) batches.push(currentBatch); currentBatch = []; currentBatchPhotoCount = 0; };
-
-  for (const group of groups) {
-    currentBatch.push({ id: group.id, files: group.files });
-    currentBatchPhotoCount += group.files.length;
-    if (currentBatchPhotoCount >= BATCH_PHOTOS) pushBatch();
-  }
-  pushBatch();
-
+  // Una invocación por ráfaga (en lugar de un lote único) para que el progreso avance de
+  // 1 en 1 y una llamada lenta o caída no bloquee todo el proceso. Misma concurrencia (3)
+  // y mismo nº total de llamadas IA — solo cambia la granularidad del progreso.
+  const bursts = groups.map((g) => ({ id: g.id, files: g.files }));
+  const totalBursts = bursts.length;
   let resolved = 0;
-  onProgress?.(resolved);
+  onProgress?.(resolved, totalBursts);
 
-  await runPool(batches, BATCH_CONCURRENCY, async (batch) => {
+  await runPool(bursts, BATCH_CONCURRENCY, async (burst) => {
     try {
       const { data } = await base44.functions.invoke("rawAiSmartSelect", {
-        bursts: batch.map((b) => ({
-          burst_id: b.id,
-          photos: b.files.map((f) => ({
+        bursts: [{
+          burst_id: burst.id,
+          photos: burst.files.map((f) => ({
             id: f.id,
             preview_base64: f.preview?.base64,
             technical: {
@@ -154,58 +145,54 @@ export async function runAiBurstSelection(withPreview, onProgress) {
               corrupt: !!f.technical?.corrupt,
             },
           })),
-        })),
+        }],
       });
-      batch.forEach((b) => {
-        const g = data?.groups?.[b.id];
-        const rankings = Array.isArray(g?.rankings) ? g.rankings : [];
-        const byId = new Map(rankings.map((r) => [String(r.id), r]));
-        const category = g?.category || null;
-        const reason = g?.reason || null;
-        const keepIds = new Set((g?.keep_ids || []).map(String));
-        b.files.forEach((f, i) => {
-          const r = byId.get(f.id);
-          const status = r?.status || "REVIEW";
-          const groupRank = typeof r?.rank === "number" ? r.rank : i + 1;
-          const selectable = status === "SELECT" || status === "TOP_PICK";
-          if (selectable) keep.add(f.id);
-          meta.set(f.id, {
-            groupId: b.id,
-            groupSize: b.files.length,
-            status,
-            scores: r?.scores || null,
-            rejectReasons: r?.reject_reasons || [],
-            reason,
-            confidence: r?.scores?.confidence ?? null,
-            category,
-            groupRank,
-            complementary: keepIds.size > 1 && keepIds.has(f.id) && status !== "TOP_PICK",
-            category_note: r?.note || "",
-            analysisComplete: r?.analysis_complete ?? false,
-            missingDimensions: r?.missing_dimensions || [],
-            previewWarning: false,
-          });
+      const g = data?.groups?.[burst.id];
+      const rankings = Array.isArray(g?.rankings) ? g.rankings : [];
+      const byId = new Map(rankings.map((r) => [String(r.id), r]));
+      const category = g?.category || null;
+      const reason = g?.reason || null;
+      const keepIds = new Set((g?.keep_ids || []).map(String));
+      burst.files.forEach((f, i) => {
+        const r = byId.get(f.id);
+        const status = r?.status || "REVIEW";
+        const groupRank = typeof r?.rank === "number" ? r.rank : i + 1;
+        const selectable = status === "SELECT" || status === "TOP_PICK";
+        if (selectable) keep.add(f.id);
+        meta.set(f.id, {
+          groupId: burst.id,
+          groupSize: burst.files.length,
+          status,
+          scores: r?.scores || null,
+          rejectReasons: r?.reject_reasons || [],
+          reason,
+          confidence: r?.scores?.confidence ?? null,
+          category,
+          groupRank,
+          complementary: keepIds.size > 1 && keepIds.has(f.id) && status !== "TOP_PICK",
+          category_note: r?.note || "",
+          analysisComplete: r?.analysis_complete ?? false,
+          missingDimensions: r?.missing_dimensions || [],
+          previewWarning: false,
         });
       });
     } catch {
-      // Fallo de IA: fallback técnico conservador POR GRUPO (no todo el lote a REVIEW).
-      batch.forEach((b) => {
-        const fb = technicalFallbackForGroup(b);
-        fb.forEach((m) => {
-          if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(m.id);
-          meta.set(m.id, {
-            groupId: b.id, groupSize: b.files.length, status: m.status,
-            scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
-            confidence: m.confidence, category: m.category, groupRank: m.groupRank,
-            complementary: m.complementary, category_note: m.category_note,
-            analysisComplete: m.analysis_complete, missingDimensions: m.missing_dimensions,
-            previewWarning: false,
-          });
+      // Fallo de IA: fallback técnico conservador POR RÁFAGA.
+      const fb = technicalFallbackForGroup(burst);
+      fb.forEach((m) => {
+        if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(m.id);
+        meta.set(m.id, {
+          groupId: burst.id, groupSize: burst.files.length, status: m.status,
+          scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
+          confidence: m.confidence, category: m.category, groupRank: m.groupRank,
+          complementary: m.complementary, category_note: m.category_note,
+          analysisComplete: m.analysis_complete, missingDimensions: m.missing_dimensions,
+          previewWarning: false,
         });
       });
     }
-    resolved += batch.length;
-    onProgress?.(resolved);
+    resolved += 1;
+    onProgress?.(resolved, totalBursts);
   }, () => {});
 
   // DEDUP entre grupos: pHash detecta candidatos; la IA compara visualmente (momento,
