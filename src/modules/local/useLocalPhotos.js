@@ -34,6 +34,8 @@ export function useLocalPhotos() {
         name: file.name,
         previewUrl: preview.dataUrl,
         base64: preview.base64,
+        sharpness: preview.sharpness,
+        exposureScore: preview.exposureScore,
         status: "unreviewed",
         adjustments: {},
         edit_applied: false,

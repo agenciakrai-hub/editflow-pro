@@ -5,6 +5,8 @@ import { useLocalPhotos } from "./useLocalPhotos.js";
 import { computeAutoAdjustmentsFromBase64 } from "@/modules/editor/utils/exposureEngine.js";
 import { downloadAllXmp } from "./xmpDownload.js";
 import PhotoCardLocal from "./PhotoCardLocal.jsx";
+import autoSelectPhotos from "./autoSelect.js";
+import PresetUpload from "@/modules/editor/components/PresetUpload.jsx";
 
 export default function LocalWorkflowPage() {
   const { photos, processing, addFiles, setStatus, remove, clear, setPhotos } = useLocalPhotos();
@@ -19,6 +21,22 @@ export default function LocalWorkflowPage() {
     const files = e.target.files;
     if (files && files.length) addFiles(files);
     e.target.value = "";
+  };
+
+  const autoSelect = () => {
+    setPhotos((prev) => autoSelectPhotos(prev));
+    toast({ title: "Selección automática aplicada" });
+  };
+
+  // Color layer from an uploaded Lightroom .xmp preset — applied to the selected
+  // photos (or all if none selected). Only temperature/tint (absolute Kelvin).
+  const applyPresetColor = (color) => {
+    const targets = selected.length ? selected : photos;
+    const ids = new Set(targets.map((p) => p.id));
+    setPhotos((prev) =>
+      prev.map((p) => (ids.has(p.id) ? { ...p, adjustments: { ...p.adjustments, ...color } } : p))
+    );
+    toast({ title: "Preset de color aplicado", description: `${targets.length} fotos` });
   };
 
   const autoEdit = async () => {
@@ -88,6 +106,13 @@ export default function LocalWorkflowPage() {
       {photos.length > 0 && (
         <div className="flex flex-wrap gap-2">
           <button
+            onClick={autoSelect}
+            disabled={busy || processing}
+            className="flex items-center gap-1.5 px-3 py-2 bg-secondary rounded-lg text-sm font-semibold hover:bg-secondary/80 disabled:opacity-40"
+          >
+            <Sparkles className="w-4 h-4" /> Auto-seleccionar
+          </button>
+          <button
             onClick={autoEdit}
             disabled={busy}
             className="flex items-center gap-1.5 px-3 py-2 bg-accent text-white rounded-lg text-sm font-semibold hover:opacity-90 disabled:opacity-40"
@@ -109,6 +134,8 @@ export default function LocalWorkflowPage() {
           </button>
         </div>
       )}
+
+      {photos.length > 0 && <PresetUpload onApplyColor={applyPresetColor} />}
 
       {photos.length === 0 ? (
         <div className="border-2 border-dashed border-border rounded-2xl p-10 text-center text-sm text-muted-foreground">
