@@ -10,7 +10,7 @@
 // de cámara ni máscaras — solo los sliders de revelado listados. La preferencia del
 // fotógrafo se SUMA a la decisión de la IA (0 = sin desplazar).
 
-import { invokeVision } from "./aiProviderAdapter.ts";
+import { invokeVision, activeProviderFor } from "./aiProviderAdapter.ts";
 
 const RANGES: Record<string, { min: number; max: number }> = {
   Exposure2012: { min: -5, max: 5 },
@@ -73,14 +73,17 @@ Devuelve un JSON con las claves exactas listadas mas confidence_score.`;
     required: [...VISUAL_PARAM_KEYS, "confidence_score"],
   };
 
-  // Forzar Qwen para este motor visual, independientemente de active_ajustes, y enviar
-  // la preview como data URL directa (sin UploadFile).
+  // Proveedor externo segun active_ajustes (qwen/gemini/nvidia); si la config no tiene uno
+  // externo, se fuerza Qwen. Nunca cae a Base44/InvokeLLM: la preview va como data URL
+  // directa y los creditos de integracion pueden estar agotados.
+  let provider = await activeProviderFor(base44, "ajustes");
+  if (provider !== "qwen" && provider !== "gemini" && provider !== "nvidia") provider = "qwen";
   const result = await invokeVision(base44, {
     task: "ajustes",
     prompt,
     file_urls: [dataUrl],
     response_json_schema: schema,
-    forceProvider: "qwen",
+    forceProvider: provider,
   } as any);
 
   const values: Record<string, number> = {};

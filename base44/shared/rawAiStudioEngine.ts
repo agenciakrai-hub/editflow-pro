@@ -179,7 +179,7 @@ export async function uploadPreviewBatch(
   if (task) {
     try {
       const provider = await activeProviderFor(base44, task);
-      if (provider === "nvidia") {
+      if (provider === "nvidia" || provider === "gemini") {
         const urls: Record<string, string> = {};
         for (const p of previews) urls[p.id] = `data:image/jpeg;base64,${p.previewBase64}`;
         return urls;

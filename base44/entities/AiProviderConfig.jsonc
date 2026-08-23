@@ -30,6 +30,21 @@
       "default": "minimaxai/minimax-m3",
       "description": "Modelo VLM de NVIDIA NIM. Ej: minimaxai/minimax-m3."
     },
+    "gemini_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Proveedor Google Gemini (generativelanguage). Enruta previews como data URLs directas, sin UploadFile ni InvokeLLM."
+    },
+    "gemini_endpoint": {
+      "type": "string",
+      "default": "https://generativelanguage.googleapis.com/v1beta",
+      "description": "URL base de la API Gemini (sin /models/...)."
+    },
+    "gemini_model": {
+      "type": "string",
+      "default": "gemini-2.0-flash",
+      "description": "Modelo multimodal de Gemini. Ej: gemini-2.0-flash, gemini-2.5-flash."
+    },
     "base44_enabled": {
       "type": "boolean",
       "default": true
@@ -40,6 +55,7 @@
         "qwen",
         "base44",
         "nvidia",
+        "gemini",
         "none"
       ],
       "default": "base44"
@@ -50,6 +66,7 @@
         "qwen",
         "base44",
         "nvidia",
+        "gemini",
         "none"
       ],
       "default": "base44"

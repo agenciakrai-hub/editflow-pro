@@ -19,10 +19,12 @@
 import { secrets } from "base44:runtime";
 
 export type AiTask = "seleccion" | "ajustes";
-export type Provider = "qwen" | "base44" | "nvidia" | "none";
+export type Provider = "qwen" | "base44" | "nvidia" | "gemini" | "none";
 
 const NVIDIA_DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_DEFAULT_MODEL = "minimaxai/minimax-m3";
+const GEMINI_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_DEFAULT_MODEL = "gemini-2.0-flash";
 
 interface InvokeOpts {
   task: AiTask;
@@ -50,7 +52,7 @@ export async function activeProviderFor(base44: any, task: AiTask): Promise<Prov
   const cfg = await getConfig(base44);
   if (!cfg) return "base44";
   const field: any = task === "seleccion" ? cfg.active_seleccion : cfg.active_ajustes;
-  if (field === "qwen" || field === "base44" || field === "nvidia" || field === "none") return field;
+  if (field === "qwen" || field === "base44" || field === "nvidia" || field === "gemini" || field === "none") return field;
   return "base44";
 }
 
@@ -156,6 +158,49 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
   return parsed;
 }
 
+// Google Gemini (generativelanguage.googleapis.com). Recibe file_urls que pueden ser
+// data URLs (data:image/jpeg;base64,...) — evita UploadFile — o URLs http. Usa el formato
+// contents/parts/inline_data de la API Gemini. Mismo contrato de salida (JSON parseado).
+async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
+  const apiKey = secrets.get("GEMINI_API_KEY");
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY no configurado (introúcelo en Base44 → Settings → Secrets)");
+  }
+  const base = String(cfg?.gemini_endpoint || GEMINI_DEFAULT_ENDPOINT).trim().replace(/\/+$/, "");
+  const model = cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
+  const endpoint = `${base}/models/${model}:generateContent?key=${apiKey}`;
+  const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
+
+  const parts: any[] = [{ text: opts.prompt }];
+  for (const u of urls) {
+    const dataMatch = /^data:([^;]+);base64,(.*)$/is.exec(u);
+    if (dataMatch) {
+      parts.push({ inline_data: { mime_type: dataMatch[1], data: dataMatch[2] } });
+    } else {
+      parts.push({ file_data: { file_uri: u, mime_type: "image/jpeg" } });
+    }
+  }
+
+  const body = {
+    contents: [{ role: "user", parts }],
+    generationConfig: { responseMimeType: "application/json" },
+  };
+  const t0 = Date.now();
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const latency = Date.now() - t0;
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`Gemini HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
+  }
+  const data: any = await res.json();
+  const contentOut = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).filter(Boolean).join("") || "";
+  return parseJsonContent(contentOut);
+}
+
 // Punto unico de ruteo. SIN FAILOVER.
 export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
   const provider = opts.forceProvider || (await activeProviderFor(base44, opts.task));
@@ -163,6 +208,11 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
     const cfg = await getConfig(base44);
     console.log(`[aiProvider] task=${opts.task} provider=qwen model=${cfg?.qwen_model || "qwen3-vl-plus"}`);
     return callQwen(cfg, opts);
+  }
+  if (provider === "gemini") {
+    const cfg = await getConfig(base44);
+    console.log(`[aiProvider] task=${opts.task} provider=gemini model=${cfg?.gemini_model || GEMINI_DEFAULT_MODEL}`);
+    return callGemini(cfg, opts);
   }
   if (provider === "nvidia") {
     const cfg = await getConfig(base44);
@@ -346,6 +396,56 @@ export function isQwenKeyPresent(): boolean {
 export function isNvidiaKeyPresent(): boolean {
   try {
     return !!secrets.get("NVIDIA_API_KEY");
+  } catch {
+    return false;
+  }
+}
+
+// Ping minimo a Gemini (sin fotos). Devuelve trazabilidad. NUNCA devuelve la API Key.
+export async function testGeminiConnection(base44: any): Promise<any> {
+  const cfg = await getConfig(base44);
+  const apiKey = secrets.get("GEMINI_API_KEY");
+  const keyPresent = !!apiKey;
+  const base = String(cfg?.gemini_endpoint || GEMINI_DEFAULT_ENDPOINT).trim().replace(/\/+$/, "");
+  const model = cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
+  const endpointPath = `${base}/models/${model}:generateContent`;
+
+  if (!keyPresent) {
+    return { provider: "gemini", ok: false, reason: "GEMINI_API_KEY no configurado", key_present: false, model, endpoint: endpointPath, via_invoke_llm: false };
+  }
+
+  const t0 = Date.now();
+  try {
+    const res = await fetch(`${endpointPath}?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "ping" }] }],
+        generationConfig: { responseMimeType: "text/plain" },
+      }),
+    });
+    const latency = Date.now() - t0;
+    let bodyText = "";
+    try { bodyText = await res.text(); } catch {}
+    return {
+      provider: "gemini",
+      model,
+      endpoint: endpointPath,
+      http_status: res.status,
+      latency_ms: latency,
+      ok: res.ok,
+      key_present: true,
+      via_invoke_llm: false,
+      response_preview: bodyText.slice(0, 200),
+    };
+  } catch (e: any) {
+    return { provider: "gemini", model, endpoint: endpointPath, ok: false, reason: e.message, latency_ms: Date.now() - t0, key_present: true, via_invoke_llm: false };
+  }
+}
+
+export function isGeminiKeyPresent(): boolean {
+  try {
+    return !!secrets.get("GEMINI_API_KEY");
   } catch {
     return false;
   }
