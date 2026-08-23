@@ -19,13 +19,12 @@ export default function LightroomPage() {
 
   useEffect(() => {
     (async () => {
-      const saved = localStorage.getItem("editflow_lr_token");
-      if (saved) {
-        setToken(saved);
-        await refreshStats();
-      } else {
-        await createToken();
-      }
+      // Sincroniza siempre el token desde el servidor: si la caché local (localStorage)
+      // tiene un token de otra cuenta o de una sesión anterior, se reemplaza por el
+      // token autoritativo del usuario actual. Así el token mostrado coincide con el
+      // que usa lr-stats y con el que debe configurarse en el plugin de Lightroom.
+      await createToken();
+      await refreshStats();
     })();
   }, []);
 
