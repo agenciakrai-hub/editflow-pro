@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { KeyRound, Loader2, CheckCircle2, XCircle, Save, Upload, Cpu } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
+import { isRawFile, extractRawPreview } from "@/lib/rawaistudio/rawPreviewReader";
 
 // Proveedores IA — admin. Configura proveedor/endpoint/modelo y el activo por herramienta.
 // Las API Keys NO se introducen aqui: viven como secrets de Base44 (QWEN_API_KEY,
@@ -114,7 +115,16 @@ export default function AIProviders() {
     setTestingVision(true);
     setVisionResult(null);
     try {
-      const previewBase64 = await fileToBase64(visionFile);
+      // Si es RAW, extrae su preview JPEG embebida (un .CR3/.DNG en bruto no lo
+      // decodifica el VLM de NVIDIA). Si ya es JPEG/PNG, se envia tal cual.
+      let previewBase64;
+      if (isRawFile(visionFile.name)) {
+        const prev = await extractRawPreview(visionFile, 800);
+        previewBase64 = prev?.base64;
+        if (!previewBase64) throw new Error("No se pudo extraer la preview del RAW");
+      } else {
+        previewBase64 = await fileToBase64(visionFile);
+      }
       const res = await base44.functions.invoke("ai-providers", { action: "test-nvidia-vision", preview_base64: previewBase64 });
       setVisionResult(res?.data ?? res);
     } catch (e) {
@@ -227,7 +237,7 @@ export default function AIProviders() {
           <p className="text-xs text-muted-foreground">
             Sube una imagen (JPEG). Se envía como data URL directa a NVIDIA, sin UploadFile ni InvokeLLM.
           </p>
-          <input type="file" accept="image/jpeg,image/png" onChange={(e) => setVisionFile(e.target.files?.[0] || null)}
+          <input type="file" accept="image/jpeg,image/png,.cr3,.cr2,.nef,.arw,.raf,.rw2,.dng,.orf,.pef,.srw,.raw" onChange={(e) => setVisionFile(e.target.files?.[0] || null)}
             className="text-xs" />
           <button onClick={testVision} disabled={!visionFile || testingVision}
             className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium disabled:opacity-40">
