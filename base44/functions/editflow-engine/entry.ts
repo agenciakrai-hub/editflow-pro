@@ -27,6 +27,7 @@ export default async function (req) {
     if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
     if (action === "export") return await doExport(base44, body);
+    if (action === "zip-xmp") return await doZipXmp(body);
     if (action === "process") return await doProcess(base44, body);
     if (action === "sync") return await doSync(base44, body);
     if (action === "plugin") return await doPlugin();
@@ -80,6 +81,23 @@ async function doExport(base44, body) {
   });
 
   return Response.json({ count: target.length, downloadUrl, preview, jobId: job.id });
+}
+
+// action=zip-xmp — builds a ZIP from XMP sidecars generated locally in the
+// browser (local-first: RAWs never uploaded, only the tiny XMP text). Returns
+// the ZIP as a data URL the browser can download in one click.
+async function doZipXmp(body) {
+  const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+  if (!jobs.length) return Response.json({ error: "No hay XMP que empaquetar" }, { status: 400 });
+  const zip = new JSZip();
+  const folder = zip.folder("xmp");
+  for (const j of jobs) {
+    const baseName = String(j.filename || "").replace(/\.[^.]+$/, "") || "foto";
+    folder.file(baseName + ".xmp", String(j.xmp_content || ""));
+  }
+  folder.file("LEEME.txt", LEEME_TXT);
+  const downloadUrl = toDataUrl(await zip.generateAsync({ type: "uint8array" }));
+  return Response.json({ downloadUrl, count: jobs.length });
 }
 
 // action=process — pipeline-style job (Editkrfoto structure): reads adjustments

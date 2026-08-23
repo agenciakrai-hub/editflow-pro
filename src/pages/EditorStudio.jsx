@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2, Download, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, Download, Sparkles, Package, Plug, CheckCircle2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis";
 import { computeTechnicalBaseline } from "@/lib/rawaistudio/exposureEngine";
@@ -56,6 +56,10 @@ export default function EditorStudio() {
   const [profileChoice, setProfileChoice] = useState(session.profileChoice || null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [results, setResults] = useState([]); // [{ filename, xmp }]
+  const [zipping, setZipping] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [synced, setSynced] = useState(false);
 
   const enabledParams = useMemo(() => enabledKeys(config), [config]);
   const preferences = useMemo(() => preferencesFromConfig(config), [config]);
@@ -74,7 +78,10 @@ export default function EditorStudio() {
 
   const processAll = async () => {
     setBusy(true);
+    setResults([]);
+    setSynced(false);
     setProgress({ done: 0, total: photos.length });
+    const out = [];
     let ok = 0;
     for (let i = 0; i < photos.length; i++) {
       const photo = photos[i];
@@ -107,16 +114,55 @@ export default function EditorStudio() {
           label: lightroomLabelFor(photo.colorLabel),
         });
         xmp = addOrientation(xmp, photo.manualRotation);
-        downloadText(xmpName(photo.file.name), xmp);
+        out.push({ filename: photo.file.name, xmp });
         ok++;
       } catch (e) {
         // Continúa con la siguiente aunque una falle.
       }
       setProgress({ done: i + 1, total: photos.length });
-      await new Promise((r) => setTimeout(r, 250)); // evita que el navegador bloquee las descargas
     }
+    setResults(out);
     setBusy(false);
-    toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP descargados` });
+    toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
+  };
+
+  const downloadZip = async () => {
+    if (!results.length) return;
+    setZipping(true);
+    try {
+      const res = await base44.functions.invoke("editflow-engine", {
+        action: "zip-xmp",
+        jobs: results.map((r) => ({ filename: r.filename, xmp_content: r.xmp })),
+      });
+      const url = res?.data?.downloadUrl;
+      if (url) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "EditFlowPro-XMP.zip";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+    } catch (e) {
+      toast({ title: "Error al generar el ZIP", description: e.message, variant: "destructive" });
+    }
+    setZipping(false);
+  };
+
+  const syncToLightroom = async () => {
+    if (!results.length) return;
+    setSyncing(true);
+    try {
+      const res = await base44.functions.invoke("editflow-engine", {
+        action: "lr-push",
+        jobs: results.map((r) => ({ filename: r.filename, xmp_content: r.xmp })),
+      });
+      setSynced(true);
+      toast({ title: "Enviado a Lightroom", description: `${res?.data?.pushed ?? results.length} fotos listas para sincronizar` });
+    } catch (e) {
+      toast({ title: "Error al sincronizar", description: e.message, variant: "destructive" });
+    }
+    setSyncing(false);
   };
 
   return (
@@ -151,9 +197,36 @@ export default function EditorStudio() {
       <button onClick={processAll} disabled={busy}
         className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-white px-4 py-3 text-sm font-semibold text-black disabled:opacity-40">
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-        {busy ? `Procesando… ${progress.done} / ${progress.total}` : `Procesar y descargar ${photos.length} XMP`}
+        {busy ? `Procesando… ${progress.done} / ${progress.total}` : `Procesar ${photos.length} fotos`}
       </button>
-      {!busy && <p className="text-center text-xs text-zinc-500">Se descargará un .xmp por cada foto de la cola.</p>}
+
+      {results.length > 0 && !busy && (
+        <div className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-5 space-y-4">
+          <div className="flex items-center gap-2 text-emerald-400">
+            <CheckCircle2 className="h-5 w-5" />
+            <p className="text-sm font-semibold">{results.length} XMP generados. Elige cómo exportarlos:</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button onClick={downloadZip} disabled={zipping}
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-white px-4 py-3 text-sm font-semibold text-black hover:bg-zinc-200 disabled:opacity-40">
+              {zipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+              Descargar ZIP completo
+            </button>
+            {synced ? (
+              <button onClick={() => navigate("/lightroom")}
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-500">
+                <Plug className="h-4 w-4" /> Ir a Lightroom
+              </button>
+            ) : (
+              <button onClick={syncToLightroom} disabled={syncing}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-40">
+                {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
+                Sincronizar con Lightroom
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
