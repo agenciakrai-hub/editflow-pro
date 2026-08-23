@@ -5,8 +5,6 @@ import { base44 } from "@/api/base44Client";
 
 const navItems = [
   { to: "/herramientas", label: "Herramientas", icon: LayoutGrid },
-  { to: "/dashboard", label: "Selección IA", icon: Home },
-  { to: "/ajustes-ia", label: "Ajustes IA", icon: Wand2 },
   { to: "/preset-xmp", label: "Preset XMP", icon: FileImage },
   { to: "/lightroom", label: "Lightroom", icon: Plug },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },
