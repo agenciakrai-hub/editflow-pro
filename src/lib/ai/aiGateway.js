@@ -45,3 +45,17 @@ export async function developPhotosVisual({ photos, preferences }) {
   });
   return res?.data ?? res;
 }
+
+// Revelado Híbrido (IA Económico): la IA analiza SOLO K fotos representativas (una sola
+// llamada Vision) y genera un PERFIL DE SESIÓN; el motor local (hybridAdaptEngine) lo
+// adapta a cada foto usando fotometría real. Mínimo consumo de IA: 1 llamada por sesión,
+// no 1 por foto. Las previews van como data URLs directas (sin UploadFile/InvokeLLM).
+// representatives: [{ id, preview_base64 }] · preferences: { [param]: offset }
+// Devuelve { profile: { base_recipe, analysis, confidence } }
+export async function generateSessionProfile({ representatives, preferences }) {
+  const res = await base44.functions.invoke("rawAiHybridProfile", {
+    representatives,
+    preferences: preferences || {},
+  });
+  return res?.data ?? res;
+}

@@ -10,7 +10,8 @@ import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/li
 import { patchXmpAttributes, addRatingAndLabel, addOrientation } from "@/lib/rawaistudio/xmpTagPatcher";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
 import { getSession } from "@/lib/rawaistudio/localSession";
-import { developPhotosVisual } from "@/lib/ai/aiGateway";
+import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
+import { pickRepresentatives, adaptPhotoWithProfile } from "@/lib/rawaistudio/hybridAdaptEngine";
 import { useToast } from "@/components/ui/use-toast";
 import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelector";
 import ParameterPanel from "@/components/rawaistudio/ParameterPanel";
@@ -48,6 +49,7 @@ export default function AjustesIA() {
   const [synced, setSynced] = useState(false);
   const [presetTemplateText, setPresetTemplateText] = useState("");
   const [presetFile, setPresetFile] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [extracting, setExtracting] = useState(false);
   const [extDone, setExtDone] = useState(0);
 
@@ -94,6 +96,33 @@ export default function AjustesIA() {
     setResults([]);
     setSynced(false);
     setProgress({ done: 0, total: photos.length });
+
+    // Revelado Híbrido: 1 llamada IA con K fotos representativas → perfil de sesión.
+    // El motor local (adaptPhotoWithProfile) aplica y adapta ese perfil a cada foto.
+    let sessionProfile = null;
+    if (mode === "hybrid") {
+      try {
+        const reps = pickRepresentatives(photos, 8);
+        const repData = reps
+          .filter((p) => p.preview?.base64)
+          .map((p) => ({ id: p.id, preview_base64: p.preview.base64 }));
+        if (!repData.length) {
+          toast({ title: "Sin previews", description: "No hay previews para analizar", variant: "destructive" });
+          setBusy(false);
+          return;
+        }
+        const data = await generateSessionProfile({ representatives: repData, preferences });
+        sessionProfile = data?.profile || null;
+        setProfile(sessionProfile);
+      } catch (e) {
+        toast({ title: "Error al generar el perfil", description: e.message, variant: "destructive" });
+        setBusy(false);
+        return;
+      }
+    } else {
+      setProfile(null);
+    }
+
     const out = [];
     let ok = 0;
     for (let i = 0; i < photos.length; i++) {
@@ -113,6 +142,11 @@ export default function AjustesIA() {
           aiValues = pro?.values || {};
           needsCorrection = !!pro?.needsCorrection;
           allZero = !!pro?.allZero;
+        } else if (mode === "hybrid") {
+          // Perfil de sesión (IA, 1 llamada) + adaptación fotométrica local por foto.
+          aiValues = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams);
+          needsCorrection = Object.values(aiValues).some((v) => v);
+          allZero = !needsCorrection;
         } else {
           // Revelado IA Visual (Qwen): la IA analiza el CONTENIDO de cada foto (sujeto,
           // luz, color, mood) y decide los ajustes de revelado completos, no solo el
@@ -280,6 +314,7 @@ export default function AjustesIA() {
               onClick={() => {
                 setPhotos([]);
                 setResults([]);
+                setProfile(null);
               }}
               className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
             >
@@ -303,19 +338,16 @@ export default function AjustesIA() {
               >
                 Revelado IA Visual — Qwen
               </button>
+              <button
+                type="button"
+                onClick={() => setMode("hybrid")}
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "hybrid" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+              >
+                Híbrido — IA Económico
+              </button>
             </div>
             <PrecisionModeSelector value={precisionMode} onChange={setPrecisionMode} />
-            {mode === "qwen" ? (
-              <>
-                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado IA Visual — Qwen</p>
-                <p className="mt-1 text-xs text-zinc-500">
-                  La IA analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado
-                  completos, no solo el histograma. Selecciona qué parámetros aplicar; la preferencia es un
-                  desplazamiento que se suma a la decisión de la IA (0 = sin desplazar).
-                </p>
-                <ParameterPanel config={config} onChange={setConfig} />
-              </>
-            ) : (
+            {mode === "free" && (
               <>
                 <p className="mt-4 text-xs text-zinc-500">
                   Motor matemático local 100 % determinista. Sin IA, sin créditos y sin subida de imágenes. Analiza
@@ -330,6 +362,36 @@ export default function AjustesIA() {
                   Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…); el motor local
                   solo rellena los 6 básicos sobre él. Sin preset se usa una plantilla mínima.
                 </p>
+              </>
+            )}
+            {mode === "hybrid" && (
+              <>
+                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado Híbrido — IA Económico</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  La IA analiza solo unas pocas fotos representativas (1 llamada) y genera un perfil de sesión con el
+                  look coherente. El motor local adapta ese perfil a cada foto corrigiendo exposición/luces/sombras
+                  según su histograma real. Muy económico: 1 llamada de IA para toda la sesión, no 1 por foto. Selecciona
+                  parámetros y preferencia (0 = sin desplazar).
+                </p>
+                <ParameterPanel config={config} onChange={setConfig} />
+                {profile && (
+                  <div className="mt-3 rounded-md border border-zinc-700 bg-zinc-900 p-3">
+                    <p className="text-xs font-medium text-zinc-200">Perfil de sesión generado</p>
+                    <p className="mt-1 text-xs text-zinc-500">{profile.analysis || "Sin descripción"}</p>
+                    <p className="mt-1 text-xs text-zinc-500">Confianza: {profile.confidence ?? "—"}</p>
+                  </div>
+                )}
+              </>
+            )}
+            {mode === "qwen" && (
+              <>
+                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado IA Visual — Qwen</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  La IA analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado
+                  completos, no solo el histograma. Selecciona qué parámetros aplicar; la preferencia es un
+                  desplazamiento que se suma a la decisión de la IA (0 = sin desplazar).
+                </p>
+                <ParameterPanel config={config} onChange={setConfig} />
               </>
             )}
           </div>
