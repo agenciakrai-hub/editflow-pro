@@ -5,13 +5,12 @@ import { base44 } from "@/api/base44Client";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis";
-import { computeTechnicalBaseline } from "@/lib/rawaistudio/exposureEngine";
 import { computeAutoBasicsPro } from "@/lib/rawaistudio/autoBasicsEngine";
 import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/lib/rawaistudio/paramDefs";
 import { patchXmpAttributes, addRatingAndLabel, addOrientation } from "@/lib/rawaistudio/xmpTagPatcher";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
 import { getSession } from "@/lib/rawaistudio/localSession";
-import { analyzePhotos } from "@/lib/ai/aiGateway";
+import { developPhotosVisual } from "@/lib/ai/aiGateway";
 import { useToast } from "@/components/ui/use-toast";
 import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelector";
 import ParameterPanel from "@/components/rawaistudio/ParameterPanel";
@@ -115,23 +114,16 @@ export default function AjustesIA() {
           needsCorrection = !!pro?.needsCorrection;
           allZero = !!pro?.allZero;
         } else {
-          // Modo Qwen: motor IA intacto (igual que antes).
-          const baseline = stats ? computeTechnicalBaseline(stats, precisionMode) : null;
-          const data = await analyzePhotos({
-            photos: [
-              {
-                id: photo.id,
-                preview_base64: base64,
-                baseline: baseline?.values || null,
-                technical_confidence: baseline?.confidence ?? null,
-                camera: photo.cameraInfo?.brand || null,
-              },
-            ],
-            enabledParams,
+          // Revelado IA Visual (Qwen): la IA analiza el CONTENIDO de cada foto (sujeto,
+          // luz, color, mood) y decide los ajustes de revelado completos, no solo el
+          // histograma. Sin baseline técnico. Se filtra a los parámetros activados.
+          const data = await developPhotosVisual({
+            photos: [{ id: photo.id, preview_base64: base64 }],
             preferences,
-            precisionMode,
           });
-          aiValues = data?.results?.[photo.id] || {};
+          const all = data?.results?.[photo.id] || {};
+          aiValues = {};
+          for (const k of enabledParams) if (typeof all[k] === "number") aiValues[k] = all[k];
         }
         // GRATIS: el preset (.xmp) aporta todo lo creativo; el motor local solo rellena los
         // 6 básicos sobre él. Sin preset, plantilla mínima. IA: siempre plantilla mínima.
@@ -309,15 +301,17 @@ export default function AjustesIA() {
                 onClick={() => setMode("qwen")}
                 className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "qwen" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
               >
-                Ajustes IA — Qwen
+                Revelado IA Visual — Qwen
               </button>
             </div>
             <PrecisionModeSelector value={precisionMode} onChange={setPrecisionMode} />
             {mode === "qwen" ? (
               <>
-                <p className="mt-4 text-sm font-medium text-zinc-100">Parámetros de revelado IA</p>
+                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado IA Visual — Qwen</p>
                 <p className="mt-1 text-xs text-zinc-500">
-                  Activa los parámetros que la IA puede tocar. La preferencia es un desplazamiento (0 = sin desplazar).
+                  La IA analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado
+                  completos, no solo el histograma. Selecciona qué parámetros aplicar; la preferencia es un
+                  desplazamiento que se suma a la decisión de la IA (0 = sin desplazar).
                 </p>
                 <ParameterPanel config={config} onChange={setConfig} />
               </>

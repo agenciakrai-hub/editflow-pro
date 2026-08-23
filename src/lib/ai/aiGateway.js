@@ -32,3 +32,16 @@ export async function analyzePhotos({ photos, enabledParams, preferences, precis
   });
   return res?.data ?? res;
 }
+
+// Revelado IA Visual (Qwen): la IA analiza el CONTENIDO de cada foto y decide los ajustes
+// de revelado completos de Lightroom (no solo histograma). Previews como data URLs directas
+// a Qwen, sin UploadFile ni InvokeLLM Base44.
+// photos: [{ id, preview_base64 }] · preferences: { [param]: offset }
+// Devuelve { results: { id: { Exposure2012, ... } }, errors, confidences }
+export async function developPhotosVisual({ photos, preferences }) {
+  const res = await base44.functions.invoke("rawAiVisualDevelop", {
+    photos,
+    preferences: preferences || {},
+  });
+  return res?.data ?? res;
+}

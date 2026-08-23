@@ -31,6 +31,9 @@ interface InvokeOpts {
   file_urls?: string[];
   response_json_schema?: any;
   _trace?: any;
+  // Fuerza un proveedor concreto ignorando active_seleccion/active_ajustes. Lo usa el
+  // motor de revelado IA visual (Qwen) para garantizar Qwen sin depender de la config.
+  forceProvider?: Provider;
 }
 
 // Lee el unico registro de configuracion (admin-only entity, accedido via service role).
@@ -155,7 +158,7 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
 
 // Punto unico de ruteo. SIN FAILOVER.
 export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
-  const provider = await activeProviderFor(base44, opts.task);
+  const provider = opts.forceProvider || (await activeProviderFor(base44, opts.task));
   if (provider === "qwen") {
     const cfg = await getConfig(base44);
     console.log(`[aiProvider] task=${opts.task} provider=qwen model=${cfg?.qwen_model || "qwen3-vl-plus"}`);
