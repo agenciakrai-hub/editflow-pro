@@ -1,6 +1,6 @@
 // RAW AI Studio — motor TÉCNICO: mide objetivamente la distribución tonal de la preview
-// (histograma, percentiles, clipping) para que exposición/luces/sombras no dependan
-// únicamente de que un LLM "mire" la imagen y adivine un valor.
+// (histograma de luminancia + RGB por canal, percentiles, clipping) para que los ajustes
+// básicos de revelado no dependan de que un LLM "mire" la imagen y adivine un valor.
 //
 // LIMITACIÓN CONOCIDA (honesta, no se simula): esta preview es el JPEG embebido por la
 // propia cámara (ya lleva su picture style/curva/contraste aplicados), no datos RAW
@@ -18,8 +18,11 @@ function loadImage(base64) {
   });
 }
 
-// Devuelve percentiles de luminancia (0-255) y porcentaje de píxeles realmente saturados en
+// Devuelve percentiles de luminancia (0-255) y porcentaje de píxeles saturados en
 // blanco/negro puro (clipping), calculados sobre la preview reducida (rendimiento).
+// Además devuelve el histograma RGB por canal (percentiles + clipping) para detectar
+// quemados de un solo canal (p.ej. canal rojo de piel sobreexpuesta) que la luminancia
+// por sí sola enmascara.
 //
 // Medición ponderada al centro (como el fotómetro de una cámara real): el sujeto de una
 // boda suele estar cerca del centro del encuadre, así que un fondo muy claro u oscuro en
@@ -38,7 +41,11 @@ export async function analyzePhotometrics(base64Jpeg) {
   const { data } = ctx.getImageData(0, 0, w, h);
 
   const histogram = new Array(256).fill(0);
+  const histR = new Array(256).fill(0);
+  const histG = new Array(256).fill(0);
+  const histB = new Array(256).fill(0);
   let clipHighlight = 0, clipShadow = 0;
+  let clipR = 0, clipG = 0, clipB = 0;
   const total = w * h;
   const cx = w / 2, cy = h / 2;
   const maxDist = Math.sqrt(cx * cx + cy * cy) || 1;
@@ -52,26 +59,48 @@ export async function analyzePhotometrics(base64Jpeg) {
       const dist = Math.sqrt((px - cx) ** 2 + (py - cy) ** 2) / maxDist; // 0 centro, 1 esquina
       const weight = 0.4 + 0.6 * (1 - dist); // 1 en el centro, 0.4 en las esquinas
       histogram[y] += weight;
+      histR[r] += weight;
+      histG[g] += weight;
+      histB[b] += weight;
       totalWeight += weight;
       if (r >= 250 && g >= 250 && b >= 250) clipHighlight++;
       if (r <= 4 && g <= 4 && b <= 4) clipShadow++;
+      if (r >= 250) clipR++;
+      if (g >= 250) clipG++;
+      if (b >= 250) clipB++;
       idx++;
     }
   }
 
-  const percentile = (p) => {
+  const percentile = (hist, p) => {
     const target = totalWeight * p;
     let acc = 0;
     for (let v = 0; v < 256; v++) {
-      acc += histogram[v];
+      acc += hist[v];
       if (acc >= target) return v;
     }
     return 255;
   };
 
+  const channel = (hist, clip) => ({
+    p95: percentile(hist, 0.95),
+    p99: percentile(hist, 0.99),
+    clipPct: clip / total,
+  });
+
   return {
-    p1: percentile(0.01), p5: percentile(0.05), p25: percentile(0.25), p50: percentile(0.5),
-    p75: percentile(0.75), p95: percentile(0.95), p99: percentile(0.99),
-    clipHighlightPct: clipHighlight / total, clipShadowPct: clipShadow / total
+    p1: percentile(histogram, 0.01), p5: percentile(histogram, 0.05),
+    p25: percentile(histogram, 0.25), p50: percentile(histogram, 0.5),
+    p75: percentile(histogram, 0.75), p95: percentile(histogram, 0.95),
+    p99: percentile(histogram, 0.99),
+    clipHighlightPct: clipHighlight / total,
+    clipShadowPct: clipShadow / total,
+    globalContrast: (percentile(histogram, 0.95) - percentile(histogram, 0.05)),
+    dynamicRange: (percentile(histogram, 0.99) - percentile(histogram, 0.01)),
+    channels: {
+      r: channel(histR, clipR),
+      g: channel(histG, clipG),
+      b: channel(histB, clipB),
+    },
   };
 }

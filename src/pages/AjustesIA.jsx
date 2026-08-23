@@ -5,7 +5,8 @@ import { base44 } from "@/api/base44Client";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis";
-import { computeTechnicalBaseline, computeFreeBaseline } from "@/lib/rawaistudio/exposureEngine";
+import { computeTechnicalBaseline } from "@/lib/rawaistudio/exposureEngine";
+import { computeAutoBasicsPro } from "@/lib/rawaistudio/autoBasicsEngine";
 import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/lib/rawaistudio/paramDefs";
 import { patchXmpAttributes, addRatingAndLabel, addOrientation } from "@/lib/rawaistudio/xmpTagPatcher";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
@@ -47,7 +48,6 @@ export default function AjustesIA() {
   const [synced, setSynced] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extDone, setExtDone] = useState(0);
-  const [debugTrace, setDebugTrace] = useState([]);
 
   const enabledParams = useMemo(() => enabledKeys(config), [config]);
   const preferences = useMemo(() => preferencesFromConfig(config), [config]);
@@ -93,7 +93,6 @@ export default function AjustesIA() {
     setSynced(false);
     setProgress({ done: 0, total: photos.length });
     const out = [];
-    const traces = [];
     let ok = 0;
     for (let i = 0; i < photos.length; i++) {
       const photo = photos[i];
@@ -101,31 +100,17 @@ export default function AjustesIA() {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
         let aiValues = {};
+        let needsCorrection = false;
+        let allZero = false;
         if (mode === "free") {
-          // Modo GRATIS: 100% determinista, cero llamadas IA/red para análisis.
-          const free = stats ? computeFreeBaseline(stats, precisionMode) : null;
-          aiValues = free?.values || {};
-          // VERIFICACIÓN TEMPORAL (solo rama GRATIS): vuelca métricas + resultado ANTES
-          // de patchXmpAttributes para diagnosticar si los ceros vienen de (1) pérdida
-          // en el paso a XMP o (2) computeFreeBaseline que ya devuelve cero.
-          const trace = {
-            filename: photo.file.name,
-            photometrics: stats ? {
-              p1: stats.p1, p50: stats.p50, p95: stats.p95,
-              clipHighlightPct: stats.clipHighlightPct, clipShadowPct: stats.clipShadowPct,
-            } : null,
-            freeBaseline: free ? {
-              Exposure2012: free.values.Exposure2012,
-              Highlights2012: free.values.Highlights2012,
-              Shadows2012: free.values.Shadows2012,
-              Whites2012: free.values.Whites2012,
-              Blacks2012: free.values.Blacks2012,
-              Contrast2012: free.values.Contrast2012,
-              confidence: free.confidence,
-            } : null,
-          };
-          console.log("[FREE TRACE]", trace.filename, trace);
-          traces.push(trace);
+          // Auto Ajustes Básicos Pro — GRATIS: 100% determinista, cero llamadas IA/red.
+          // Analiza histograma (RGB por canal + luminancia), clipping de altas luces y
+          // sombras, distribución tonal y contraste global. Devuelve siempre los 6
+          // parámetros de revelado básico.
+          const pro = stats ? computeAutoBasicsPro(stats, precisionMode) : null;
+          aiValues = pro?.values || {};
+          needsCorrection = !!pro?.needsCorrection;
+          allZero = !!pro?.allZero;
         } else {
           // Modo Qwen: motor IA intacto (igual que antes).
           const baseline = stats ? computeTechnicalBaseline(stats, precisionMode) : null;
@@ -152,7 +137,7 @@ export default function AjustesIA() {
           label: fromSession ? lightroomLabelFor(photo.colorLabel) : null,
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
-        out.push({ filename: photo.file.name, xmp });
+        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues });
         ok++;
       } catch {
         // Continúa con la siguiente aunque una falle.
@@ -160,13 +145,23 @@ export default function AjustesIA() {
       setProgress({ done: i + 1, total: photos.length });
     }
     setResults(out);
-    setDebugTrace(mode === "free" ? traces : []);
     setBusy(false);
     toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
   };
 
   const downloadZip = async () => {
     if (!results.length) return;
+    // Validación pre-ZIP: cada foto que necesita corrección debe tener valores no nulos.
+    const needing = results.filter((r) => r.needsCorrection);
+    const bad = needing.filter((r) => !r.values || Object.values(r.values).every((v) => !v));
+    if (bad.length) {
+      toast({
+        title: "Validación fallida",
+        description: `${bad.length} foto(s) necesitan corrección pero quedaron sin valores. Revisa antes de exportar.`,
+        variant: "destructive",
+      });
+      return;
+    }
     setZipping(true);
     try {
       const res = await base44.functions.invoke("editflow-engine", {
@@ -302,7 +297,7 @@ export default function AjustesIA() {
                 onClick={() => setMode("free")}
                 className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "free" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
               >
-                Ajustes automáticos — GRATIS
+                Auto Ajustes Básicos Pro — GRATIS
               </button>
               <button
                 type="button"
@@ -323,8 +318,9 @@ export default function AjustesIA() {
               </>
             ) : (
               <p className="mt-4 text-xs text-zinc-500">
-                Modo determinista: análisis fotométrico local. Sin IA, sin créditos y sin subida de imágenes.
-                Calcula Exposure, Luces, Sombras, Blancos, Negros y Contraste a partir del histograma real de cada foto.
+                Motor matemático local 100 % determinista. Sin IA, sin créditos y sin subida de imágenes. Analiza
+                histograma RGB por canal + luminancia, clipping de altas luces y sombras, distribución tonal y contraste
+                global para calcular los 6 básicos: Exposure, Contrast, Highlights, Shadows, Whites y Blacks.
               </p>
             )}
           </div>
@@ -344,6 +340,10 @@ export default function AjustesIA() {
                 <CheckCircle2 className="h-5 w-5" />
                 <p className="text-sm font-semibold">{results.length} XMP generados. Elige cómo exportarlos:</p>
               </div>
+              <p className="text-xs text-zinc-400">
+                Validación: {results.filter((r) => r.needsCorrection).length} fotos con corrección aplicada ·{" "}
+                {results.filter((r) => !r.needsCorrection).length} ya equilibradas (sin ajuste).
+              </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
                   onClick={downloadZip}
@@ -378,25 +378,6 @@ export default function AjustesIA() {
             </div>
           )}
 
-          {debugTrace.length > 0 && (
-            <div className="rounded-xl border border-amber-800 bg-amber-950/30 p-5 space-y-3">
-              <p className="text-sm font-semibold text-amber-400">Verificación FREE (temporal)</p>
-              <p className="text-xs text-zinc-400">
-                Vuelca métricas fotométricas y resultado de computeFreeBaseline por foto, antes de patchXmpAttributes.
-                Si <code>p50</code> cae en [105,155] y clipping es bajo, los ceros son esperables (la preview JPEG ya está normalizada por la cámara).
-                Si <code>p50</code> está fuera de rango y aun así FreeBaseline es 0, hay que revisar computeFreeBaseline.
-              </p>
-              <div className="space-y-2">
-                {debugTrace.map((t, i) => (
-                  <div key={i} className="rounded-md border border-amber-900/50 bg-black/40 p-3 text-xs font-mono">
-                    <p className="text-amber-300">{t.filename}</p>
-                    <p className="mt-1 text-zinc-400">Photometrics: {t.photometrics ? JSON.stringify(t.photometrics) : "null"}</p>
-                    <p className="text-zinc-400">FreeBaseline: {t.freeBaseline ? JSON.stringify(t.freeBaseline) : "null"}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
     </div>
