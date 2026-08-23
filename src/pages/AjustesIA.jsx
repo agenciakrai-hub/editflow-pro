@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, Loader2, Sparkles, Package, Plug, CheckCircle2, ArrowLeft } from "lucide-react";
 import { base44 } from "@/api/base44Client";
@@ -16,6 +16,7 @@ import { useToast } from "@/components/ui/use-toast";
 import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelector";
 import ParameterPanel from "@/components/rawaistudio/ParameterPanel";
 import PresetLoadSection from "@/components/rawaistudio/PresetLoadSection";
+import HybridValidationPanel from "@/components/rawaistudio/HybridValidationPanel";
 
 // Plantilla XMP mínima cuando no hay preset .xmp: define el namespace crs y deja
 // que la IA rellene los básicos. (Mismo contrato que EditorStudio.)
@@ -50,11 +51,18 @@ export default function AjustesIA() {
   const [presetTemplateText, setPresetTemplateText] = useState("");
   const [presetFile, setPresetFile] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [samples, setSamples] = useState([]);
+  const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extDone, setExtDone] = useState(0);
 
   const enabledParams = useMemo(() => enabledKeys(config), [config]);
   const preferences = useMemo(() => preferencesFromConfig(config), [config]);
+
+  useEffect(() => {
+    setAwaitingConfirm(false);
+    setSamples([]);
+  }, [mode]);
 
   const useSession = () => {
     if (!session.photos?.length) return;
@@ -92,37 +100,12 @@ export default function AjustesIA() {
 
   const processAll = async () => {
     if (!photos.length) return;
+    if (mode === "hybrid") return runHybridPreview();
     setBusy(true);
     setResults([]);
     setSynced(false);
+    setAwaitingConfirm(false);
     setProgress({ done: 0, total: photos.length });
-
-    // Revelado Híbrido: 1 llamada IA con K fotos representativas → perfil de sesión.
-    // El motor local (adaptPhotoWithProfile) aplica y adapta ese perfil a cada foto.
-    let sessionProfile = null;
-    if (mode === "hybrid") {
-      try {
-        const reps = pickRepresentatives(photos, 8);
-        const repData = reps
-          .filter((p) => p.preview?.base64)
-          .map((p) => ({ id: p.id, preview_base64: p.preview.base64 }));
-        if (!repData.length) {
-          toast({ title: "Sin previews", description: "No hay previews para analizar", variant: "destructive" });
-          setBusy(false);
-          return;
-        }
-        const data = await generateSessionProfile({ representatives: repData, preferences });
-        sessionProfile = data?.profile || null;
-        setProfile(sessionProfile);
-      } catch (e) {
-        toast({ title: "Error al generar el perfil", description: e.message, variant: "destructive" });
-        setBusy(false);
-        return;
-      }
-    } else {
-      setProfile(null);
-    }
-
     const out = [];
     let ok = 0;
     for (let i = 0; i < photos.length; i++) {
@@ -135,22 +118,14 @@ export default function AjustesIA() {
         let allZero = false;
         if (mode === "free") {
           // Auto Ajustes Básicos Pro — GRATIS: 100% determinista, cero llamadas IA/red.
-          // Analiza histograma (RGB por canal + luminancia), clipping de altas luces y
-          // sombras, distribución tonal y contraste global. Devuelve siempre los 6
-          // parámetros de revelado básico.
           const pro = stats ? computeAutoBasicsPro(stats, precisionMode) : null;
           aiValues = pro?.values || {};
           needsCorrection = !!pro?.needsCorrection;
           allZero = !!pro?.allZero;
-        } else if (mode === "hybrid") {
-          // Perfil de sesión (IA, 1 llamada) + adaptación fotométrica local por foto.
-          aiValues = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams);
-          needsCorrection = Object.values(aiValues).some((v) => v);
-          allZero = !needsCorrection;
         } else {
           // Revelado IA Visual (Qwen): la IA analiza el CONTENIDO de cada foto (sujeto,
           // luz, color, mood) y decide los ajustes de revelado completos, no solo el
-          // histograma. Sin baseline técnico. Se filtra a los parámetros activados.
+          // histograma. Se filtra a los parámetros activados.
           const data = await developPhotosVisual({
             photos: [{ id: photo.id, preview_base64: base64 }],
             preferences,
@@ -159,9 +134,83 @@ export default function AjustesIA() {
           aiValues = {};
           for (const k of enabledParams) if (typeof all[k] === "number") aiValues[k] = all[k];
         }
-        // GRATIS: el preset (.xmp) aporta todo lo creativo; el motor local solo rellena los
-        // 6 básicos sobre él. Sin preset, plantilla mínima. IA: siempre plantilla mínima.
         let xmp = mode === "free" ? (presetTemplateText || DEFAULT_TEMPLATE) : DEFAULT_TEMPLATE;
+        xmp = patchXmpAttributes(xmp, aiValues);
+        xmp = addRatingAndLabel(xmp, {
+          rating: photo.rating || 0,
+          label: fromSession ? lightroomLabelFor(photo.colorLabel) : null,
+        });
+        xmp = addOrientation(xmp, photo.manualRotation || 0);
+        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues });
+        ok++;
+      } catch {
+        // Continúa con la siguiente aunque una falle.
+      }
+      setProgress({ done: i + 1, total: photos.length });
+    }
+    setResults(out);
+    setBusy(false);
+    toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
+  };
+
+  // FASE 1 del Revelado Híbrido: 1 llamada IA con K representantes → perfil de sesión,
+  // y aplica el motor local a 5 fotos de muestra. Muestra la validación ANTES de procesar
+  // toda la sesión. No consume más IA (el resto es adaptación local por foto).
+  const runHybridPreview = async () => {
+    setBusy(true);
+    setResults([]);
+    setSynced(false);
+    setSamples([]);
+    setAwaitingConfirm(false);
+    try {
+      const reps = pickRepresentatives(photos, 8);
+      const repData = reps
+        .filter((p) => p.preview?.base64)
+        .map((p) => ({ id: p.id, preview_base64: p.preview.base64 }));
+      if (!repData.length) {
+        toast({ title: "Sin previews", description: "No hay previews para analizar", variant: "destructive" });
+        setBusy(false);
+        return;
+      }
+      const data = await generateSessionProfile({ representatives: repData, preferences });
+      const sessionProfile = data?.profile || null;
+      setProfile(sessionProfile);
+      // 5 fotos de muestra (muestreo uniforme) con sus valores finales adaptados localmente.
+      const samplePhotos = pickRepresentatives(photos, 5);
+      const sampleOut = [];
+      for (const photo of samplePhotos) {
+        const base64 = photo.preview?.base64;
+        const stats = base64 ? await analyzePhotometrics(base64) : null;
+        const values = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams);
+        sampleOut.push({ id: photo.id, filename: photo.file.name, preview: base64, values });
+      }
+      setSamples(sampleOut);
+      setAwaitingConfirm(true);
+    } catch (e) {
+      toast({ title: "Error al generar el perfil", description: e.message, variant: "destructive" });
+    }
+    setBusy(false);
+  };
+
+  // FASE 2 del Revelado Híbrido: tras la validación, aplica el perfil a TODAS las fotos
+  // (adaptación local por foto, sin más llamadas IA) y deja los XMP listos para exportar.
+  const confirmHybridAll = async () => {
+    if (!profile) return;
+    setBusy(true);
+    setAwaitingConfirm(false);
+    setResults([]);
+    setProgress({ done: 0, total: photos.length });
+    const out = [];
+    let ok = 0;
+    for (let i = 0; i < photos.length; i++) {
+      const photo = photos[i];
+      try {
+        const base64 = photo.preview?.base64;
+        const stats = base64 ? await analyzePhotometrics(base64) : null;
+        const aiValues = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams);
+        const needsCorrection = Object.values(aiValues).some((v) => v);
+        const allZero = !needsCorrection;
+        let xmp = DEFAULT_TEMPLATE;
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
@@ -398,12 +447,30 @@ export default function AjustesIA() {
 
           <button
             onClick={processAll}
-            disabled={busy}
+            disabled={busy || awaitingConfirm}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-white px-4 py-3 text-sm font-semibold text-black disabled:opacity-40"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {busy ? `Procesando… ${progress.done} / ${progress.total}` : `Procesar ${photos.length} fotos`}
+            {busy
+              ? `Procesando… ${progress.done} / ${progress.total}`
+              : mode === "hybrid"
+              ? `Generar perfil y 5 muestras`
+              : `Procesar ${photos.length} fotos`}
           </button>
+
+          {awaitingConfirm && samples.length > 0 && (
+            <HybridValidationPanel
+              profile={profile}
+              samples={samples}
+              total={photos.length}
+              confirming={busy}
+              onConfirm={confirmHybridAll}
+              onCancel={() => {
+                setAwaitingConfirm(false);
+                setSamples([]);
+              }}
+            />
+          )}
 
           {results.length > 0 && !busy && (
             <div className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-5 space-y-4">
