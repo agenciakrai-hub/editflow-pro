@@ -15,6 +15,7 @@ import { analyzePhotos } from "@/lib/ai/aiGateway";
 import { useToast } from "@/components/ui/use-toast";
 import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelector";
 import ParameterPanel from "@/components/rawaistudio/ParameterPanel";
+import PresetLoadSection from "@/components/rawaistudio/PresetLoadSection";
 
 // Plantilla XMP mínima cuando no hay preset .xmp: define el namespace crs y deja
 // que la IA rellene los básicos. (Mismo contrato que EditorStudio.)
@@ -46,6 +47,8 @@ export default function AjustesIA() {
   const [zipping, setZipping] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
+  const [presetTemplateText, setPresetTemplateText] = useState("");
+  const [presetFile, setPresetFile] = useState(null);
   const [extracting, setExtracting] = useState(false);
   const [extDone, setExtDone] = useState(0);
 
@@ -130,7 +133,9 @@ export default function AjustesIA() {
           });
           aiValues = data?.results?.[photo.id] || {};
         }
-        let xmp = DEFAULT_TEMPLATE;
+        // GRATIS: el preset (.xmp) aporta todo lo creativo; el motor local solo rellena los
+        // 6 básicos sobre él. Sin preset, plantilla mínima. IA: siempre plantilla mínima.
+        let xmp = mode === "free" ? (presetTemplateText || DEFAULT_TEMPLATE) : DEFAULT_TEMPLATE;
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
@@ -317,11 +322,21 @@ export default function AjustesIA() {
                 <ParameterPanel config={config} onChange={setConfig} />
               </>
             ) : (
-              <p className="mt-4 text-xs text-zinc-500">
-                Motor matemático local 100 % determinista. Sin IA, sin créditos y sin subida de imágenes. Analiza
-                histograma RGB por canal + luminancia, clipping de altas luces y sombras, distribución tonal y contraste
-                global para calcular los 6 básicos: Exposure, Contrast, Highlights, Shadows, Whites y Blacks.
-              </p>
+              <>
+                <p className="mt-4 text-xs text-zinc-500">
+                  Motor matemático local 100 % determinista. Sin IA, sin créditos y sin subida de imágenes. Analiza
+                  histograma RGB por canal + luminancia, clipping de altas luces y sombras, distribución tonal y contraste
+                  global para calcular los 6 básicos: Exposure, Contrast, Highlights, Shadows, Whites y Blacks.
+                </p>
+                <PresetLoadSection
+                  presetFile={presetFile}
+                  onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
+                />
+                <p className="mt-2 text-xs text-zinc-500">
+                  Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…); el motor local
+                  solo rellena los 6 básicos sobre él. Sin preset se usa una plantilla mínima.
+                </p>
+              </>
             )}
           </div>
 
