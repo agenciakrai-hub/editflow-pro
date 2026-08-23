@@ -208,41 +208,62 @@ export async function runAiBurstSelection(withPreview, onProgress) {
     onProgress?.(resolved);
   }, () => {});
 
-  // DEDUP entre grupos: casi-duplicados entre seleccionados de grupos distintos.
-  // Conserva el de mayor overall; demuele el otro a REVIEW (no REJECT, el usuario
-  // puede recuperarlo). Umbral muy estricto: solo fusiona verdaderos duplicados.
-  dedupAcrossGroups(Array.from(keep), meta, withPreview);
+  // DEDUP entre grupos: pHash detecta candidatos; la IA compara visualmente (momento,
+  // expresión, composición, sujeto) y solo rebaja si es un duplicado REAL. Diferencia
+  // significativa de momento/expresión/composición → NO se consideran duplicados.
+  await dedupAcrossGroups(keep, meta, withPreview);
 
   return { keep, meta };
 }
 
-// Detecta casi-duplicados entre grupos entre los seleccionados y conserva el mejor.
-function dedupAcrossGroups(selectedIds, meta, withPreview) {
+function ctxOf(m) {
+  if (!m) return {};
+  return { status: m.status, category: m.category, note: m.category_note || m.reason || "" };
+}
+
+// Detecta pares con pHash cercano entre grupos y pide a la IA una comparación visual.
+// Solo rebaja a REVIEW si la IA confirma duplicado real; conserva ambas en caso contrario.
+async function dedupAcrossGroups(keep, meta, withPreview) {
+  const selectedIds = Array.from(keep);
   const byId = new Map(withPreview.map((p) => [p.id, p]));
-  const demoted = new Set();
+  const pairs = [];
   for (let i = 0; i < selectedIds.length; i++) {
-    if (demoted.has(selectedIds[i])) continue;
     const a = byId.get(selectedIds[i]);
     if (!a?.phash) continue;
-    const aOverall = meta.get(a.id)?.scores?.overall ?? 0;
     for (let j = i + 1; j < selectedIds.length; j++) {
-      if (demoted.has(selectedIds[j])) continue;
       const b = byId.get(selectedIds[j]);
       if (!b?.phash) continue;
       if (meta.get(a.id)?.groupId === meta.get(b.id)?.groupId) continue; // mismo grupo
       const d = phashDistance(a.phash, b.phash);
       if (d >= 0 && d <= DEDUP_PHASH_THRESHOLD) {
-        const bOverall = meta.get(b.id)?.scores?.overall ?? 0;
-        const loserId = aOverall >= bOverall ? b.id : a.id;
-        demoted.add(loserId);
-        const m = meta.get(loserId);
-        if (m) {
-          m.status = "REVIEW";
-          m.rejectReasons = [...(m.rejectReasons || []), "DUPLICATE_NEAR_DUPLICATE_IN_SESSION"];
-          m.reason = `Casi-duplicado de otra foto seleccionada (distancia pHash ${d})`;
-        }
+        pairs.push({
+          pair_id: `pair_${i}_${j}`,
+          id_a: a.id, id_b: b.id,
+          preview_a_base64: a.preview?.base64, preview_b_base64: b.preview?.base64,
+          context_a: ctxOf(meta.get(a.id)),
+          context_b: ctxOf(meta.get(b.id)),
+        });
       }
     }
+  }
+  if (!pairs.length) return;
+  try {
+    const { data } = await base44.functions.invoke("rawAiDedupCompare", { pairs });
+    const decisions = data?.decisions || {};
+    for (const pair of pairs) {
+      const dec = decisions[pair.pair_id];
+      if (!dec || !dec.duplicate || !dec.demote) continue;
+      const loserId = dec.demote === "a" ? pair.id_a : pair.id_b;
+      keep.delete(loserId);
+      const m = meta.get(loserId);
+      if (m) {
+        m.status = "REVIEW";
+        m.rejectReasons = [...(m.rejectReasons || []), "DUPLICATE_NEAR_DUPLICATE_IN_SESSION"];
+        m.reason = dec.reason || "Casi-duplicado de otra foto seleccionada";
+      }
+    }
+  } catch {
+    // IA no disponible: no se rebaja nada (conservador). Se conservan ambas.
   }
 }
 

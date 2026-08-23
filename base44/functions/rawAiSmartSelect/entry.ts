@@ -31,6 +31,10 @@ import { runWithConcurrency } from '../../shared/concurrency.ts';
 const MODEL = 'claude_sonnet_4_6';
 const MAX_IMAGES_PER_CALL = 12;
 const MAX_CONCURRENT_LLM = 3;
+// Para grupos > MAX_IMAGES_PER_CALL: dos llamadas (mitades) + una TERCERA llamada de
+// consolidación SOLO entre los mejores candidatos de ambas mitades (re-análisis visual,
+// no overall numérico). Finalistas por mitad.
+const FINALISTS_PER_HALF = 4;
 
 const SCORE_KEYS = [
   'technical', 'sharpness', 'focus', 'face_quality', 'eye_quality',
@@ -102,14 +106,14 @@ function technicalFallback(candidateIds: string[], technicals: Record<string, an
     const s = (t.sharpness ?? 0) * 0.6 + (t.exposureScore ?? 0.5) * 0.4;
     if (s > bestScore) { bestScore = s; bestId = id; }
   }
+  const bestTech = bestId ? technicals[bestId] : null;
+  const bestClearlySuperior = !!bestId && bestScore > 0.4 && ((bestTech?.exposureScore ?? 0) > 0.6);
   const rankings = candidateIds.map((id) => {
     const isBest = id === bestId;
-    const t = technicals[id];
-    const clearlySuperior = isBest && bestScore > 0.4 && (t?.exposureScore ?? 0) > 0.6;
     return {
       id,
       rank: isBest ? 1 : 999,
-      status: isBest ? (clearlySuperior ? 'SELECT' : 'REVIEW') : 'REVIEW',
+      status: isBest ? (bestClearlySuperior ? 'SELECT' : 'REVIEW') : 'REVIEW',
       reject_reasons: [],
       note: 'Evaluación IA no disponible — clasificado por fallback técnico',
       scores: {},
@@ -117,7 +121,7 @@ function technicalFallback(candidateIds: string[], technicals: Record<string, an
       missing_dimensions: [...SCORE_KEYS],
     };
   });
-  const keep = bestId ? [bestId] : [];
+  const keep = bestClearlySuperior && bestId ? [bestId] : [];
   return {
     keep_ids: keep,
     category: null,
@@ -166,11 +170,28 @@ STEP 4 — Decide COMPARATIVELY (relative ranking inside this group):
 - REVIEW: not confident (low confidence, borderline faces/exposure, near-tie with a clearly better one but not clearly rejectable). When in doubt → REVIEW, never auto-REJECT.
 - REJECT: ONLY for a CLEAR, COMBINED defect — never a single metric alone. Use structured reject_reasons from: CRITICAL_BLUR, FOCUS_FAILURE, EYES_CLOSED, DUPLICATE, LOWER_RANK_IN_BURST, POOR_EXPRESSION, POOR_COMPOSITION, SEVERE_EXPOSURE_FAILURE, OBSTRUCTED_SUBJECT, CORRUPT.
 - Never REJECT for low sharpness alone, low exposure alone, or low confidence alone.
+- A photo where a KEY face has EYES_CLOSED (mid-blink, fully shut) must NEVER be TOP_PICK or SELECT — use REVIEW (if otherwise good and recoverable) or REJECT (if clearly unusable), and include EYES_CLOSED in reject_reasons.
 ${singletonRule}
 
 Candidate photo ids: ${idList}. The images are attached in the same order.
 
 Return JSON for this group with: keep_ids (the SELECT+TOP_PICK ids, best first — may be empty ONLY if every photo is REJECT), category (the genre string), reason (short explanation citing faces/eyes/expression and why the TOP_PICK won over the others), and rankings (one object per candidate with id, rank, status, reject_reasons array, the ${SCORE_KEYS.join(', ')} scores, analysis_complete boolean, and a short note).`;
+}
+
+function rankingItemSchema(): any {
+  return {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      rank: { type: 'number' },
+      status: { type: 'string', enum: VALID_STATUS },
+      reject_reasons: { type: 'array', items: { type: 'string' } },
+      note: { type: 'string' },
+      analysis_complete: { type: 'boolean' },
+      ...scoreProps(),
+    },
+    required: ['id', 'rank', 'status', 'reject_reasons', 'overall', 'confidence'],
+  };
 }
 
 function groupSchemaFor(): any {
@@ -180,24 +201,106 @@ function groupSchemaFor(): any {
       keep_ids: { type: 'array', items: { type: 'string' } },
       category: { type: 'string' },
       reason: { type: 'string' },
-      rankings: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            id: { type: 'string' },
-            rank: { type: 'number' },
-            status: { type: 'string', enum: VALID_STATUS },
-            reject_reasons: { type: 'array', items: { type: 'string' } },
-            note: { type: 'string' },
-            analysis_complete: { type: 'boolean' },
-            ...scoreProps(),
-          },
-          required: ['id', 'rank', 'status', 'reject_reasons', 'overall', 'confidence'],
-        },
-      },
+      rankings: { type: 'array', items: rankingItemSchema() },
     },
     required: ['keep_ids', 'category', 'reason', 'rankings'],
+  };
+}
+
+// Selecciona los N mejores candidatos de una mitad por (estado, -overall), excluyendo REJECT.
+function pickFinalists(ids: string[], byId: Record<string, any>, n: number): string[] {
+  return ids
+    .filter((id) => byId[id] && byId[id].status !== 'REJECT')
+    .sort((a, b) => {
+      const sa = statusRank(byId[a].status);
+      const sb = statusRank(byId[b].status);
+      if (sa !== sb) return sa - sb;
+      return (byId[b].scores?.overall ?? 0) - (byId[a].scores?.overall ?? 0);
+    })
+    .slice(0, n);
+}
+
+// Prompt de la TERCERA llamada: showdown final entre los finalistas de ambas mitades.
+// Re-análisis VISUAL; NO compara overall numérico entre mitades (vienen de análisis distintos).
+function buildFinalPrompt(ids: string[], byIdAll: Record<string, any>): string {
+  const sections = ids.map((id: string, i: number) => {
+    const r = byIdAll[id] || {};
+    const sc = r.scores || {};
+    const scoreLine = Object.entries(sc)
+      .filter(([, v]) => typeof v === 'number')
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ') || 'n/a';
+    return `Candidate ${i} (id=${id}): prior status=${r.status || 'REVIEW'}, prior scores: ${scoreLine}. prior note: ${r.note || ''}`;
+  }).join('\n');
+
+  return `You are an elite professional photo editor doing the FINAL showdown of a wedding culling sequence. The group was large and split into two halves; these ${ids.length} candidates are the strongest from both halves. Do NOT simply compare the prior numeric scores across halves — they came from separate analyses and are NOT directly comparable. Re-analyze each candidate VISUALLY from the attached images on these dimensions (0-100 each): eyes, expression, focus, moment, composition, interaction, subject_quality, exposure, technical, sharpness, color_quality, overall, confidence. OMIT a dimension only if not applicable (no people → omit eyes/expression/interaction); never use 0 for "not applicable".
+
+Prior context (reference only — re-judge visually, do not trust the numbers across halves):
+${sections}
+
+Decide the DEFINITIVE ranking of the whole group:
+- TOP_PICK: the single strongest frame (best eyes + expression + moment + composition). At most ONE.
+- SELECT: deliverable.
+- REVIEW: doubtful.
+- REJECT: clear combined defect only.
+Priority for people: eyes > expression > moment > focus > composition > technical. A sharper but lifeless/blinked frame must NOT beat a slightly softer frame with genuine emotion and a decisive moment. A photo where a KEY face has EYES_CLOSED must NEVER be TOP_PICK or SELECT — use REVIEW or REJECT.
+
+Return JSON: finalists (array, one entry per candidate id), each with id, rank (1=best), status, reject_reasons, note, and the scores above. Candidate ids in image order: ${ids.join(', ')}.`;
+}
+
+// Tercera llamada IA entre finalistas. Devuelve byId de los finalistas re-analizados.
+async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>): Promise<Record<string, any>> {
+  const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
+  const prompt = buildFinalPrompt(ids, byIdAll);
+  const result: any = await base44.integrations.Core.InvokeLLM({
+    prompt,
+    model: MODEL,
+    file_urls: fileUrls,
+    response_json_schema: {
+      type: 'object',
+      properties: { finalists: { type: 'array', items: rankingItemSchema() } },
+      required: ['finalists'],
+    },
+  });
+  const arr = Array.isArray(result?.finalists) ? result.finalists : [];
+  const out: Record<string, any> = {};
+  for (const r of arr) {
+    const rid = String(r.id);
+    if (ids.includes(rid)) out[rid] = buildRankingEntry(rid, r);
+  }
+  for (const id of ids) {
+    if (!out[id]) out[id] = buildRankingEntry(id, {});
+  }
+  return out;
+}
+
+// Fusiona mitades + finalistas en un ranking global único.
+function mergeConsolidation(candidateIds: string[], h1: any, h2: any, finals: Record<string, any>): any {
+  const byId: Record<string, any> = { ...h1.byId, ...h2.byId };
+  for (const id of Object.keys(finals)) byId[id] = finals[id];
+  // Un único TOP_PICK global (el de finals). Cualquier otro TOP_PICK → SELECT.
+  let globalTop: string | null = null;
+  for (const id of Object.keys(finals)) {
+    if (finals[id].status === 'TOP_PICK') { globalTop = id; break; }
+  }
+  for (const id of candidateIds) {
+    if (byId[id]?.status === 'TOP_PICK' && globalTop && id !== globalTop) byId[id].status = 'SELECT';
+  }
+  const order = [...candidateIds].sort((a, b) => {
+    const sa = statusRank(byId[a]?.status || 'REVIEW');
+    const sb = statusRank(byId[b]?.status || 'REVIEW');
+    if (sa !== sb) return sa - sb;
+    return (byId[b]?.scores?.overall ?? 0) - (byId[a]?.scores?.overall ?? 0);
+  });
+  order.forEach((id, i) => { if (byId[id]) byId[id].rank = i + 1; });
+  const keep_ids = order.filter((id) => byId[id]?.status === 'SELECT' || byId[id]?.status === 'TOP_PICK');
+  const category = h1.category || h2.category || null;
+  const reason = h1.reason && h2.reason ? `${h1.reason} / ${h2.reason}` : (h1.reason || h2.reason || null);
+  return {
+    keep_ids,
+    category,
+    reason,
+    rankings: candidateIds.map((id) => ({ id, ...byId[id] })),
   };
 }
 
@@ -296,6 +399,10 @@ export default async function(req: Request): Promise<Response> {
         technicals[id] = c.technical || { corrupt: !c.preview_base64 };
       }
 
+      let iaCalls = 0;
+      let finalistIds: string[] = [];
+      let finalRan = false;
+
       try {
         const uploaded = await uploadPreviewBatch(
           base44,
@@ -304,6 +411,7 @@ export default async function(req: Request): Promise<Response> {
 
         let result: any;
         if (candidateIds.length <= MAX_IMAGES_PER_CALL) {
+          iaCalls = 1;
           const isSingleton = candidateIds.length === 1;
           const sub = await analyzeSubset(base44, `group_0`, candidateIds, uploaded, isSingleton);
           result = {
@@ -313,7 +421,11 @@ export default async function(req: Request): Promise<Response> {
             rankings: candidateIds.map((id) => ({ id, ...sub.byId[id] })),
           };
         } else {
-          // Grupo grande: dos llamadas comparativas (mitades) + consolidación.
+          // Grupo grande: dos llamadas comparativas (mitades) + TERCERA llamada de
+          // consolidación entre los mejores finalistas de cada mitad (re-análisis visual).
+          // Si la tercera llamada falla o hay <2 finalistas, cae a consolidación
+          // determinista (consolidateHalves) como red de seguridad.
+          iaCalls = 2;
           const mid = Math.ceil(candidateIds.length / 2);
           const h1Ids = candidateIds.slice(0, mid);
           const h2Ids = candidateIds.slice(mid);
@@ -321,7 +433,21 @@ export default async function(req: Request): Promise<Response> {
             analyzeSubset(base44, `group_0`, h1Ids, uploaded, false),
             analyzeSubset(base44, `group_1`, h2Ids, uploaded, false),
           ]);
-          result = consolidateHalves(candidateIds, h1, h2);
+          const f1 = pickFinalists(h1Ids, h1.byId, FINALISTS_PER_HALF);
+          const f2 = pickFinalists(h2Ids, h2.byId, FINALISTS_PER_HALF);
+          finalistIds = [...f1, ...f2];
+          if (finalistIds.length >= 2) {
+            try {
+              const finals = await analyzeFinalists(base44, finalistIds, uploaded, { ...h1.byId, ...h2.byId });
+              finalRan = true;
+              iaCalls = 3;
+              result = mergeConsolidation(candidateIds, h1, h2, finals);
+            } catch (e: any) {
+              result = consolidateHalves(candidateIds, h1, h2);
+            }
+          } else {
+            result = consolidateHalves(candidateIds, h1, h2);
+          }
         }
 
         // Validación de keep_ids: solo ids válidos; a lo sumo un TOP_PICK (ya garantizado).
@@ -351,10 +477,11 @@ export default async function(req: Request): Promise<Response> {
           category: result.category,
           reason: result.reason,
           rankings,
+          _meta: { ia_calls: iaCalls, finalist_ids: finalistIds, final_ran: finalRan, fallback: false },
         };
       } catch (e: any) {
         // Fallback técnico conservador (no simula decisión IA).
-        groups[burstId] = technicalFallback(candidateIds, technicals);
+        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true } };
       }
     });
 
