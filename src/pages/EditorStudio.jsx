@@ -105,9 +105,12 @@ export default function EditorStudio() {
         });
         const data = res?.data ?? res;
         const aiValues = data?.results?.[photo.id] || {};
+        const backendError = data?.errors?.[photo.id] || null;
         // TRAZA TEMPORAL (pipeline ajustes IA): vuelca la respuesta cruda del proveedor
-        // (NVIDIA MiniMax M3), el objeto normalizado y los valores que recibe patchXmpAttributes.
-        const photoTrace = { filename: photo.file.name, trace: data?._trace, aiValues };
+        // (NVIDIA MiniMax M3), el objeto normalizado, los valores que recibe patchXmpAttributes
+        // y el error del backend (si la llamada NVIDIA falla antes de poblar la traza, el
+        // mensaje exacto aparece aquí en vez de quedar silenciado).
+        const photoTrace = { filename: photo.file.name, trace: data?._trace, aiValues, backendError, rawResponse: data };
         console.log("[AJUSTES IA TRACE]", photoTrace);
         traces.push(photoTrace);
 
