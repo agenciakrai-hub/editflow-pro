@@ -8,7 +8,7 @@ import { extractRawPreview, placeholderPreview } from "./rawPreviewReader";
 import { groupIntoBursts } from "./burstGrouping";
 import { runPool } from "./promisePool";
 
-const MAX_CANDIDATES = 6;
+const MAX_CANDIDATES = 8;
 const BATCH_PHOTOS = 30;
 const PREVIEW_CONCURRENCY = 6;
 const BATCH_CONCURRENCY = 3;

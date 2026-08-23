@@ -34,16 +34,24 @@ export default async function(req: Request): Promise<Response> {
         );
         const fileUrls = candidates.map((c: any) => uploaded[String(c.id)]).filter(Boolean);
         const idList = candidates.map((c: any) => c.id).join(', ');
+        const candidateIds = candidates.map((c: any) => String(c.id));
 
-        const prompt = `You are a professional wedding photo editor doing culling. You are given ${candidates.length} photos from the same burst (same scene, taken seconds apart). The best technical shot (sharpest, best exposed) is id ${bestId}.
+        const prompt = `You are an elite professional wedding photo editor doing precise culling. You are given ${candidates.length} photos from the SAME burst (same scene, same people, taken seconds apart). The reference technical shot (sharpest/best exposed by metadata) is id ${bestId}, but your job is to judge the FACES, not just the technicals.
 
-Decide which photo ids to KEEP for delivery:
-- Usually keep ONLY the single best one (id ${bestId}).
-- Keep an additional complementary shot ONLY if it is clearly useful for a fusion/Photoshop composite (a genuinely different expression/pose that adds value, not a near-duplicate).
-- Never keep blurry or poorly exposed near-duplicates.
+STEP 1 — For EACH candidate, carefully analyze EVERY visible face in the frame (not just the main subject):
+- Eyes: open / partially closed / closed / blinking. Count faces with closed or partially-closed eyes.
+- Facial sharpness: is each face crisply in focus, or soft/blurry (focus missed on the face)?
+- Expression: natural and flattering, or awkward / strained / mid-speech?
+- Motion: any subject blur, movement, or awkward posture?
+Group tolerance: in a LARGE group (8+ people) one partially-closed eye on a minor person is acceptable; in a SMALL group (≤7) or a portrait, every key face must have open eyes.
 
-Candidate photo ids: ${idList}. The images are attached in the same order.
-Return JSON with keep_ids (the ids to keep) and a short reason.`;
+STEP 2 — Decide which photo id(s) to KEEP for delivery:
+- Pick the SINGLE photo with the best faces: all (or nearly all) eyes open, faces sharp, expression natural. This OVERRIDES the technical reference if another candidate clearly has better faces — do not blindly keep ${bestId}.
+- You MUST keep at least one photo from this burst. Even if none is perfect, keep the best-available one (fewest closed eyes, sharpest faces). Never return an empty keep_ids.
+- Keep an additional complementary shot ONLY if it is genuinely different (distinct pose/expression useful for a composite) AND its faces are also good. Never keep a near-duplicate, a shot with a key face with closed eyes, or a blurry shot.
+
+Candidate photo ids: ${idList}. The images are attached in the same order. Reference technical shot: ${bestId}.
+Return JSON: keep_ids (the ids to keep, at least one, in priority order — best face first) and a short reason citing how many faces had closed eyes and which shot was sharpest.`;
 
         const result: any = await base44.integrations.Core.InvokeLLM({
           prompt,
@@ -58,11 +66,11 @@ Return JSON with keep_ids (the ids to keep) and a short reason.`;
           }
         });
 
-        const ids = Array.isArray(result.keep_ids) && result.keep_ids.length
-          ? result.keep_ids.map(String)
-          : [bestId];
-        if (!ids.includes(bestId)) ids.unshift(bestId);
-        keep[burstId] = ids;
+        // Validación estricta: solo ids que existen en la ráfaga, y siempre al menos uno.
+        const ids = Array.isArray(result.keep_ids)
+          ? result.keep_ids.map(String).filter((id: string) => candidateIds.includes(id))
+          : [];
+        keep[burstId] = ids.length ? ids : [bestId];
         reasons[burstId] = typeof result.reason === 'string' ? result.reason : null;
       } catch (e: any) {
         keep[burstId] = [bestId];
