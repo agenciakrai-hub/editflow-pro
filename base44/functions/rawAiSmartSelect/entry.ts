@@ -61,9 +61,12 @@ function scoreProps() {
   const props: Record<string, any> = {};
   for (const k of SCORE_KEYS) {
     const isPerson = PERSON_DIMS.includes(k);
+    // El schema exige number (no null): un schema nullable provoca que el modelo
+    // devuelva null para TODO. En su lugar, el backend fuerza a null las dimensiones
+    // faciales en géneros sin personas (guardia isPeopleGenre en buildRankingEntry).
     props[k] = {
-      type: ['number', 'null'],
-      description: `${k} 0-100, or null when not applicable${isPerson ? ' (e.g. no people in the frame)' : ''}. NEVER return 0 to mean "not applicable" — return null.`,
+      type: 'number',
+      description: `${k} 0-100. OMIT this field (do not return 0) when it is not applicable${isPerson ? ' — e.g. no people in the frame' : ''} or you cannot evaluate it.`,
     };
   }
   return props;
