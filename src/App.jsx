@@ -23,6 +23,7 @@ import Hub from '@/pages/Hub';
 import AjustesIA from '@/pages/AjustesIA';
 import PresetXMP from '@/pages/PresetXMP';
 import AIProviders from '@/pages/AIProviders';
+import PruebaGratis from '@/pages/PruebaGratis';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -62,6 +63,7 @@ const AuthenticatedApp = () => {
           <Route path="/ajustes-ia" element={<AjustesIA />} />
           <Route path="/preset-xmp" element={<PresetXMP />} />
           <Route path="/proveedores-ia" element={<AIProviders />} />
+          <Route path="/prueba-gratis" element={<PruebaGratis />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
