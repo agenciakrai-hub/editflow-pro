@@ -14,7 +14,8 @@ import ResetPassword from '@/pages/ResetPassword';
 import Landing from '@/pages/Landing';
 import ThankYou from '@/pages/ThankYou';
 import AppLayout from '@/components/AppLayout';
-import LocalWorkflowPage from '@/modules/local/LocalWorkflowPage';
+import Seleccion from '@/pages/Seleccion';
+import EditorStudio from '@/pages/EditorStudio';
 import Subscription from '@/pages/Subscription';
 import Admin from '@/pages/Admin';
 
@@ -49,7 +50,8 @@ const AuthenticatedApp = () => {
       <Route path="/ThankYou" element={<ThankYou />} />
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<AppLayout />}>
-          <Route path="/dashboard" element={<LocalWorkflowPage />} />
+          <Route path="/dashboard" element={<Seleccion />} />
+          <Route path="/editor" element={<EditorStudio />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>

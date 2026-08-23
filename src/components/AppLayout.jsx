@@ -4,7 +4,8 @@ import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles } from "lucide
 import { base44 } from "@/api/base44Client";
 
 const navItems = [
-  { to: "/dashboard", label: "Flujo local", icon: Home },
+  { to: "/dashboard", label: "Selección IA", icon: Home },
+  { to: "/editor", label: "Editor IA", icon: Sparkles },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },
   { to: "/admin", label: "Administración", icon: Users },
 ];
