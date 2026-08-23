@@ -24,7 +24,7 @@ export type Provider = "qwen" | "base44" | "nvidia" | "gemini" | "none";
 const NVIDIA_DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_DEFAULT_MODEL = "minimaxai/minimax-m3";
 const GEMINI_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_DEFAULT_MODEL = "gemini-2.0-flash";
+const GEMINI_DEFAULT_MODEL = "gemini-3.6-flash";
 
 interface InvokeOpts {
   task: AiTask;

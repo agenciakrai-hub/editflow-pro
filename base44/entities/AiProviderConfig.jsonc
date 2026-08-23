@@ -42,8 +42,8 @@
     },
     "gemini_model": {
       "type": "string",
-      "default": "gemini-2.0-flash",
-      "description": "Modelo multimodal de Gemini. Ej: gemini-2.0-flash, gemini-2.5-flash."
+      "default": "gemini-3.6-flash",
+      "description": "Modelo multimodal de Gemini. Ej: gemini-3.6-flash, gemini-2.5-flash."
     },
     "base44_enabled": {
       "type": "boolean",

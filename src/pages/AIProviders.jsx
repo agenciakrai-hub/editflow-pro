@@ -14,6 +14,7 @@ export default function AIProviders() {
   const [saving, setSaving] = useState(false);
   const [qwenKeyPresent, setQwenKeyPresent] = useState(false);
   const [nvidiaKeyPresent, setNvidiaKeyPresent] = useState(false);
+  const [geminiKeyPresent, setGeminiKeyPresent] = useState(false);
   const [form, setForm] = useState({
     qwen_enabled: false,
     qwen_endpoint: "",
@@ -21,6 +22,9 @@ export default function AIProviders() {
     nvidia_enabled: false,
     nvidia_endpoint: "https://integrate.api.nvidia.com/v1",
     nvidia_model: "minimaxai/minimax-m3",
+    gemini_enabled: false,
+    gemini_endpoint: "https://generativelanguage.googleapis.com/v1beta",
+    gemini_model: "gemini-3.6-flash",
     active_seleccion: "base44",
     active_ajustes: "base44",
   });
@@ -29,6 +33,8 @@ export default function AIProviders() {
   const [qwenResult, setQwenResult] = useState(null);
   const [testingNvidia, setTestingNvidia] = useState(false);
   const [nvidiaResult, setNvidiaResult] = useState(null);
+  const [testingGemini, setTestingGemini] = useState(false);
+  const [geminiResult, setGeminiResult] = useState(null);
   const [visionFile, setVisionFile] = useState(null);
   const [testingVision, setTestingVision] = useState(false);
   const [visionResult, setVisionResult] = useState(null);
@@ -40,6 +46,7 @@ export default function AIProviders() {
       const data = res?.data ?? res;
       setQwenKeyPresent(!!data.qwen_key_present);
       setNvidiaKeyPresent(!!data.nvidia_key_present);
+      setGeminiKeyPresent(!!data.gemini_key_present);
       if (data.config) {
         setForm({
           qwen_enabled: !!data.config.qwen_enabled,
@@ -48,6 +55,9 @@ export default function AIProviders() {
           nvidia_enabled: data.config.nvidia_enabled !== false,
           nvidia_endpoint: data.config.nvidia_endpoint || "https://integrate.api.nvidia.com/v1",
           nvidia_model: data.config.nvidia_model || "minimaxai/minimax-m3",
+          gemini_enabled: data.config.gemini_enabled !== false,
+          gemini_endpoint: data.config.gemini_endpoint || "https://generativelanguage.googleapis.com/v1beta",
+          gemini_model: data.config.gemini_model || "gemini-3.6-flash",
           active_seleccion: data.config.active_seleccion || "base44",
           active_ajustes: data.config.active_ajustes || "base44",
         });
@@ -67,6 +77,7 @@ export default function AIProviders() {
       const data = res?.data ?? res;
       setQwenKeyPresent(!!data.qwen_key_present);
       setNvidiaKeyPresent(!!data.nvidia_key_present);
+      setGeminiKeyPresent(!!data.gemini_key_present);
       toast({ title: "Configuración guardada" });
     } catch (e) {
       toast({ title: "Error al guardar", description: e.message, variant: "destructive" });
@@ -96,6 +107,18 @@ export default function AIProviders() {
       setNvidiaResult({ ok: false, reason: e.message });
     }
     setTestingNvidia(false);
+  };
+
+  const testGemini = async () => {
+    setTestingGemini(true);
+    setGeminiResult(null);
+    try {
+      const res = await base44.functions.invoke("ai-providers", { action: "test-connection", provider: "gemini" });
+      setGeminiResult(res?.data ?? res);
+    } catch (e) {
+      setGeminiResult({ ok: false, reason: e.message });
+    }
+    setTestingGemini(false);
   };
 
   // Lee un File como base64 puro (sin prefijo data:) para enviarlo a test-nvidia-vision.
@@ -154,6 +177,7 @@ export default function AIProviders() {
 
       <KeyBadge present={qwenKeyPresent} name="Qwen (QWEN_API_KEY)" />
       <KeyBadge present={nvidiaKeyPresent} name="NVIDIA (NVIDIA_API_KEY)" />
+      <KeyBadge present={geminiKeyPresent} name="Gemini (GEMINI_API_KEY)" />
 
       {/* Qwen */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
@@ -247,6 +271,45 @@ export default function AIProviders() {
         </div>
       </div>
 
+      {/* Gemini */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <p className="text-sm font-semibold">Google Gemini (generativelanguage)</p>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">Endpoint base</label>
+          <input
+            value={form.gemini_endpoint}
+            onChange={(e) => setForm({ ...form, gemini_endpoint: e.target.value })}
+            placeholder="https://generativelanguage.googleapis.com/v1beta"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-muted-foreground">URL base de la API Gemini (sin /models/...).</p>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">Modelo de visión</label>
+          <input
+            value={form.gemini_model}
+            onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
+            placeholder="gemini-3.6-flash"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          />
+          <p className="text-xs text-muted-foreground">Modelo multimodal de Gemini (ej. gemini-3.6-flash, gemini-2.5-flash).</p>
+        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={form.gemini_enabled} onChange={(e) => setForm({ ...form, gemini_enabled: e.target.checked })} />
+          Gemini habilitado
+        </label>
+        <p className="text-xs text-muted-foreground">
+          La ruta Gemini envía previews como data:image/jpeg;base64 directamente a la API de Gemini, sin usar UploadFile ni InvokeLLM de Base44. Sin failover.
+        </p>
+        <div className="flex gap-3">
+          <button onClick={testGemini} disabled={testingGemini}
+            className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium disabled:opacity-40">
+            {testingGemini ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />} Probar conexión Gemini
+          </button>
+        </div>
+        {geminiResult && <ResultCard result={geminiResult} />}
+      </div>
+
       {/* Proveedor activo por herramienta */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         <p className="text-sm font-semibold">Proveedor activo por herramienta</p>
@@ -256,6 +319,7 @@ export default function AIProviders() {
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
             <option value="base44">Base44 (InvokeLLM)</option>
             <option value="qwen">Qwen</option>
+            <option value="gemini">Gemini</option>
             <option value="nvidia">NVIDIA MiniMax M3</option>
             <option value="none">Ninguno</option>
           </select>
@@ -266,6 +330,7 @@ export default function AIProviders() {
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
             <option value="base44">Base44 (InvokeLLM)</option>
             <option value="qwen">Qwen</option>
+            <option value="gemini">Gemini</option>
             <option value="nvidia">NVIDIA MiniMax M3</option>
             <option value="none">Ninguno</option>
           </select>
