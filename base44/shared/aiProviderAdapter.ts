@@ -158,14 +158,9 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
   return parsed;
 }
 
-// Google Gemini (generativelanguage.googleapis.com). Recibe file_urls que pueden ser
-// data URLs (data:image/jpeg;base64,...) — evita UploadFile — o URLs http. Usa el formato
-// contents/parts/inline_data de la API Gemini. Mismo contrato de salida (JSON parseado).
-async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
-  const apiKey = secrets.get("GEMINI_API_KEY");
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY no configurado (introúcelo en Base44 → Settings → Secrets)");
-  }
+// Llamada unica a Gemini con una key concreta. Devuelve el JSON parseado o lanza un
+// error tipado con httpStatus para que el orquestador decida el fallback a la capa de pago.
+async function callGeminiOnce(apiKey: string, cfg: any, opts: InvokeOpts): Promise<any> {
   const base = String(cfg?.gemini_endpoint || GEMINI_DEFAULT_ENDPOINT).trim().replace(/\/+$/, "");
   const model = cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
   const endpoint = `${base}/models/${model}:generateContent?key=${apiKey}`;
@@ -194,11 +189,36 @@ async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
   const latency = Date.now() - t0;
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
-    throw new Error(`Gemini HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
+    const err: any = new Error(`Gemini HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
+    err.httpStatus = res.status;
+    throw err;
   }
   const data: any = await res.json();
   const contentOut = data?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).filter(Boolean).join("") || "";
   return parseJsonContent(contentOut);
+}
+
+// Google Gemini. Estrategia free-first: intenta primero la key de la capa gratuita
+// (GEMINI_API_KEY). Si falla por cuota/rate-limit (HTTP 429 o 503) y hay una key de capa
+// de pago configurada (GEMINI_API_KEY_PAID), reintenta con esa. Sin failover a otros
+// proveedores. Si solo existe GEMINI_API_KEY, se comporta como antes (sin fallback).
+async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
+  const freeKey = secrets.get("GEMINI_API_KEY");
+  const paidKey = secrets.get("GEMINI_API_KEY_PAID");
+  if (!freeKey && !paidKey) {
+    throw new Error("GEMINI_API_KEY no configurado (introúcelo en Base44 → Settings → Secrets)");
+  }
+  if (freeKey) {
+    try {
+      return await callGeminiOnce(freeKey, cfg, opts);
+    } catch (e: any) {
+      const status = e?.httpStatus;
+      const retriable = status === 429 || status === 503;
+      if (!retriable || !paidKey) throw e;
+      console.log(`[aiProvider] gemini capa gratuita fallo (HTTP ${status}); reintentando con key de pago`);
+    }
+  }
+  return callGeminiOnce(paidKey, cfg, opts);
 }
 
 // Punto unico de ruteo. SIN FAILOVER.
