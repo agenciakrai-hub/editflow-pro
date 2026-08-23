@@ -1,0 +1,50 @@
+{
+  "name": "LrJob",
+  "type": "object",
+  "properties": {
+    "token": {
+      "type": "string"
+    },
+    "filename": {
+      "type": "string"
+    },
+    "xmp_content": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "completed"
+      ],
+      "default": "pending"
+    }
+  },
+  "required": [
+    "token",
+    "filename",
+    "xmp_content"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

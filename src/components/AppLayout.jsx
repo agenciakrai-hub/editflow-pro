@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate } from "react-router-dom";
-import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles } from "lucide-react";
+import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const navItems = [
   { to: "/dashboard", label: "Selección IA", icon: Home },
   { to: "/editor", label: "Editor IA", icon: Sparkles },
+  { to: "/lightroom", label: "Lightroom", icon: Plug },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },
   { to: "/admin", label: "Administración", icon: Users },
 ];
