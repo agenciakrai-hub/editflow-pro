@@ -14,11 +14,7 @@ import ResetPassword from '@/pages/ResetPassword';
 import Landing from '@/pages/Landing';
 import ThankYou from '@/pages/ThankYou';
 import AppLayout from '@/components/AppLayout';
-import Dashboard from '@/pages/Dashboard';
-import SelectionPage from '@/modules/seleccion/SelectionPage';
-import EditorPage from '@/modules/editor/EditorPage';
-import ExportPage from '@/modules/exportacion/ExportPage';
-import LightroomPage from '@/modules/lightroom/LightroomPage';
+import LocalWorkflowPage from '@/modules/local/LocalWorkflowPage';
 import Subscription from '@/pages/Subscription';
 import Admin from '@/pages/Admin';
 
@@ -53,11 +49,7 @@ const AuthenticatedApp = () => {
       <Route path="/ThankYou" element={<ThankYou />} />
       <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
         <Route element={<AppLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/seleccion" element={<SelectionPage />} />
-          <Route path="/editor" element={<EditorPage />} />
-          <Route path="/exportar" element={<ExportPage />} />
-          <Route path="/lightroom" element={<LightroomPage />} />
+          <Route path="/dashboard" element={<LocalWorkflowPage />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>

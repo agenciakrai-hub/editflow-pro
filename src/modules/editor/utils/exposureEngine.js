@@ -40,35 +40,36 @@ async function urlToBase64(url) {
   }
 }
 
-// Computes the IA develop layer for one photo. Returns ONLY the 10 flat tone/
-// presence/sharpness keys — never temperature/tint/color (those come from the
-// uploaded Lightroom preset, the second tool).
+// Core IA develop layer from a preview base64 (local files — no URL fetch).
+// Returns ONLY the 10 flat tone/presence/sharpness keys — never temperature/tint/color.
+export async function computeAutoAdjustmentsFromBase64(base64, precisionMode = "balanced") {
+  const out = {};
+  if (!base64) return out;
+  try {
+    const stats = await analyzePhotometrics(base64);
+    const baseline = computeTechnicalBaseline(stats, precisionMode);
+    const res = await base44.functions.invoke("rawAiStudioAnalyze", {
+      photos: [{ id: "local", preview_base64: base64, baseline: baseline.values, technical_confidence: baseline.confidence }],
+      enabled_params: ENABLED_TAGS,
+      preferences: {},
+      precision_mode: precisionMode,
+    });
+    const data = res?.data ?? res;
+    const vals = data?.results?.["local"] || {};
+    for (const [tag, flat] of Object.entries(TAG_TO_FLAT)) {
+      if (typeof vals[tag] === "number") out[flat] = vals[tag];
+    }
+  } catch {
+    // On failure, leave adjustments untouched (no fallback heuristic).
+  }
+  return out;
+}
+
+// Convenience wrapper for photos with a remote URL (legacy editor flow).
 export async function computeAutoAdjustments(photo, precisionMode = "balanced") {
   const url = photo?.file_url || photo?.thumbnail_url;
   const base64 = url ? await urlToBase64(url) : null;
-  const out = {};
-
-  if (base64) {
-    try {
-      const stats = await analyzePhotometrics(base64);
-      const baseline = computeTechnicalBaseline(stats, precisionMode);
-      const id = String(photo.id ?? "0");
-      const res = await base44.functions.invoke("rawAiStudioAnalyze", {
-        photos: [{ id, preview_base64: base64, baseline: baseline.values, technical_confidence: baseline.confidence }],
-        enabled_params: ENABLED_TAGS,
-        preferences: {},
-        precision_mode: precisionMode,
-      });
-      const data = res?.data ?? res;
-      const vals = data?.results?.[id] || {};
-      for (const [tag, flat] of Object.entries(TAG_TO_FLAT)) {
-        if (typeof vals[tag] === "number") out[flat] = vals[tag];
-      }
-    } catch {
-      // On failure, leave adjustments untouched (no fallback heuristic).
-    }
-  }
-  return out;
+  return computeAutoAdjustmentsFromBase64(base64, precisionMode);
 }
 
 // CSS filter approximation for the before/after preview. Lightroom's tone
