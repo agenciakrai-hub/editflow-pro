@@ -56,6 +56,11 @@ function parseJsonContent(content: any): any {
   if (content && typeof content === "object") return content;
   if (typeof content !== "string") throw new Error("Proveedor: respuesta sin contenido parseable");
   let txt = content.trim();
+  // Modelos de razonamiento (MiniMax M3, DeepSeek-R1...) emiten bloques <think>...</think>
+  // antes del JSON final. Si no se eliminan, el primer '{' cae dentro del razonamiento y
+  // JSON.parse falla -> el motor de ajustes se queda sin valores (XMP solo con preset,
+  // sin correcciones basicas).
+  txt = txt.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
   const fence = txt.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fence) txt = fence[1].trim();
   const start = txt.indexOf("{");

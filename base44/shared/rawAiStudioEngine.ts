@@ -290,7 +290,14 @@ Return a JSON object with keys photo_0, photo_1, ... each containing the numeric
 
   for (let i = 0; i < photos.length; i++) {
     const photo = photos[i];
-    const photoResult = result[`photo_${i}`];
+    let photoResult = result[`photo_${i}`];
+    // Algunos proveedores (NVIDIA NIM sin response_format estricto) devuelven un objeto
+    // PLANO cuando el lote tiene una sola foto, sin la envoltura `photo_0`. Si hay una sola
+    // foto y no se encuentra `photo_0`, se acepta el objeto raiz como resultado de esa
+    // foto, para no descartarla (lo que dejaria el XMP sin correcciones basicas).
+    if (!photoResult && photos.length === 1 && result && typeof result === "object") {
+      photoResult = result;
+    }
     if (!photoResult) { errors[photo.id] = "No result for photo"; continue; }
 
     const baseline = photo.baseline;
