@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Images, Sparkles, FileImage } from "lucide-react";
+import { Images, Sparkles, FileImage, FolderHeart } from "lucide-react";
 
 // Hub de herramientas. Presenta las tres herramientas independientes como tarjetas.
 // No ejecuta ninguna herramienta: cada tarjeta solo navega a su ruta.
@@ -21,6 +21,12 @@ const tools = [
     title: "Preset XMP",
     desc: "Aplica un preset .xmp de forma 100 % determinista. Sin IA, sin créditos.",
     icon: FileImage,
+  },
+  {
+    to: "/proyectos",
+    title: "Mis proyectos",
+    desc: "Proyectos guardados (solo metadatos). Recarga la carpeta para volver a procesar.",
+    icon: FolderHeart,
   },
 ];
 

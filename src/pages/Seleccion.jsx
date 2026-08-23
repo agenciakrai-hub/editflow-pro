@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, Loader2, ArrowRight, Sparkles, RotateCcw, Download } from "lucide-react";
+import { FolderOpen, Loader2, ArrowRight, Sparkles, RotateCcw, Download, Save } from "lucide-react";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews, buildPhotoFromSelection } from "@/lib/rawaistudio/smartSelectionEngine";
 import { selectBursts } from "@/lib/ai/aiGateway";
@@ -8,6 +8,7 @@ import { addRatingAndLabel } from "@/lib/rawaistudio/xmpTagPatcher";
 import { base44 } from "@/api/base44Client";
 import { setSession } from "@/lib/rawaistudio/localSession";
 import { COLOR_LABELS } from "@/lib/rawaistudio/labels";
+import { useToast } from "@/components/ui/use-toast";
 import PhotoCard from "@/components/rawaistudio/PhotoCard";
 import ReviewFilters from "@/components/rawaistudio/ReviewFilters";
 
@@ -27,7 +28,9 @@ const SELECTION_XMP_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 
 export default function Seleccion() {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [files, setFiles] = useState([]);
+  const [guardando, setGuardando] = useState(false);
   const [photos, setPhotos] = useState([]);
   const [stage, setStage] = useState("idle"); // idle | previews | selecting | review
   const [done, setDone] = useState(0);
@@ -91,6 +94,39 @@ export default function Seleccion() {
   const rejectCount = photos.filter((p) => p.status === "REJECT").length;
 
   const [downloadingSel, setDownloadingSel] = useState(false);
+
+  // Guarda SOLO metadatos del proyecto en la base de datos (sin previews ni RAW).
+  // Permite al fotógrafo volver a ver qué quedó seleccionado entre sesiones; las imágenes
+  // hay que recargarlas para volver a procesar.
+  const guardarProyecto = async () => {
+    if (!photos.length) return;
+    const hoy = new Date().toISOString().slice(0, 10);
+    const title = window.prompt("Nombre del proyecto", `Selección ${hoy}`);
+    if (!title || !title.trim()) return;
+    setGuardando(true);
+    try {
+      await base44.entities.Project.create({
+        title: title.trim(),
+        event_date: hoy,
+        status: "selection",
+        photo_count: photos.length,
+        selected_count: selectedCount,
+        edited_count: 0,
+        photos_metadata: photos.map((p) => ({
+          filename: p.file.name,
+          status: p.status,
+          rating: p.rating || 0,
+          color_label: p.colorLabel || "none",
+          edit_applied: !!p.edit_applied,
+        })),
+      });
+      toast({ title: "Proyecto guardado", description: `${photos.length} fotos · ${selectedCount} seleccionadas` });
+    } catch (e) {
+      toast({ title: "No se pudo guardar", description: e?.message, variant: "destructive" });
+    }
+    setGuardando(false);
+  };
+
   const confirmEdit = () => {
     const queue = photos.filter((p) => p.selectedForEdit);
     setSession({ photos: queue });
@@ -213,6 +249,11 @@ export default function Seleccion() {
               className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
               {downloadingSel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               Descargar XMP de selección
+            </button>
+            <button onClick={guardarProyecto} disabled={!photos.length || guardando}
+              className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+              {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Guardar proyecto
             </button>
             <button onClick={confirmEdit} disabled={!editCount}
               className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40">

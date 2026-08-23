@@ -40,9 +40,50 @@
     },
     "description": {
       "type": "string"
+    },
+    "photos_metadata": {
+      "type": "array",
+      "description": "Metadatos por foto (sin previews ni RAW): filename, estado de selecci\u00f3n, rating, label y si se edit\u00f3.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "TOP_PICK / SELECT / REVIEW / REJECT"
+          },
+          "rating": {
+            "type": "number",
+            "default": 0
+          },
+          "color_label": {
+            "type": "string"
+          },
+          "edit_applied": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
     }
   },
   "required": [
     "title"
-  ]
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
 }

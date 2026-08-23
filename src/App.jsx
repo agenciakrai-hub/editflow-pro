@@ -20,6 +20,7 @@ import Subscription from '@/pages/Subscription';
 import Admin from '@/pages/Admin';
 import LightroomPage from '@/modules/lightroom/LightroomPage';
 import Hub from '@/pages/Hub';
+import MisProyectos from '@/pages/MisProyectos';
 import AjustesIA from '@/pages/AjustesIA';
 import PresetXMP from '@/pages/PresetXMP';
 import AIProviders from '@/pages/AIProviders';
@@ -60,6 +61,7 @@ const AuthenticatedApp = () => {
           <Route path="/editor" element={<EditorStudio />} />
           <Route path="/lightroom" element={<LightroomPage />} />
           <Route path="/herramientas" element={<Hub />} />
+          <Route path="/proyectos" element={<MisProyectos />} />
           <Route path="/ajustes-ia" element={<AjustesIA />} />
           <Route path="/preset-xmp" element={<PresetXMP />} />
           <Route path="/proveedores-ia" element={<AIProviders />} />
