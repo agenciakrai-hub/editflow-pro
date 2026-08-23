@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug } from "lucide-react";
+import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const navItems = [
+  { to: "/herramientas", label: "Herramientas", icon: LayoutGrid },
   { to: "/dashboard", label: "Selección IA", icon: Home },
+  { to: "/ajustes-ia", label: "Ajustes IA", icon: Wand2 },
+  { to: "/preset-xmp", label: "Preset XMP", icon: FileImage },
   { to: "/editor", label: "Editor IA", icon: Sparkles },
   { to: "/lightroom", label: "Lightroom", icon: Plug },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },
@@ -27,7 +30,7 @@ export default function AppLayout() {
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const isFull = pathname === "/dashboard" || pathname === "/editor";
+  const isFull = pathname === "/dashboard" || pathname === "/editor" || pathname === "/ajustes-ia" || pathname === "/preset-xmp";
 
   useEffect(() => {
     base44.auth.me().then(setUser).catch(() => {});

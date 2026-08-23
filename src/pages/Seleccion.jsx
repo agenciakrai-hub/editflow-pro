@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, Loader2, ArrowRight, Sparkles, RotateCcw } from "lucide-react";
+import { FolderOpen, Loader2, ArrowRight, Sparkles, RotateCcw, Download } from "lucide-react";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
-import { extractPreviews, runAiBurstSelection, buildPhotoFromSelection } from "@/lib/rawaistudio/smartSelectionEngine";
+import { extractPreviews, buildPhotoFromSelection } from "@/lib/rawaistudio/smartSelectionEngine";
+import { selectBursts } from "@/lib/ai/aiGateway";
+import { addRatingAndLabel } from "@/lib/rawaistudio/xmpTagPatcher";
+import { base44 } from "@/api/base44Client";
 import { setSession } from "@/lib/rawaistudio/localSession";
 import { COLOR_LABELS } from "@/lib/rawaistudio/labels";
 import PhotoCard from "@/components/rawaistudio/PhotoCard";
@@ -12,6 +15,16 @@ import ReviewFilters from "@/components/rawaistudio/ReviewFilters";
 // RAW, agrupa ráfagas, la IA marca en verde las mejores tomas, el fotógrafo revisa y
 // confirma la cola de edición. Los RAW nunca se suben: solo su preview embebida (JPEG
 // decodificado en el navegador) se envía a la IA de selección.
+// Plantilla XMP mínima para los sidecars de selección: solo rating + label, sin
+// ajustes de revelado. Cada foto recibe su sidecar con su estado real.
+const SELECTION_XMP_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"/>
+  </rdf:RDF>
+</x:xmpmeta>`;
+
 export default function Seleccion() {
   const navigate = useNavigate();
   const [files, setFiles] = useState([]);
@@ -43,7 +56,7 @@ export default function Seleccion() {
     setStage("selecting");
     setTotal(withPreview.length);
     setDone(0);
-    const { keep, meta } = await runAiBurstSelection(withPreview, (d) => setDone(d));
+    const { keep, meta } = await selectBursts(withPreview, (d) => setDone(d));
     const built = withPreview.map((p) => buildPhotoFromSelection(p, keep, meta));
     setPhotos(built);
     setStage("review");
@@ -73,10 +86,43 @@ export default function Seleccion() {
   const reviewCount = photos.filter((p) => p.status === "REVIEW").length;
   const rejectCount = photos.filter((p) => p.status === "REJECT").length;
 
+  const [downloadingSel, setDownloadingSel] = useState(false);
   const confirmEdit = () => {
     const queue = photos.filter((p) => p.selectedForEdit);
     setSession({ photos: queue });
     navigate("/editor");
+  };
+
+  // Descarga determinista del XMP de selección: un sidecar por CADA foto, con su
+  // rating + label reales (TOP_PICK/SELECT = 5★ verde, REVIEW = 0, REJECT = 0/rojo).
+  // Sin ajustes de revelado, sin IA, sin UploadFile. ZIP vía editflow-engine zip-xmp.
+  const downloadSelectionXmp = async () => {
+    if (!photos.length) return;
+    setDownloadingSel(true);
+    try {
+      const jobs = photos.map((p) => {
+        const isSel = p.status === "TOP_PICK" || p.status === "SELECT";
+        const isRej = p.status === "REJECT";
+        const rating = isSel ? 5 : 0;
+        const label = isSel ? "Green" : isRej ? "Red" : null;
+        let xmp = SELECTION_XMP_TEMPLATE;
+        xmp = addRatingAndLabel(xmp, { rating, label });
+        return { filename: p.file.name, xmp_content: xmp };
+      });
+      const res = await base44.functions.invoke("editflow-engine", { action: "zip-xmp", jobs });
+      const url = res?.data?.downloadUrl;
+      if (url) {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "EditFlowPro-Seleccion.zip";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+    } catch (e) {
+      setError(e?.message || "Error al generar el ZIP de selección");
+    }
+    setDownloadingSel(false);
   };
 
   const reset = () => {
@@ -148,10 +194,17 @@ export default function Seleccion() {
             {visible.map((p) => (<PhotoCard key={p.id} photo={p} onUpdate={(patch) => update(p.id, patch)} />))}
           </div>
           {!visible.length && <p className="mt-6 text-sm text-zinc-500">No hay fotos con estos filtros.</p>}
-          <button onClick={confirmEdit} disabled={!editCount}
-            className="mt-6 inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40">
-            Confirmar cola de edición ({editCount}) <ArrowRight className="h-4 w-4" />
-          </button>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <button onClick={downloadSelectionXmp} disabled={!photos.length || downloadingSel}
+              className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+              {downloadingSel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              Descargar XMP de selección
+            </button>
+            <button onClick={confirmEdit} disabled={!editCount}
+              className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40">
+              Confirmar cola de edición ({editCount}) <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
         </section>
       )}
     </div>

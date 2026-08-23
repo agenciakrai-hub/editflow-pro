@@ -19,6 +19,9 @@ import EditorStudio from '@/pages/EditorStudio';
 import Subscription from '@/pages/Subscription';
 import Admin from '@/pages/Admin';
 import LightroomPage from '@/modules/lightroom/LightroomPage';
+import Hub from '@/pages/Hub';
+import AjustesIA from '@/pages/AjustesIA';
+import PresetXMP from '@/pages/PresetXMP';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -54,6 +57,9 @@ const AuthenticatedApp = () => {
           <Route path="/dashboard" element={<Seleccion />} />
           <Route path="/editor" element={<EditorStudio />} />
           <Route path="/lightroom" element={<LightroomPage />} />
+          <Route path="/herramientas" element={<Hub />} />
+          <Route path="/ajustes-ia" element={<AjustesIA />} />
+          <Route path="/preset-xmp" element={<PresetXMP />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
