@@ -79,7 +79,7 @@ export default function Seleccion() {
   };
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-[#0a0a0a] p-6 text-zinc-100">
+    <div className="min-h-[calc(100vh-4rem)] rounded-xl bg-[#0a0a0a] p-4 sm:p-6 text-zinc-100">
       <p className="text-sm text-zinc-500">Selección IA</p>
       <h1 className="mt-1 text-2xl font-semibold">Selección y culling de bodas</h1>
       <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">

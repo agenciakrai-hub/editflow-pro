@@ -66,7 +66,7 @@ export default function EditorStudio() {
 
   if (!photos.length) {
     return (
-      <div className="rounded-xl border border-zinc-800 bg-[#0a0a0a] p-10 text-center text-zinc-100">
+      <div className="min-h-[calc(100vh-4rem)] rounded-xl bg-[#0a0a0a] p-10 text-center text-zinc-100">
         <p className="text-sm text-zinc-400">No hay fotos en la cola de edición.</p>
         <button onClick={() => navigate("/dashboard")}
           className="mt-4 inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black">
@@ -166,7 +166,7 @@ export default function EditorStudio() {
   };
 
   return (
-    <div className="space-y-4 rounded-xl border border-zinc-800 bg-[#0a0a0a] p-6 text-zinc-100">
+    <div className="space-y-4 min-h-[calc(100vh-4rem)] rounded-xl bg-[#0a0a0a] p-4 sm:p-6 text-zinc-100">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-zinc-500">Editor IA</p>

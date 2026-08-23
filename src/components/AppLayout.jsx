@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Outlet, NavLink, useNavigate } from "react-router-dom";
+import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
 import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
@@ -26,6 +26,8 @@ export default function AppLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const isFull = pathname === "/dashboard" || pathname === "/editor";
 
   useEffect(() => {
     base44.auth.me().then(setUser).catch(() => {});
@@ -95,7 +97,7 @@ export default function AppLayout() {
         </div>
       )}
 
-      <main className="max-w-3xl mx-auto px-4 py-6">
+      <main className={isFull ? "w-full px-4 py-4 sm:px-6 sm:py-6" : "max-w-3xl mx-auto px-4 py-6"}>
         <Outlet />
       </main>
     </div>
