@@ -72,6 +72,7 @@ export default async function(req: Request): Promise<Response> {
       llmBatches.push(validPhotos.slice(i, i + LLM_BATCH_SIZE));
     }
 
+    const traces: any[] = [];
     await runWithConcurrency(llmBatches, llmBatches.length, async (llmBatch: any[]) => {
       const batchPhotos = llmBatch.map((p: any) => ({
         id: String(p.id),
@@ -84,9 +85,10 @@ export default async function(req: Request): Promise<Response> {
       Object.assign(results, analysis.values);
       Object.assign(confidences, analysis.confidences);
       Object.assign(errors, analysis.errors);
+      if (analysis.trace) traces.push(analysis.trace);
     });
 
-    return Response.json({ results, errors, confidences });
+    return Response.json({ results, errors, confidences, _trace: traces });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }

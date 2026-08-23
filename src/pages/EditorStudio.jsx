@@ -60,6 +60,7 @@ export default function EditorStudio() {
   const [zipping, setZipping] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [synced, setSynced] = useState(false);
+  const [debugTrace, setDebugTrace] = useState([]);
 
   const enabledParams = useMemo(() => enabledKeys(config), [config]);
   const preferences = useMemo(() => preferencesFromConfig(config), [config]);
@@ -82,6 +83,7 @@ export default function EditorStudio() {
     setSynced(false);
     setProgress({ done: 0, total: photos.length });
     const out = [];
+    const traces = [];
     let ok = 0;
     for (let i = 0; i < photos.length; i++) {
       const photo = photos[i];
@@ -103,6 +105,11 @@ export default function EditorStudio() {
         });
         const data = res?.data ?? res;
         const aiValues = data?.results?.[photo.id] || {};
+        // TRAZA TEMPORAL (pipeline ajustes IA): vuelca la respuesta cruda del proveedor
+        // (NVIDIA MiniMax M3), el objeto normalizado y los valores que recibe patchXmpAttributes.
+        const photoTrace = { filename: photo.file.name, trace: data?._trace, aiValues };
+        console.log("[AJUSTES IA TRACE]", photoTrace);
+        traces.push(photoTrace);
 
         // Construye el XMP final: plantilla del preset + perfil/tratamiento + ajustes IA.
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
@@ -122,6 +129,7 @@ export default function EditorStudio() {
       setProgress({ done: i + 1, total: photos.length });
     }
     setResults(out);
+    setDebugTrace(traces);
     setBusy(false);
     toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
   };
@@ -225,8 +233,32 @@ export default function EditorStudio() {
               </button>
             )}
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
+          </div>
+          )}
+
+          {debugTrace.length > 0 && (
+          <div className="rounded-xl border border-amber-800 bg-amber-950/30 p-5 space-y-3">
+          <p className="text-sm font-semibold text-amber-400">Traza pipeline ajustes IA (temporal)</p>
+          <p className="text-xs text-zinc-400">
+            Muestra la respuesta cruda del proveedor, el objeto normalizado y los valores que recibe patchXmpAttributes.
+            Si <code>valuesObj</code> no tiene Exposure2012/Highlights2012/etc. o <code>aiValues</code> está vacío, ahí está el fallo.
+          </p>
+          <div className="space-y-2">
+            {debugTrace.map((t, i) => {
+              const batch = Array.isArray(t.trace) ? t.trace[0] : t.trace;
+              return (
+                <div key={i} className="rounded-md border border-amber-900/50 bg-black/40 p-3 text-xs font-mono space-y-1">
+                  <p className="text-amber-300">{t.filename}</p>
+                  <p className="text-zinc-400">rawContent (NVIDIA): {batch?.rawContent ? JSON.stringify(batch.rawContent).slice(0, 600) : "n/a"}</p>
+                  <p className="text-zinc-400">parsed: {batch?.parsed ? JSON.stringify(batch.parsed).slice(0, 600) : "n/a"}</p>
+                  <p className="text-zinc-400">valuesObj: {batch?.perPhoto?.[0]?.valuesObj ? JSON.stringify(batch.perPhoto[0].valuesObj) : "null"}</p>
+                  <p className="text-emerald-400">aiValues (a patchXmpAttributes): {JSON.stringify(t.aiValues)}</p>
+                </div>
+              );
+            })}
+          </div>
+          </div>
+          )}
+          </div>
+          );
+          }

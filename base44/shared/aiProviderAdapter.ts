@@ -30,6 +30,7 @@ interface InvokeOpts {
   model?: string;
   file_urls?: string[];
   response_json_schema?: any;
+  _trace?: any;
 }
 
 // Lee el unico registro de configuracion (admin-only entity, accedido via service role).
@@ -140,7 +141,16 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
   }
   const data: any = await res.json();
   const contentOut = data?.choices?.[0]?.message?.content;
-  return parseJsonContent(contentOut);
+  // TRAZA TEMPORAL: captura la respuesta cruda del modelo (post-reasoning) para diagnostico.
+  if (opts._trace) {
+    opts._trace.rawContent = contentOut;
+    opts._trace.httpStatus = res.status;
+  }
+  const parsed = parseJsonContent(contentOut);
+  if (opts._trace) {
+    opts._trace.parsed = parsed;
+  }
+  return parsed;
 }
 
 // Punto unico de ruteo. SIN FAILOVER.

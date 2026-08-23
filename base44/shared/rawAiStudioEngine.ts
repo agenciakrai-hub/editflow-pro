@@ -201,13 +201,55 @@ export async function uploadPreviewBatch(
 // todas las previews a la vez (file_urls) y devuelve valores por foto (photo_0, photo_1…).
 // El post-procesado por foto (baseline + delta + preferencia, clamp) es idéntico al de
 // analyzePhotoParams — solo cambia cuántas fotos van en cada llamada, no la lógica.
+// Mapeo de nombres que algunos proveedores (NVIDIA MiniMax M3, etc.) devuelven en
+// minusculas o sin el sufijo "2012", al nombre canonico que usa el motor XMP.
+const KEY_ALIASES: Record<string, string> = {
+  exposure: "Exposure2012", "exposure2012": "Exposure2012",
+  highlights: "Highlights2012", highlight: "Highlights2012", "highlights2012": "Highlights2012",
+  shadows: "Shadows2012", shadow: "Shadows2012", "shadows2012": "Shadows2012",
+  whites: "Whites2012", white: "Whites2012", "whites2012": "Whites2012",
+  blacks: "Blacks2012", black: "Blacks2012", "blacks2012": "Blacks2012",
+  contrast: "Contrast2012", "contrast2012": "Contrast2012",
+  vibrance: "Vibrance", saturation: "Saturation",
+  clarity: "Clarity2012", "clarity2012": "Clarity2012",
+  sharpness: "Sharpness",
+};
+
+function normalizeKeys(obj: any): any {
+  if (!obj || typeof obj !== "object") return obj;
+  const out: any = {};
+  for (const k of Object.keys(obj)) {
+    const canon = KEY_ALIASES[String(k).toLowerCase()] || k;
+    out[canon] = obj[k];
+  }
+  return out;
+}
+
+// Localiza el sub-objeto que realmente contiene los parametros habilitados. Algunos
+// modelos devuelven la envoltura photo_0, o anidan bajo "adjustments"/"recommended",
+// o devuelven el objeto plano. Normaliza nombres en cada candidato (un nivel).
+function extractValuesObject(candidate: any, enabledParams: string[]): any {
+  if (!candidate || typeof candidate !== "object") return null;
+  const has = (o: any) => enabledParams.some((k) => typeof o[k] === "number");
+  const norm = normalizeKeys(candidate);
+  if (has(norm)) return norm;
+  for (const k of Object.keys(norm)) {
+    const v = norm[k];
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const vn = normalizeKeys(v);
+      if (has(vn)) return vn;
+    }
+  }
+  return null;
+}
+
 export async function analyzePhotoBatchParams(
   base44: any,
   photos: Array<{ id: string; previewFileUrl: string; baseline: Record<string, number> | null; technicalConfidence: number | null; camera: string | null }>,
   enabledParams: string[],
   preferences: Record<string, number>,
   precisionMode: string
-): Promise<{ values: Record<string, Record<string, number>>; confidences: Record<string, number | null>; errors: Record<string, string> }> {
+): Promise<{ values: Record<string, Record<string, number>>; confidences: Record<string, number | null>; errors: Record<string, string>; trace: any }> {
   const values: Record<string, Record<string, number>> = {};
   const confidences: Record<string, number | null> = {};
   const errors: Record<string, string> = {};
@@ -275,30 +317,34 @@ Return a JSON object with keys photo_0, photo_1, ... each containing the numeric
 
   const schema = { type: "object", properties: schemaProperties, required: schemaRequired };
 
+  const trace: any = { perPhoto: [] };
   let result: any;
   try {
     result = await invokeVision(base44, {
       task: 'ajustes',
       prompt,
       file_urls: fileUrls,
-      response_json_schema: schema
+      response_json_schema: schema,
+      _trace: trace,
     });
   } catch (e: any) {
     for (const p of photos) errors[p.id] = e.message;
-    return { values, confidences, errors };
+    return { values, confidences, errors, trace: { ...trace, error: e.message } };
   }
 
   for (let i = 0; i < photos.length; i++) {
     const photo = photos[i];
-    let photoResult = result[`photo_${i}`];
-    // Algunos proveedores (NVIDIA NIM sin response_format estricto) devuelven un objeto
-    // PLANO cuando el lote tiene una sola foto, sin la envoltura `photo_0`. Si hay una sola
-    // foto y no se encuentra `photo_0`, se acepta el objeto raiz como resultado de esa
-    // foto, para no descartarla (lo que dejaria el XMP sin correcciones basicas).
-    if (!photoResult && photos.length === 1 && result && typeof result === "object") {
-      photoResult = result;
+    const rawNested = result[`photo_${i}`];
+    // Normaliza nombres (exposure -> Exposure2012) y localiza el sub-objeto que contiene
+    // los parametros (algunos modelos anidan bajo photo_0 / adjustments / recommended).
+    let valuesObj = rawNested ? extractValuesObject(rawNested, enabledParams) : null;
+    if (!valuesObj && photos.length === 1) valuesObj = extractValuesObject(result, enabledParams);
+    if (!valuesObj) {
+      errors[photo.id] = "No result for photo";
+      trace.perPhoto.push({ id: photo.id, rawNested, valuesObj: null, final: null });
+      continue;
     }
-    if (!photoResult) { errors[photo.id] = "No result for photo"; continue; }
+    const photoResult = valuesObj;
 
     const baseline = photo.baseline;
     const technicalConfidence = photo.technicalConfidence;
@@ -318,7 +364,8 @@ Return a JSON object with keys photo_0, photo_1, ... each containing the numeric
     values[photo.id] = final;
     const aiConfidence = typeof photoResult.confidence_score === "number" ? Math.min(100, Math.max(0, photoResult.confidence_score)) : 80;
     confidences[photo.id] = technicalConfidence != null ? Math.min(aiConfidence, technicalConfidence) : aiConfidence;
+    trace.perPhoto.push({ id: photo.id, rawNested, valuesObj: photoResult, final });
   }
 
-  return { values, confidences, errors };
+  return { values, confidences, errors, trace };
 }
