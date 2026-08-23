@@ -47,6 +47,7 @@ export default function AjustesIA() {
   const [synced, setSynced] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extDone, setExtDone] = useState(0);
+  const [debugTrace, setDebugTrace] = useState([]);
 
   const enabledParams = useMemo(() => enabledKeys(config), [config]);
   const preferences = useMemo(() => preferencesFromConfig(config), [config]);
@@ -92,6 +93,7 @@ export default function AjustesIA() {
     setSynced(false);
     setProgress({ done: 0, total: photos.length });
     const out = [];
+    const traces = [];
     let ok = 0;
     for (let i = 0; i < photos.length; i++) {
       const photo = photos[i];
@@ -103,6 +105,27 @@ export default function AjustesIA() {
           // Modo GRATIS: 100% determinista, cero llamadas IA/red para análisis.
           const free = stats ? computeFreeBaseline(stats, precisionMode) : null;
           aiValues = free?.values || {};
+          // VERIFICACIÓN TEMPORAL (solo rama GRATIS): vuelca métricas + resultado ANTES
+          // de patchXmpAttributes para diagnosticar si los ceros vienen de (1) pérdida
+          // en el paso a XMP o (2) computeFreeBaseline que ya devuelve cero.
+          const trace = {
+            filename: photo.file.name,
+            photometrics: stats ? {
+              p1: stats.p1, p50: stats.p50, p95: stats.p95,
+              clipHighlightPct: stats.clipHighlightPct, clipShadowPct: stats.clipShadowPct,
+            } : null,
+            freeBaseline: free ? {
+              Exposure2012: free.values.Exposure2012,
+              Highlights2012: free.values.Highlights2012,
+              Shadows2012: free.values.Shadows2012,
+              Whites2012: free.values.Whites2012,
+              Blacks2012: free.values.Blacks2012,
+              Contrast2012: free.values.Contrast2012,
+              confidence: free.confidence,
+            } : null,
+          };
+          console.log("[FREE TRACE]", trace.filename, trace);
+          traces.push(trace);
         } else {
           // Modo Qwen: motor IA intacto (igual que antes).
           const baseline = stats ? computeTechnicalBaseline(stats, precisionMode) : null;
@@ -137,6 +160,7 @@ export default function AjustesIA() {
       setProgress({ done: i + 1, total: photos.length });
     }
     setResults(out);
+    setDebugTrace(mode === "free" ? traces : []);
     setBusy(false);
     toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
   };
@@ -351,6 +375,26 @@ export default function AjustesIA() {
                   Lightroom solo está disponible en el flujo combinado (fotos desde la sesión).
                 </p>
               )}
+            </div>
+          )}
+
+          {debugTrace.length > 0 && (
+            <div className="rounded-xl border border-amber-800 bg-amber-950/30 p-5 space-y-3">
+              <p className="text-sm font-semibold text-amber-400">Verificación FREE (temporal)</p>
+              <p className="text-xs text-zinc-400">
+                Vuelca métricas fotométricas y resultado de computeFreeBaseline por foto, antes de patchXmpAttributes.
+                Si <code>p50</code> cae en [105,155] y clipping es bajo, los ceros son esperables (la preview JPEG ya está normalizada por la cámara).
+                Si <code>p50</code> está fuera de rango y aun así FreeBaseline es 0, hay que revisar computeFreeBaseline.
+              </p>
+              <div className="space-y-2">
+                {debugTrace.map((t, i) => (
+                  <div key={i} className="rounded-md border border-amber-900/50 bg-black/40 p-3 text-xs font-mono">
+                    <p className="text-amber-300">{t.filename}</p>
+                    <p className="mt-1 text-zinc-400">Photometrics: {t.photometrics ? JSON.stringify(t.photometrics) : "null"}</p>
+                    <p className="text-zinc-400">FreeBaseline: {t.freeBaseline ? JSON.stringify(t.freeBaseline) : "null"}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
