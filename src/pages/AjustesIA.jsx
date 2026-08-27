@@ -28,6 +28,47 @@ const DEFAULT_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
   </rdf:RDF>
 </x:xmpmeta>`;
 
+// Sanitiza el TRATAMIENTO Color/B&N de la plantilla del preset ANTES de parchear los
+// básicos. Evita que un preset B/N fuerce monocromo en un RAW de color (Leica DNG y
+// otros). No toca CameraProfile/ProfileName ni ningún perfil de cámara. No altera
+// Exposure/Contrast/Highlights/Shadows/Whites/Blacks/Temperature/Tint (los parchea el
+// motor, no este helper).
+//   treatment: "auto" | "color" | "monochrome"
+//   cameraInfo: photo.cameraInfo (con isMonochrome true/false/null)
+function stripGrayscale(xmp) {
+  let r = xmp.replace(/\s*crs:ConvertToGrayscale\s*=\s*"[^"]*"/g, "");
+  r = r.replace(/\s*<crs:ConvertToGrayscale\s*>[^<]*<\/crs:ConvertToGrayscale>/g, "");
+  r = r.replace(/\s*<crs:ConvertToGrayscale\s*\/>/g, "");
+  return r;
+}
+function neutralizeBwTreatment(xmp) {
+  return xmp
+    .replace(/(crs:Treatment\s*=\s*")Black &amp; White(")/g, "$1Color$2")
+    .replace(/(crs:Treatment\s*=\s*")Black & White(")/g, "$1Color$2");
+}
+function setGrayscaleFlag(xmp, value) {
+  const re = /crs:ConvertToGrayscale\s*=\s*"[^"]*"/;
+  if (re.test(xmp)) return xmp.replace(re, `crs:ConvertToGrayscale="${value}"`);
+  const selfClosing = /<rdf:Description\b([^>]*?)\/>/;
+  if (selfClosing.test(xmp)) return xmp.replace(selfClosing, `<rdf:Description$1\n   crs:ConvertToGrayscale="${value}"/>`);
+  return xmp.replace(/(<rdf:Description[^>]*?)(>)/, `$1\n   crs:ConvertToGrayscale="${value}"$2`);
+}
+function sanitizeTreatment(xmp, treatment, cameraInfo) {
+  const isMono = !!(cameraInfo && cameraInfo.isMonochrome);
+  // Sensor realmente monocromo (Leica Monochrom…): respetar SIEMPRE el carácter
+  // monocromo, sea cual sea el modo elegido. No se fuerza color sobre un sensor
+  // sin Bayer — no tendría sentido y contradice la regla obligatoria.
+  if (isMono) return xmp;
+  if (treatment === "monochrome") return setGrayscaleFlag(xmp, "True");
+  if (treatment === "color") {
+    let r = stripGrayscale(xmp);
+    r = setGrayscaleFlag(r, "False");
+    return neutralizeBwTreatment(r);
+  }
+  // auto + cámara de color: elimina el B/N impuesto por el preset.
+  return neutralizeBwTreatment(stripGrayscale(xmp));
+}
+
 // Ajustes IA — herramienta INDEPENDIENTE. Carga su propia carpeta RAW o usa las fotos
 // de la sesión (flujo combinado). Revelado IA con plantilla mínima (sin preset, sin
 // selección previa). La IA se invoca EXCLUSIVAMENTE vía aiGateway.analyzePhotos — la
@@ -41,6 +82,7 @@ export default function AjustesIA() {
   const [fromSession, setFromSession] = useState(false);
   const [config, setConfig] = useState(defaultParameterConfig());
   const [precisionMode, setPrecisionMode] = useState("balanced");
+  const [treatment, setTreatment] = useState("auto"); // "auto" | "color" | "monochrome"
   const [mode, setMode] = useState("free"); // "free" (GRATIS, determinista) | "qwen" (IA)
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -135,6 +177,7 @@ export default function AjustesIA() {
           for (const k of enabledParams) if (typeof all[k] === "number") aiValues[k] = all[k];
         }
         let xmp = mode === "free" ? (presetTemplateText || DEFAULT_TEMPLATE) : DEFAULT_TEMPLATE;
+        xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
@@ -211,6 +254,7 @@ export default function AjustesIA() {
         const needsCorrection = Object.values(aiValues).some((v) => v);
         const allZero = !needsCorrection;
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
+        xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
@@ -396,6 +440,28 @@ export default function AjustesIA() {
               </button>
             </div>
             <PrecisionModeSelector value={precisionMode} onChange={setPrecisionMode} />
+            <div className="mt-3">
+              <p className="mb-2 text-xs font-medium text-zinc-400">Tratamiento</p>
+              <div className="flex items-center gap-2">
+                {[
+                  { id: "auto", label: "Automático" },
+                  { id: "color", label: "Color" },
+                  { id: "monochrome", label: "Monocromo" },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setTreatment(opt.id)}
+                    className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${treatment === opt.id ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-zinc-500">
+                Automático respeta el sensor (color→Color, monocromo→B/N). Color fuerza color. Monocromo conserva B/N.
+              </p>
+            </div>
             {mode === "free" && (
               <>
                 <p className="mt-4 text-xs text-zinc-500">
