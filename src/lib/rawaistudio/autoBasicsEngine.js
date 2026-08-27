@@ -5,13 +5,15 @@
 // 6 parámetros básicos de revelado de Lightroom:
 //   Exposure2012, Contrast2012, Highlights2012, Shadows2012, Whites2012, Blacks2012
 //
-// Filosofía: corrección TÉCNICA, no estilo. Nunca toca temperatura, tint, vibración,
-// saturación, claridad, curvas, HSL, calibración ni máscaras — eso es decisión creativa
-// del fotógrafo (o, en el futuro, de Qwen). Aquí solo se equilibra el tono de forma
-// reproducible y gratuita, ideal para bodas donde la consistencia entre tomas importa
-// más que el "gusto" variable de un modelo.
+// Filosofía: corrección TÉCNICA, no estilo. Toca los 6 básicos de revelado MÁS el balance
+// de blancos (Temperature/Tint) como corrección técnica per-foto hacia el neutro, con
+// dead-zones estrictas y confianza decreciente cuando no hay altas luces fiables. Nunca
+// toca vibración, saturación, claridad, curvas, HSL, calibración ni máscaras — eso es
+// decisión creativa del fotógrafo (o, en el futuro, de Qwen). Aquí solo se equilibra el
+// tono de forma reproducible y gratuita, ideal para bodas donde la consistencia entre
+// tomas importa más que el "gusto" variable de un modelo.
 
-import { PRECISION_MODES } from "./exposureEngine";
+import { PRECISION_MODES, computeWhiteBalanceDelta } from "./exposureEngine";
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 const round2 = (v) => Math.round(v * 100) / 100;
@@ -93,6 +95,7 @@ export function computeAutoBasicsPro(stats, mode = "balanced") {
     contrast = Math.round(clamp((110 - spread) / 110 * cfg.maxToneUnits * 0.4, 0, cfg.maxToneUnits * 0.4));
   }
 
+  const wb = computeWhiteBalanceDelta(stats, mode);
   const values = {
     Exposure2012: round2(exposure),
     Contrast2012: contrast,
@@ -100,6 +103,8 @@ export function computeAutoBasicsPro(stats, mode = "balanced") {
     Shadows2012: Math.round(shadows),
     Whites2012: Math.round(whites),
     Blacks2012: Math.round(blacks),
+    Temperature: wb.Temperature,
+    Tint: wb.Tint,
   };
 
   // Guard analítico de clipping: nunca empeora el clipping existente.
