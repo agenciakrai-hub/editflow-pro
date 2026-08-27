@@ -13,6 +13,8 @@ export const PARAM_DEFS = [
   { key: "Shadows2012", label: "Sombras", min: -100, max: 100, step: 1, decimals: 0 },
   { key: "Whites2012", label: "Blancos", min: -100, max: 100, step: 1, decimals: 0 },
   { key: "Blacks2012", label: "Negros", min: -100, max: 100, step: 1, decimals: 0 },
+  { key: "Temperature", label: "Temperatura", min: -100, max: 100, step: 1, decimals: 0 },
+  { key: "Tint", label: "Tinte", min: -100, max: 100, step: 1, decimals: 0 },
   { key: "Vibrance", label: "Vibración", min: -100, max: 100, step: 1, decimals: 0 },
   { key: "Saturation", label: "Saturación", min: -100, max: 100, step: 1, decimals: 0 },
   { key: "Clarity2012", label: "Claridad", min: -100, max: 100, step: 1, decimals: 0 },

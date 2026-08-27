@@ -53,11 +53,7 @@ export function pickRepresentatives(photos, max = 8) {
 //   enabledParams → lista de claves a rellenar (filtro de la UI); si se omite, todas.
 export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced", preferences = {}, enabledParams = null) {
   const recipe = (profile && profile.base_recipe) || {};
-  const baseKeys = enabledParams && enabledParams.length ? enabledParams : Object.keys(RANGES);
-  // El balance de blancos (Temperature/Tint) es corrección TÉCNICA per-foto, no un
-  // ajuste creativo toggleable: siempre se emite (base del perfil IA + delta local),
-  // junto a las claves que el fotógrafo activó en el panel.
-  const keys = Array.from(new Set([...baseKeys, "Temperature", "Tint"]));
+  const keys = enabledParams && enabledParams.length ? enabledParams : Object.keys(RANGES);
   const local = stats ? computeTechnicalBaseline(stats, precisionMode) : null;
   const final = {};
   for (const key of keys) {
