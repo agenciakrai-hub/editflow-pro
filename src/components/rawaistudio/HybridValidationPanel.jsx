@@ -30,6 +30,42 @@ function ValueChips({ values, accent = "text-amber-400" }) {
   );
 }
 
+// Desglose por foto: valor final = base (perfil IA) + delta local. Solo muestra el
+// desglose cuando el delta != 0 (los creativos de sesión, uniformes, quedan limpios).
+// Así el fotógrafo ve qué aporta la IA y qué corrige el motor por foto — y detecta si
+// el delta es idéntico en todas las muestras (motor sin trabajo real por foto).
+function BreakdownChips({ values, recipe }) {
+  const keys = Object.keys(values || {});
+  if (!keys.length) return <span className="text-xs text-zinc-600">Sin datos</span>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {keys.map((k) => {
+        const v = values[k];
+        const base = typeof recipe?.[k] === "number" ? recipe[k] : 0;
+        const delta = (typeof v === "number" ? v : 0) - base;
+        const zero = v === 0;
+        const hasDelta = Math.abs(delta) > 0.01;
+        return (
+          <span
+            key={k}
+            className={`rounded px-1.5 py-0.5 text-[10px] font-mono ${
+              zero ? "bg-zinc-900 text-zinc-600" : "bg-zinc-800 text-zinc-300"
+            }`}
+          >
+            {k}: <span className={zero ? "text-zinc-600" : "text-amber-400"}>{fmt(v)}</span>
+            {hasDelta && (
+              <span className="ml-1 text-zinc-500">
+                base {fmt(base)} · Δ{" "}
+                <span className={delta > 0 ? "text-emerald-400" : "text-sky-400"}>{fmt(delta)}</span>
+              </span>
+            )}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function HybridValidationPanel({
   profile,
   samples,
@@ -101,7 +137,7 @@ export default function HybridValidationPanel({
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-medium text-zinc-200">{s.filename}</p>
                 <div className="mt-1">
-                  <ValueChips values={s.values} />
+                  <BreakdownChips values={s.values} recipe={recipe} />
                 </div>
               </div>
             </div>
