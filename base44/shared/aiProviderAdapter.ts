@@ -216,27 +216,16 @@ async function callGeminiOnce(apiKey: string, cfg: any, opts: InvokeOpts): Promi
   return parseJsonContent(contentOut);
 }
 
-// Google Gemini. Estrategia free-first: intenta primero la key de la capa gratuita
-// (GEMINI_API_KEY). Si falla por cuota/rate-limit (HTTP 429 o 503) y hay una key de capa
-// de pago configurada (GEMINI_API_KEY_PAID), reintenta con esa. Sin failover a otros
-// proveedores. Si solo existe GEMINI_API_KEY, se comporta como antes (sin fallback).
+// Google Gemini. Usa únicamente GEMINI_API_KEY (la key del usuario). SIN failover: si
+// Gemini falla (cuota, rate-limit, error HTTP), se lanza el error tal cual — nunca
+// reintenta con otra key, nunca cae a Qwen ni a InvokeLLM. El proveedor activo es el
+// único responsable. GEMINI_API_KEY_PAID no se toca en esta ruta.
 async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
-  const freeKey = secrets.get("GEMINI_API_KEY");
-  const paidKey = secrets.get("GEMINI_API_KEY_PAID");
-  if (!freeKey && !paidKey) {
-    throw new Error("GEMINI_API_KEY no configurado (introúcelo en Base44 → Settings → Secrets)");
+  const apiKey = secrets.get("GEMINI_API_KEY");
+  if (!apiKey) {
+    throw new Error("Gemini falló: GEMINI_API_KEY no configurado (introúcelo en Base44 → Settings → Secrets)");
   }
-  if (freeKey) {
-    try {
-      return await callGeminiOnce(freeKey, cfg, opts);
-    } catch (e: any) {
-      const status = e?.httpStatus;
-      const retriable = status === 429 || status === 503;
-      if (!retriable || !paidKey) throw e;
-      console.log(`[aiProvider] gemini capa gratuita fallo (HTTP ${status}); reintentando con key de pago`);
-    }
-  }
-  return callGeminiOnce(paidKey, cfg, opts);
+  return callGeminiOnce(apiKey, cfg, opts);
 }
 
 // Punto unico de ruteo. SIN FAILOVER.
