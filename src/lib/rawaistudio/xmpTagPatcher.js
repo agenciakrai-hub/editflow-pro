@@ -49,6 +49,8 @@ function stripCrsChildElement(xmpText, tag) {
 export function patchXmpAttributes(xmpTemplateText, values) {
   let result = xmpTemplateText;
   for (const [tag, value] of Object.entries(values || {})) {
+    // Temperature/Tint son Kelvin absoluto gestionado por writeWhiteBalance; nunca shifts.
+    if (tag === "Temperature" || tag === "Tint") continue;
     result = stripCrsChildElement(result, tag);
     result = setAttribute(result, "crs", tag, formatValue(value));
   }
@@ -114,6 +116,23 @@ export function addOrientation(xmpText, rotation) {
   if (rotation == null || rotation === 0) return xmpText;
   const orientation = rotation === 90 ? "BC" : rotation === 180 ? "XYZ" : rotation === 270 ? "AC" : "AB";
   return setAttribute(xmpText, "crs", "Orientation", orientation);
+}
+
+// Balance de blancos como Kelvin ABSOLUTO (no shift). Lightroom interpreta crs:Temperature
+// como Kelvin cuando crs:WhiteBalance="Custom"; escribir un shift -100..100 ahí producía
+// 2000 K absurdos. Aquí solo se escribe cuando hay corrección justificada (wb.write=true):
+//   crs:WhiteBalance="Custom" + crs:Temperature="<kelvin>" + crs:Tint="<tint>".
+// Si wb.write=false (sin As Shot fiable, confianza < 40% o dead-zone) → no-op: Lightroom
+// conserva el WB nativo de la cámara (o el del preset si lo había).
+export function writeWhiteBalance(xmpText, wb) {
+  if (!wb || !wb.write || wb.finalKelvin == null) return xmpText;
+  let result = xmpText;
+  result = stripCrsChildElement(result, "Temperature");
+  result = stripCrsChildElement(result, "Tint");
+  result = setAttribute(result, "crs", "WhiteBalance", "Custom");
+  result = setAttribute(result, "crs", "Temperature", String(wb.finalKelvin));
+  result = setAttribute(result, "crs", "Tint", String(wb.finalTint ?? 0));
+  return result;
 }
 
 // Comprobación REAL del contenido del archivo final — nunca dar por "OK" un XMP solo

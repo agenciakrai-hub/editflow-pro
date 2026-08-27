@@ -7,7 +7,8 @@ import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis";
 import { computeAutoBasicsPro } from "@/lib/rawaistudio/autoBasicsEngine";
 import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/lib/rawaistudio/paramDefs";
-import { patchXmpAttributes, addRatingAndLabel, addOrientation } from "@/lib/rawaistudio/xmpTagPatcher";
+import { patchXmpAttributes, addRatingAndLabel, addOrientation, writeWhiteBalance } from "@/lib/rawaistudio/xmpTagPatcher";
+import WbBreakdown from "@/components/rawaistudio/WbBreakdown";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
 import { getSession } from "@/lib/rawaistudio/localSession";
 import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
@@ -156,12 +157,14 @@ export default function AjustesIA() {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
         let aiValues = {};
+        let wb = null;
         let needsCorrection = false;
         let allZero = false;
         if (mode === "free") {
           // Auto Ajustes Básicos Pro — GRATIS: 100% determinista, cero llamadas IA/red.
-          const pro = stats ? computeAutoBasicsPro(stats, precisionMode) : null;
+          const pro = stats ? computeAutoBasicsPro(stats, precisionMode, photo.asShotWB, photo.skinStats) : null;
           aiValues = pro?.values || {};
+          wb = pro?.wb || null;
           needsCorrection = !!pro?.needsCorrection;
           allZero = !!pro?.allZero;
         } else {
@@ -179,12 +182,13 @@ export default function AjustesIA() {
         let xmp = mode === "free" ? (presetTemplateText || DEFAULT_TEMPLATE) : DEFAULT_TEMPLATE;
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = patchXmpAttributes(xmp, aiValues);
+        xmp = writeWhiteBalance(xmp, wb);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
           label: fromSession ? lightroomLabelFor(photo.colorLabel) : null,
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
-        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues });
+        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb });
         ok++;
       } catch {
         // Continúa con la siguiente aunque una falle.
@@ -224,8 +228,8 @@ export default function AjustesIA() {
       for (const photo of samplePhotos) {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
-        const values = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams);
-        sampleOut.push({ id: photo.id, filename: photo.file.name, preview: base64, values });
+        const { values, wb: sampleWb } = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        sampleOut.push({ id: photo.id, filename: photo.file.name, preview: base64, values, wb: sampleWb });
       }
       setSamples(sampleOut);
       setAwaitingConfirm(true);
@@ -250,18 +254,19 @@ export default function AjustesIA() {
       try {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
-        const aiValues = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams);
-        const needsCorrection = Object.values(aiValues).some((v) => v);
+        const { values: aiValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        const needsCorrection = Object.values(aiValues).some((v) => v) || (wb?.write && Math.abs(wb.temperatureDelta) > 0);
         const allZero = !needsCorrection;
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = patchXmpAttributes(xmp, aiValues);
+        xmp = writeWhiteBalance(xmp, wb);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
           label: fromSession ? lightroomLabelFor(photo.colorLabel) : null,
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
-        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues });
+        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb });
         ok++;
       } catch {
         // Continúa con la siguiente aunque una falle.
@@ -556,6 +561,19 @@ export default function AjustesIA() {
                 Validación: {results.filter((r) => r.needsCorrection).length} fotos con corrección aplicada ·{" "}
                 {results.filter((r) => !r.needsCorrection).length} ya equilibradas (sin ajuste).
               </p>
+              {results.some((r) => r.wb) && (
+                <div className="rounded-md border border-zinc-800 bg-[#141414] p-3 space-y-1.5">
+                  <p className="text-xs font-medium text-zinc-300">Balance de blancos por foto</p>
+                  <div className="max-h-48 overflow-y-auto space-y-1.5 scrollbar-hide">
+                    {results.map((r) => (
+                      <div key={r.filename} className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-zinc-500 truncate">{r.filename}</span>
+                        <WbBreakdown wb={r.wb} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <button
                   onClick={downloadZip}

@@ -18,7 +18,8 @@ import { groupIntoScenes } from "./groupIntoScenes";
 import { runPool } from "./promisePool";
 import { computePHash, phashDistance } from "./perceptualHash";
 import { readCaptureTimeFromBytes } from "./captureTime";
-import { readCameraMetadataFromBytes } from "./cameraMetadata";
+import { readCameraMetadataFromBytes, readAsShotWhiteBalance } from "./cameraMetadata";
+import { analyzeSkinTone } from "./skinToneAnalysis";
 
 const PREVIEW_CONCURRENCY = 6;
 const BATCH_CONCURRENCY = 3;
@@ -53,9 +54,15 @@ export async function extractPreviews(items, onProgress) {
     const phash = preview?.dataUrl ? await computePHash(preview.dataUrl) : null;
     let captureTime = null, focal = null, aperture = null, iso = null;
     let cameraInfo = null;
+    let asShotWB = null;
     if (bytes) {
       try { const t = readCaptureTimeFromBytes(bytes); ({ captureTime, focal, aperture, iso } = t); } catch {}
       try { cameraInfo = readCameraMetadataFromBytes(bytes); } catch {}
+      try { asShotWB = readAsShotWhiteBalance(bytes); } catch {}
+    }
+    let skinStats = null;
+    if (preview?.base64 && !preview.isPlaceholder) {
+      try { skinStats = await analyzeSkinTone(preview.base64); } catch { skinStats = null; }
     }
 
     const corrupt = !preview || preview.isPlaceholder;
@@ -67,7 +74,7 @@ export async function extractPreviews(items, onProgress) {
       corrupt,
     };
 
-    return { ...item, preview, phash, captureTime, cameraInfo, technical };
+    return { ...item, preview, phash, captureTime, cameraInfo, technical, asShotWB, skinStats };
   }, () => { done += 1; onProgress?.(done); });
 }
 
@@ -380,6 +387,8 @@ export function buildPhotoFromSelection(p, keep, meta) {
     groupRank: m.groupRank ?? null,
     captureTime: p.captureTime ?? null,
     cameraInfo: p.cameraInfo || null,
+    asShotWB: p.asShotWB || null,
+    skinStats: p.skinStats || null,
     analysisComplete: m.analysisComplete ?? false,
     missingDimensions: m.missingDimensions || [],
     previewWarning: m.previewWarning || false,

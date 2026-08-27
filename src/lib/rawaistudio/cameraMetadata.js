@@ -1,3 +1,4 @@
+import { xyToKelvin, neutralToKelvin } from "./kelvinColor";
 // RAW AI Studio — lector de metadatos de cámara (solo lectura, nunca modifica el RAW).
 // Determina Make/Model y, cuando el formato lo permite, si el SENSOR es monocromo real
 // (ej. Leica M Monochrom) analizando la estructura TIFF/DNG del propio archivo RAW —
@@ -147,4 +148,57 @@ export function readCameraMetadataFromBytes(bytes) {
 export async function readCameraMetadata(file) {
   const buffer = await file.arrayBuffer();
   return readCameraMetadataFromBytes(new Uint8Array(buffer));
+}
+
+// Lee un SRATIONAL (int32 / int32) del buffer. Usado para los tags DNG AsShotNeutral /
+// AsShotWhiteXY, que viven en IFD0 como SRATIONAL arrays.
+function readSRational(bytes, offset, little) {
+  const num = readU32(bytes, offset, little) | 0; // |0 → signed int32
+  const den = readU32(bytes, offset + 4, little) | 0;
+  if (den === 0) return NaN;
+  return num / den;
+}
+
+// WB As Shot del RAW — SOLO para DNG (tags estándar AsShotNeutral / AsShotWhiteXY en IFD0).
+// Para RAW propietarios (CR3/CR2/NEF/ARW/RAF...) el WB vive en MakerNotes privados por marca
+// que este lector no parsea → devuelve null (el motor NO escribirá WB y Lightroom conservará
+// el original). Nunca aproxima ni inventa: sin tag fiable, no hay baseline.
+//   Devuelve { kelvin, tint, source } o null.
+export function readAsShotWhiteBalance(bytes) {
+  if (bytes.length < 8) return null;
+  const isLE = bytes[0] === 0x49 && bytes[1] === 0x49;
+  const isBE = bytes[0] === 0x4d && bytes[1] === 0x4d;
+  if (!isLE && !isBE) return null; // no es TIFF/DNG (CR3 = ISO-BMFF)
+  const little = isLE;
+  if (readU16(bytes, 2, little) !== 0x2a) return null;
+  const ifd0 = readIfdEntries(bytes, 0, readU32(bytes, 4, little), little);
+  if (!ifd0.length) return null;
+
+  // AsShotWhiteXY (0xD6C2): 2 SRATIONALs → cromaticidad x,y directa (más fiable).
+  const xyEntry = findTag(ifd0, 0xd6c2);
+  if (xyEntry) {
+    const x = readSRational(bytes, xyEntry.valueOffset, little);
+    const y = readSRational(bytes, xyEntry.valueOffset + 8, little);
+    if (Number.isFinite(x) && Number.isFinite(y) && x > 0 && y > 0 && x < 1 && y < 1) {
+      const kelvin = xyToKelvin(x, y);
+      if (Number.isFinite(kelvin) && kelvin > 1500 && kelvin < 12000) {
+        return { kelvin: Math.round(kelvin), tint: 0, source: "dng-AsShotWhiteXY" };
+      }
+    }
+  }
+
+  // AsShotNeutral (0xD6C1): 3 SRATIONALs → R,G,B camera-neutral (normalizamos G=1).
+  const neutralEntry = findTag(ifd0, 0xd6c1);
+  if (neutralEntry) {
+    const r = readSRational(bytes, neutralEntry.valueOffset, little);
+    const g = readSRational(bytes, neutralEntry.valueOffset + 8, little);
+    const b = readSRational(bytes, neutralEntry.valueOffset + 16, little);
+    if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && g > 0) {
+      const kelvin = neutralToKelvin(r / g, 1, b / g);
+      if (Number.isFinite(kelvin) && kelvin > 1500 && kelvin < 12000) {
+        return { kelvin: Math.round(kelvin), tint: 0, source: "dng-AsShotNeutral" };
+      }
+    }
+  }
+  return null;
 }

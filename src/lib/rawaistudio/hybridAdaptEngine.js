@@ -12,6 +12,7 @@
 // foto. La adaptación local es 100% determinista y gratuita.
 
 import { computeTechnicalBaseline, EXPOSURE_TIED_KEYS } from "./exposureEngine";
+import { computeWhiteBalance } from "./whiteBalanceEngine";
 
 const RANGES = {
   Exposure2012: { min: -5, max: 5 },
@@ -51,9 +52,12 @@ export function pickRepresentatives(photos, max = 8) {
 //   stats     → salida de analyzePhotometrics (o null si no hay preview)
 //   profile   → { base_recipe: { [key]: number }, ... }  (de generateSessionProfile)
 //   enabledParams → lista de claves a rellenar (filtro de la UI); si se omite, todas.
-export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced", preferences = {}, enabledParams = null) {
+export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced", preferences = {}, enabledParams = null, asShotWB = null, skinStats = null) {
   const recipe = (profile && profile.base_recipe) || {};
-  const keys = enabledParams && enabledParams.length ? enabledParams : Object.keys(RANGES);
+  const allKeys = enabledParams && enabledParams.length ? enabledParams : Object.keys(RANGES);
+  // WB es Kelvin absoluto sobre As Shot (whiteBalanceEngine), no un shift crs:. Se maneja
+  // fuera del dict de valores para que patchXmpAttributes no lo escriba como tono.
+  const keys = allKeys.filter((k) => k !== "Temperature" && k !== "Tint");
   const local = stats ? computeTechnicalBaseline(stats, precisionMode) : null;
   const final = {};
   for (const key of keys) {
@@ -69,5 +73,9 @@ export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced"
     const pref = Number(preferences?.[key]) || 0;
     final[key] = clamp(key, val + pref);
   }
-  return final;
+  // WB técnico per-foto sobre As Shot (no sobre el perfil IA de sesión).
+  let wb = computeWhiteBalance(stats, skinStats, asShotWB, precisionMode);
+  const wbEnabled = allKeys.includes("Temperature") || allKeys.includes("Tint");
+  if (!wbEnabled) wb = { ...wb, write: false, reason: "WB desactivado por el usuario" };
+  return { values: final, wb };
 }

@@ -13,7 +13,8 @@
 // tono de forma reproducible y gratuita, ideal para bodas donde la consistencia entre
 // tomas importa más que el "gusto" variable de un modelo.
 
-import { PRECISION_MODES, computeWhiteBalanceDelta } from "./exposureEngine";
+import { PRECISION_MODES } from "./exposureEngine";
+import { computeWhiteBalance } from "./whiteBalanceEngine";
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 const round2 = (v) => Math.round(v * 100) / 100;
@@ -51,7 +52,7 @@ export function photoNeedsCorrection(stats, mode = "balanced") {
   );
 }
 
-export function computeAutoBasicsPro(stats, mode = "balanced") {
+export function computeAutoBasicsPro(stats, mode = "balanced", asShotWB = null, skinStats = null) {
   const cfg = PRECISION_MODES[mode] || PRECISION_MODES.balanced;
   const [lowTarget, highTarget] = cfg.targetMedian;
   const midtone = midtoneOf(stats);
@@ -95,7 +96,7 @@ export function computeAutoBasicsPro(stats, mode = "balanced") {
     contrast = Math.round(clamp((110 - spread) / 110 * cfg.maxToneUnits * 0.4, 0, cfg.maxToneUnits * 0.4));
   }
 
-  const wb = computeWhiteBalanceDelta(stats, mode);
+  const wb = computeWhiteBalance(stats, skinStats, asShotWB, mode);
   const values = {
     Exposure2012: round2(exposure),
     Contrast2012: contrast,
@@ -103,8 +104,6 @@ export function computeAutoBasicsPro(stats, mode = "balanced") {
     Shadows2012: Math.round(shadows),
     Whites2012: Math.round(whites),
     Blacks2012: Math.round(blacks),
-    Temperature: wb.Temperature,
-    Tint: wb.Tint,
   };
 
   // Guard analítico de clipping: nunca empeora el clipping existente.
@@ -141,6 +140,7 @@ export function computeAutoBasicsPro(stats, mode = "balanced") {
 
   return {
     values,
+    wb,
     needsCorrection: needed,
     allZero: Object.values(values).every((v) => !v),
     confidence,

@@ -4,6 +4,7 @@
 // muestra antes de exportar la boda completa.
 import React from "react";
 import { CheckCircle2, X, Sparkles, Loader2 } from "lucide-react";
+import WbBreakdown from "./WbBreakdown";
 
 const fmt = (v) => (typeof v === "number" ? (Math.round(v * 10) / 10).toString() : "—");
 
@@ -139,6 +140,11 @@ export default function HybridValidationPanel({
                 <div className="mt-1">
                   <BreakdownChips values={s.values} recipe={recipe} />
                 </div>
+                {s.wb && (
+                  <div className="mt-1">
+                    <WbBreakdown wb={s.wb} />
+                  </div>
+                )}
               </div>
             </div>
           ))}

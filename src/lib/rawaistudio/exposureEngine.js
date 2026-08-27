@@ -13,8 +13,7 @@ export const PRECISION_MODES = {
 // fotométrico local). Contrast/Temperature/Tint ahora también: el look creativo de
 // sesión viene del perfil IA; el motor local solo corrige el sesgo técnico individual.
 export const EXPOSURE_TIED_KEYS = [
-  "Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012", "Whites2012", "Blacks2012",
-  "Temperature", "Tint"
+  "Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012", "Whites2012", "Blacks2012"
 ];
 
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
@@ -31,50 +30,7 @@ export function computeContrastDelta(stats, mode = "balanced") {
   return Math.round(clamp((110 - spread) / 110 * cfg.maxToneUnits * 0.4, 0, cfg.maxToneUnits * 0.4));
 }
 
-// Balance de blancos per-foto (Temperature/Tint). Referencia: altas luces casi neutras
-// (p95 por canal) ponderadas por su fiabilidad. No hay medias por canal disponibles sin
-// tocar photometricAnalysis, así que cuando las altas luces no son fiables (poco
-// brillantes o saturadas) la confianza cae y el delta tiende a 0 — nunca una dominante
-// débil produce una corrección fuerte. Corrige HACIA EL NEUTRO: cast cálido (R>B) →
-// Temperature negativo (enfriar); cast verde (G alto) → Tint negativo (magenta).
-// El delta se suma sobre la base de sesión del perfil IA, conservando el look global.
-export function computeWhiteBalanceDelta(stats, mode = "balanced") {
-  const cfg = PRECISION_MODES[mode] || PRECISION_MODES.balanced;
-  const ch = stats.channels;
-  const zero = { Temperature: 0, Tint: 0 };
-  if (!ch || !ch.r || !ch.g || !ch.b) return zero;
-
-  const CLIP_LIMIT = 0.03;
-  const usable = [];
-  if (ch.r.clipPct < CLIP_LIMIT) usable.push("r");
-  if (ch.g.clipPct < CLIP_LIMIT) usable.push("g");
-  if (ch.b.clipPct < CLIP_LIMIT) usable.push("b");
-  if (usable.length < 2) return zero;
-
-  const p95 = { r: ch.r.p95, g: ch.g.p95, b: ch.b.p95 };
-  const ref = usable.reduce((s, k) => s + p95[k], 0) / usable.length;
-
-  // Fiabilidad: las altas luces deben ser realmente brillantes para asumirlas neutras.
-  const brightConf = clamp((ref - 120) / 80, 0, 1); // 0 a ≤120, 1 a ≥200
-  const clipPenalty = usable.length === 3 ? 1 : 0.75;
-  const conf = brightConf * clipPenalty;
-  if (conf < 0.25) return zero; // señal débil → no corregir
-
-  const DEAD = 6; // dead-zone: asimetrías < 6 unidades no corrigen
-  let tempDelta = 0, tintDelta = 0;
-
-  if (usable.includes("r") && usable.includes("b")) {
-    const asym = p95.r - p95.b; // >0 = cast cálido
-    if (Math.abs(asym) >= DEAD) tempDelta = clamp(-asym * 0.5, -cfg.maxTemp, cfg.maxTemp) * conf;
-  }
-  if (usable.includes("g") && usable.includes("r") && usable.includes("b")) {
-    const asym = p95.g - (p95.r + p95.b) / 2; // >0 = cast verde
-    if (Math.abs(asym) >= DEAD) tintDelta = clamp(-asym * 0.4, -cfg.maxTint, cfg.maxTint) * conf;
-  }
-
-  return { Temperature: Math.round(tempDelta), Tint: Math.round(tintDelta) };
-}
-
+// WB movido a whiteBalanceEngine.js (Kelvin absoluto sobre As Shot, no shifts crs:).
 // stats: { p1, p5, p25, p50, p75, p95, p99, clipHighlightPct, clipShadowPct } — ver photometricAnalysis.js
 export function computeTechnicalBaseline(stats, mode = "balanced") {
   const cfg = PRECISION_MODES[mode] || PRECISION_MODES.balanced;
@@ -131,7 +87,6 @@ export function computeTechnicalBaseline(stats, mode = "balanced") {
   }
 
   const contrast = computeContrastDelta(stats, mode);
-  const wb = computeWhiteBalanceDelta(stats, mode);
 
   // Confianza: baja si hay clipping simultáneo severo en ambos extremos (alto rango
   // dinámico difícil de resolver con un ajuste global) o si el ajuste ya toca el límite
@@ -150,9 +105,7 @@ export function computeTechnicalBaseline(stats, mode = "balanced") {
       Highlights2012: Math.round(highlights),
       Shadows2012: Math.round(shadows),
       Whites2012: Math.round(whites),
-      Blacks2012: Math.round(blacks),
-      Temperature: wb.Temperature,
-      Tint: wb.Tint
+      Blacks2012: Math.round(blacks)
     },
     confidence,
     mode
