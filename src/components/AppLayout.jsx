@@ -9,6 +9,7 @@ const navItems = [
   { to: "/lightroom", label: "Lightroom", icon: Plug },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },
   { to: "/admin", label: "Administración", icon: Users },
+  { to: "/estilos", label: "Creador de estilos", icon: Wand2 },
   { to: "/proveedores-ia", label: "Proveedores IA", icon: KeyRound },
 ];
 

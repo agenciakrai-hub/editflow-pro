@@ -9,6 +9,7 @@ import { computeAutoBasicsPro } from "@/lib/rawaistudio/autoBasicsEngine";
 import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/lib/rawaistudio/paramDefs";
 import { patchXmpAttributes, addRatingAndLabel, addOrientation, writeWhiteBalance } from "@/lib/rawaistudio/xmpTagPatcher";
 import WbBreakdown from "@/components/rawaistudio/WbBreakdown";
+import { styleProfileToXmpTemplate } from "@/lib/style/styleProfileToXmpTemplate";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
 import { getSession } from "@/lib/rawaistudio/localSession";
 import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
@@ -93,6 +94,9 @@ export default function AjustesIA() {
   const [synced, setSynced] = useState(false);
   const [presetTemplateText, setPresetTemplateText] = useState("");
   const [presetFile, setPresetFile] = useState(null);
+  const [editStyleMode, setEditStyleMode] = useState("none");
+  const [profiles, setProfiles] = useState([]);
+  const [selectedProfile, setSelectedProfile] = useState(null);
   const [profile, setProfile] = useState(null);
   const [samples, setSamples] = useState([]);
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
@@ -106,6 +110,31 @@ export default function AjustesIA() {
     setAwaitingConfirm(false);
     setSamples([]);
   }, [mode]);
+
+  useEffect(() => {
+    base44.entities.PhotographerStyleProfile.list("-created_date", 50)
+      .then(setProfiles)
+      .catch(() => setProfiles([]));
+  }, []);
+
+  const chooseEditStyle = (styleMode) => {
+    setEditStyleMode(styleMode);
+    if (styleMode === "none") {
+      setPresetTemplateText("");
+      setPresetFile(null);
+      setSelectedProfile(null);
+    } else if (styleMode === "preset") {
+      setSelectedProfile(null);
+      setPresetTemplateText("");
+      setPresetFile(null);
+    }
+  };
+
+  const chooseProfile = (profile) => {
+    setSelectedProfile(profile);
+    setPresetTemplateText(styleProfileToXmpTemplate(profile));
+    setPresetFile(null);
+  };
 
   const useSession = () => {
     if (!session.photos?.length) return;
@@ -444,6 +473,52 @@ export default function AjustesIA() {
                 Híbrido — IA Económico
               </button>
             </div>
+            <div className="mt-4">
+              <p className="mb-2 text-xs font-medium text-zinc-400">Estilo de edición</p>
+              <div className="flex items-center gap-2">
+                {[
+                  { id: "none", label: "Sin estilo" },
+                  { id: "preset", label: "Preset" },
+                  { id: "profile", label: "Perfil de fotógrafo" },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => chooseEditStyle(opt.id)}
+                    className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${editStyleMode === opt.id ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {editStyleMode === "preset" && (
+                <p className="mt-2 text-xs text-zinc-500">Carga tu preset .xmp en el bloque de abajo.</p>
+              )}
+              {editStyleMode === "profile" && (
+                <div className="mt-2">
+                  {profiles.length === 0 ? (
+                    <p className="text-xs text-zinc-500">
+                      No tienes perfiles guardados. Crea uno en{" "}
+                      <button onClick={() => navigate("/estilos")} className="text-accent underline">Creador de estilos</button>.
+                    </p>
+                  ) : (
+                    <select
+                      value={selectedProfile?.id || ""}
+                      onChange={(e) => {
+                        const p = profiles.find((x) => x.id === e.target.value);
+                        if (p) chooseProfile(p);
+                      }}
+                      className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200"
+                    >
+                      <option value="">Selecciona un perfil…</option>
+                      {profiles.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              )}
+            </div>
             <PrecisionModeSelector value={precisionMode} onChange={setPrecisionMode} />
             <div className="mt-3">
               <p className="mb-2 text-xs font-medium text-zinc-400">Tratamiento</p>
@@ -474,14 +549,24 @@ export default function AjustesIA() {
                   histograma RGB por canal + luminancia, clipping de altas luces y sombras, distribución tonal y contraste
                   global para calcular los 6 básicos: Exposure, Contrast, Highlights, Shadows, Whites y Blacks.
                 </p>
-                <PresetLoadSection
-                  presetFile={presetFile}
-                  onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
-                />
-                <p className="mt-2 text-xs text-zinc-500">
-                  Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…); el motor local
-                  solo rellena los 6 básicos sobre él. Sin preset se usa una plantilla mínima.
-                </p>
+                {editStyleMode === "preset" && (
+                  <>
+                    <PresetLoadSection
+                      presetFile={presetFile}
+                      onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
+                    />
+                    <p className="mt-2 text-xs text-zinc-500">
+                      Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…); el motor local
+                      solo rellena los 6 básicos sobre él. Sin preset se usa una plantilla mínima.
+                    </p>
+                  </>
+                )}
+                {editStyleMode === "profile" && selectedProfile && (
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Aplicando el perfil <span className="text-zinc-300">{selectedProfile.name}</span> como capa creativa.
+                    Los 6 básicos y el WB se calculan por foto.
+                  </p>
+                )}
               </>
             )}
             {mode === "hybrid" && (
@@ -493,14 +578,24 @@ export default function AjustesIA() {
                   según su histograma real. Muy económico: 1 llamada de IA para toda la sesión, no 1 por foto. Selecciona
                   parámetros y preferencia (0 = sin desplazar).
                 </p>
-                <PresetLoadSection
-                  presetFile={presetFile}
-                  onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
-                />
-                <p className="mt-2 text-xs text-zinc-500">
-                  Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…) como plantilla
-                  base; la IA solo rellena los básicos sobre él. No afecta al cálculo del revelado IA.
-                </p>
+                {editStyleMode === "preset" && (
+                  <>
+                    <PresetLoadSection
+                      presetFile={presetFile}
+                      onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
+                    />
+                    <p className="mt-2 text-xs text-zinc-500">
+                      Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…) como plantilla
+                      base; la IA solo rellena los básicos sobre él. No afecta al cálculo del revelado IA.
+                    </p>
+                  </>
+                )}
+                {editStyleMode === "profile" && selectedProfile && (
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Aplicando el perfil <span className="text-zinc-300">{selectedProfile.name}</span> como capa creativa.
+                    Los básicos y el WB se calculan por foto.
+                  </p>
+                )}
                 <ParameterPanel config={config} onChange={setConfig} />
                 {profile && (
                   <div className="mt-3 rounded-md border border-zinc-700 bg-zinc-900 p-3">

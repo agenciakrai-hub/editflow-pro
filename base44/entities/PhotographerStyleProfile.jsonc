@@ -1,0 +1,122 @@
+{
+  "name": "PhotographerStyleProfile",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nombre del estilo de fot\u00f3grafo."
+    },
+    "color_profile": {
+      "type": "object",
+      "description": "Perfil cualitativo de COLOR del look del fot\u00f3grafo (descriptivo, no valores crs).",
+      "properties": {
+        "tendencia_color": {
+          "type": "string"
+        },
+        "saturacion": {
+          "type": "string"
+        },
+        "representacion_piel": {
+          "type": "string"
+        },
+        "caracter_tonal": {
+          "type": "string"
+        },
+        "contraste_creativo": {
+          "type": "string"
+        }
+      }
+    },
+    "edit_profile": {
+      "type": "object",
+      "description": "Perfil cualitativo de EDICI\u00d3N/LOOK (descriptivo, no valores crs).",
+      "properties": {
+        "tratamiento_luces": {
+          "type": "string"
+        },
+        "tratamiento_sombras": {
+          "type": "string"
+        },
+        "negros": {
+          "type": "string"
+        },
+        "suavidad_crispness": {
+          "type": "string"
+        },
+        "caracter_acabado": {
+          "type": "string"
+        },
+        "consistencia": {
+          "type": "string"
+        }
+      }
+    },
+    "creative_recipe": {
+      "type": "object",
+      "description": "Receta creativa determinista (solo sliders creativos de Lightroom). NUNCA contiene Exposure2012, Contrast2012, Highlights2012, Shadows2012, Whites2012, Blacks2012, Temperature ni Tint \u2014 esos belongecen al motor t\u00e9cnico de AjustesIA por fotograf\u00eda.",
+      "properties": {
+        "Vibrance": {
+          "type": "number",
+          "description": "-100..100"
+        },
+        "Saturation": {
+          "type": "number",
+          "description": "-100..100"
+        },
+        "Clarity2012": {
+          "type": "number",
+          "description": "-100..100"
+        },
+        "Texture2012": {
+          "type": "number",
+          "description": "-100..100"
+        },
+        "Dehaze2012": {
+          "type": "number",
+          "description": "-100..100"
+        },
+        "Sharpness": {
+          "type": "number",
+          "description": "0..100"
+        }
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "default": 0,
+      "description": "Confianza del an\u00e1lisis de estilo (0-100)."
+    },
+    "source": {
+      "type": "object",
+      "description": "Origen del perfil.",
+      "properties": {
+        "gallery_url": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "image_count": {
+          "type": "number"
+        }
+      }
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

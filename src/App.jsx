@@ -23,6 +23,7 @@ import MisProyectos from '@/pages/MisProyectos';
 import AjustesIA from '@/pages/AjustesIA';
 import PresetXMP from '@/pages/PresetXMP';
 import AIProviders from '@/pages/AIProviders';
+import Estilos from '@/pages/Estilos';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -62,6 +63,7 @@ const AuthenticatedApp = () => {
           <Route path="/ajustes-ia" element={<AjustesIA />} />
           <Route path="/preset-xmp" element={<PresetXMP />} />
           <Route path="/proveedores-ia" element={<AIProviders />} />
+          <Route path="/estilos" element={<Estilos />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
