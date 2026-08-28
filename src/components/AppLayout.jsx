@@ -16,8 +16,8 @@ const navItems = [
 function Logo() {
   return (
     <div className="flex items-center gap-1.5">
-      <svg width="14" height="26" viewBox="0 0 14 26" className="shrink-0">
-        <path d="M14 0 A13 13 0 0 0 14 26 Z" fill="hsl(24 100% 50%)" />
+      <svg width="14" height="26" viewBox="0 0 14 26" className="shrink-0 text-primary">
+        <path d="M14 0 A13 13 0 0 0 14 26 Z" fill="currentColor" />
       </svg>
       <span className="text-lg font-bold tracking-tight">EditKR</span>
     </div>

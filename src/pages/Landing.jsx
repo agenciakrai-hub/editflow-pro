@@ -29,7 +29,7 @@ export default function Landing() {
       <header className="sticky top-0 z-40 bg-background/90 backdrop-blur border-b border-border">
         <div className="max-w-5xl mx-auto flex items-center justify-between h-16 px-4">
           <div className="flex items-center gap-1.5">
-            <svg width="14" height="26" viewBox="0 0 14 26"><path d="M14 0 A13 13 0 0 0 14 26 Z" fill="hsl(24 100% 50%)" /></svg>
+            <svg width="14" height="26" viewBox="0 0 14 26" className="text-primary"><path d="M14 0 A13 13 0 0 0 14 26 Z" fill="currentColor" /></svg>
             <span className="text-lg font-bold tracking-tight">EditKR</span>
           </div>
           <div className="flex items-center gap-2">
@@ -117,7 +117,7 @@ export default function Landing() {
       <footer className="border-t border-border mt-12">
         <div className="max-w-5xl mx-auto px-4 py-8 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <svg width="12" height="22" viewBox="0 0 14 26"><path d="M14 0 A13 13 0 0 0 14 26 Z" fill="hsl(24 100% 50%)" /></svg>
+            <svg width="12" height="22" viewBox="0 0 14 26" className="text-primary"><path d="M14 0 A13 13 0 0 0 14 26 Z" fill="currentColor" /></svg>
             <span className="font-bold">EditKR</span>
           </div>
           <p className="text-xs text-muted-foreground">© 2026 EditKR Foto. Post-producción con IA.</p>
