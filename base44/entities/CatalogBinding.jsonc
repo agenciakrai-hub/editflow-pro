@@ -1,0 +1,40 @@
+{
+  "name": "CatalogBinding",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string"
+    },
+    "catalog_handle_ref": {
+      "type": "string",
+      "description": "Referencia opaca a IndexedDB (NUNCA el handle real). Vac\u00edo si no se asoci\u00f3 cat\u00e1logo."
+    },
+    "raw_folder_handle_ref": {
+      "type": "string",
+      "description": "Referencia opaca a IndexedDB (NUNCA el handle real)."
+    },
+    "catalog_filename": {
+      "type": "string"
+    },
+    "raw_folder_name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

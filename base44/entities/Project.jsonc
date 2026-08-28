@@ -67,6 +67,27 @@
           }
         }
       }
+    },
+    "lightroom_catalog_name": {
+      "type": "string",
+      "description": "Nombre del archivo .lrcat asociado (informativo; nunca el binario)."
+    },
+    "raw_folder_path": {
+      "type": "string",
+      "description": "Nombre/ruta de la carpeta RAW asociada como string (informativo; el handle real vive en IndexedDB)."
+    },
+    "ai_config_snapshot": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Reserva para Fase futura: configuraci\u00f3n de IA usada en el proyecto."
+    },
+    "edit_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "description": "Reserva para Fase futura: historial de ediciones/exportaciones del proyecto."
     }
   },
   "required": [

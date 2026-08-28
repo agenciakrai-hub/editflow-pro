@@ -1,0 +1,112 @@
+{
+  "name": "ProjectPhotoFingerprint",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string"
+    },
+    "fingerprint_hash": {
+      "type": "string",
+      "description": "pHash hexadecimal (identidad visual principal)."
+    },
+    "filename": {
+      "type": "string"
+    },
+    "relative_path": {
+      "type": "string"
+    },
+    "capture_time": {
+      "type": "number",
+      "description": "Epoch ms de DateTimeOriginal (EXIF)."
+    },
+    "camera_make": {
+      "type": "string"
+    },
+    "camera_model": {
+      "type": "string"
+    },
+    "file_size": {
+      "type": "number"
+    },
+    "selection_status": {
+      "type": "string",
+      "enum": [
+        "TOP_PICK",
+        "SELECT",
+        "REVIEW",
+        "REJECT"
+      ],
+      "default": "REVIEW"
+    },
+    "rating": {
+      "type": "number",
+      "default": 0
+    },
+    "color_label": {
+      "type": "string",
+      "enum": [
+        "none",
+        "red",
+        "yellow",
+        "green",
+        "blue",
+        "purple"
+      ],
+      "default": "none"
+    },
+    "needs_review": {
+      "type": "boolean",
+      "default": false,
+      "description": "true cuando el re-emparejamiento tras una re-sincronizaci\u00f3n result\u00f3 ambiguo."
+    },
+    "lr_local_id": {
+      "type": "string",
+      "description": "Identificador del cat\u00e1logo Lightroom (localId/UUID), si se conoce."
+    },
+    "lr_catalog_path": {
+      "type": "string"
+    },
+    "preset_version_id": {
+      "type": "string",
+      "description": "Reserva para Fase futura: identidad/versi\u00f3n del preset utilizado."
+    },
+    "style_profile_id": {
+      "type": "string",
+      "description": "Reserva para Fase futura: PhotographerStyleProfile aplicado."
+    },
+    "xmp_generated": {
+      "type": "boolean",
+      "default": false,
+      "description": "Reserva para Fase futura."
+    },
+    "initial_values": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Reserva para Fase futura (aprendizaje)."
+    },
+    "corrected_values": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Reserva para Fase futura (aprendizaje)."
+    }
+  },
+  "required": [
+    "project_id",
+    "fingerprint_hash",
+    "filename"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

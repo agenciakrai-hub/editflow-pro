@@ -20,6 +20,8 @@ import Admin from '@/pages/Admin';
 import LightroomPage from '@/modules/lightroom/LightroomPage';
 import Hub from '@/pages/Hub';
 import MisProyectos from '@/pages/MisProyectos';
+import NuevoProyectoPage from '@/modules/proyectos/NuevoProyectoPage';
+import DetalleProyectoPage from '@/modules/proyectos/DetalleProyectoPage';
 import AjustesIA from '@/pages/AjustesIA';
 import PresetXMP from '@/pages/PresetXMP';
 import AIProviders from '@/pages/AIProviders';
@@ -60,6 +62,8 @@ const AuthenticatedApp = () => {
           <Route path="/lightroom" element={<LightroomPage />} />
           <Route path="/herramientas" element={<Hub />} />
           <Route path="/proyectos" element={<MisProyectos />} />
+          <Route path="/proyectos/nuevo" element={<NuevoProyectoPage />} />
+          <Route path="/proyectos/:id" element={<DetalleProyectoPage />} />
           <Route path="/ajustes-ia" element={<AjustesIA />} />
           <Route path="/preset-xmp" element={<PresetXMP />} />
           <Route path="/proveedores-ia" element={<AIProviders />} />

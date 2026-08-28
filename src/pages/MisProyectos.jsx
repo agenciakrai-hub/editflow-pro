@@ -57,11 +57,16 @@ export default function MisProyectos() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Mis proyectos</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Proyectos guardados (solo metadatos). Las imágenes no se almacenan: recarga la carpeta para volver a procesar.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold">Mis proyectos</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Proyectos guardados (solo metadatos). Las imágenes no se almacenan: recarga la carpeta para volver a procesar.
+          </p>
+        </div>
+        <Link to="/proyectos/nuevo" className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground">
+          Nuevo proyecto
+        </Link>
       </div>
 
       {loading && (
@@ -99,11 +104,16 @@ export default function MisProyectos() {
                       </p>
                     </div>
                   </button>
-                  <button onClick={() => remove(p.id)} disabled={deleting === p.id}
-                    className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-destructive disabled:opacity-40">
-                    {deleting === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                    Eliminar
-                  </button>
+                  <span className="flex items-center gap-2">
+                    <Link to={`/proyectos/${p.id}`} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary">
+                      Abrir
+                    </Link>
+                    <button onClick={() => remove(p.id)} disabled={deleting === p.id}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-destructive disabled:opacity-40">
+                      {deleting === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      Eliminar
+                    </button>
+                  </span>
                 </div>
                 {isOpen && (
                   <div className="border-t border-border">
