@@ -10,6 +10,7 @@ import { createProject, createCatalogBinding, bulkCreateFingerprints } from "./h
 import PhotoFingerprintGrid from "./components/PhotoFingerprintGrid";
 import { useToast } from "@/components/ui/use-toast";
 import { setPendingProjectPreviews } from "@/lib/rawaistudio/localSession";
+import { cachePreviews } from "./lib/previewCache";
 
 // Crea un proyecto: nombre + fecha + catálogo .lrcat + carpeta RAW. Lee los RAW igual que
 // el flujo de Selección (extractPreviews, reutilizado sin modificar) y calcula un
@@ -69,6 +70,10 @@ export default function NuevoProyectoPage() {
       });
       setProgress({ done: count + i + 1, total });
     }
+    // Cachea las previews en IndexedDB para que reabrir el proyecto sea instantáneo.
+    cachePreviews(
+      withFingerprint.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl }))
+    ).catch(() => {});
     setItems(withFingerprint);
     setExtracting(false);
   };

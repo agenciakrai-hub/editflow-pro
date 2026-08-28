@@ -15,6 +15,7 @@ import SelectionSummary from "./components/SelectionSummary";
 import PhotoFingerprintGrid from "./components/PhotoFingerprintGrid";
 import { useToast } from "@/components/ui/use-toast";
 import { takePendingProjectPreviews } from "@/lib/rawaistudio/localSession";
+import { getCachedPreviews } from "./lib/previewCache";
 
 // Reabre un proyecto: comprueba accesibilidad de carpeta RAW y .lrcat (🟢/🟡/🔴, de forma
 // independiente de la selección), y si la carpeta sigue accesible re-extrae previews y
@@ -40,6 +41,7 @@ export default function DetalleProyectoPage() {
   const [mode, setMode] = useState("select"); // "select" | "summary"
   const [statusDraft, setStatusDraft] = useState({});
   const [saving, setSaving] = useState(false);
+  const [previewByHash, setPreviewByHash] = useState(new Map());
 
   // Empareja los fingerprints guardados con una lista de candidatos (con previews ya
   // disponibles) y los enriquece con el lr_local_id del catálogo si el plugin lo recopiló.
@@ -103,6 +105,14 @@ export default function DetalleProyectoPage() {
     setFingerprints(fps);
     setMode(p?.selection_saved ? "summary" : "select");
     setStatusDraft({});
+    // Previews cacheadas en IndexedDB: cargan casi al instante para mostrar las imágenes
+    // sin esperar a re-extraerlas de la carpeta RAW.
+    try {
+      const cached = await getCachedPreviews(fps.map((f) => f.fingerprint_hash).filter(Boolean));
+      setPreviewByHash(cached);
+    } catch {
+      // Sin caché todavía: las previews llegarán tras la recuperación en segundo plano.
+    }
     // Muestra el proyecto al instante con los datos ya guardados.
     setLoading(false);
     // Previews ya extraídas al crear el proyecto: se reutilizan sin volver a procesarlas.
@@ -234,7 +244,7 @@ export default function DetalleProyectoPage() {
       id: f.id,
       filename: f.filename,
       status: statusDraft[f.id] ?? f.selection_status,
-      previewUrl: m?.candidate?.preview?.dataUrl,
+      previewUrl: m?.candidate?.preview?.dataUrl || previewByHash.get(f.fingerprint_hash),
     };
   });
 
