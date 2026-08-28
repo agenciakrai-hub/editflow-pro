@@ -9,6 +9,7 @@ import { saveHandle } from "./lib/idbHandles";
 import { createProject, createCatalogBinding, bulkCreateFingerprints } from "./hooks/useProjectStore";
 import PhotoFingerprintGrid from "./components/PhotoFingerprintGrid";
 import { useToast } from "@/components/ui/use-toast";
+import { setPendingProjectPreviews } from "@/lib/rawaistudio/localSession";
 
 // Crea un proyecto: nombre + fecha + catálogo .lrcat + carpeta RAW. Lee los RAW igual que
 // el flujo de Selección (extractPreviews, reutilizado sin modificar) y calcula un
@@ -137,6 +138,19 @@ export default function NuevoProyectoPage() {
         }))
       );
 
+      // Pasa las previews ya extraídas al detalle para no volver a procesarlas al abrir.
+      setPendingProjectPreviews(
+        project.id,
+        items.map((it) => ({
+          filename: it.file.name,
+          preview: it.preview,
+          cameraInfo: it.cameraInfo,
+          asShotWB: it.asShotWB,
+          skinStats: it.skinStats,
+          fingerprint: it.fingerprint,
+          status: it.status,
+        }))
+      );
       toast({ title: "Proyecto guardado", description: `${items.length} fotos · ${selCount} seleccionadas` });
       navigate(`/proyectos/${project.id}`);
     } catch (e) {

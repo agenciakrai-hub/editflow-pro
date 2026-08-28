@@ -14,6 +14,7 @@ import LocationNotFoundModal from "./components/LocationNotFoundModal";
 import SelectionSummary from "./components/SelectionSummary";
 import PhotoFingerprintGrid from "./components/PhotoFingerprintGrid";
 import { useToast } from "@/components/ui/use-toast";
+import { takePendingProjectPreviews } from "@/lib/rawaistudio/localSession";
 
 // Reabre un proyecto: comprueba accesibilidad de carpeta RAW y .lrcat (🟢/🟡/🔴, de forma
 // independiente de la selección), y si la carpeta sigue accesible re-extrae previews y
@@ -40,33 +41,9 @@ export default function DetalleProyectoPage() {
   const [statusDraft, setStatusDraft] = useState({});
   const [saving, setSaving] = useState(false);
 
-  const recoverFromFolder = async (folderHandle, savedFingerprints) => {
-    const raws = [];
-    for await (const [name, entryHandle] of folderHandle.entries()) {
-      if (entryHandle.kind !== "file") continue;
-      if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
-      raws.push(await entryHandle.getFile());
-    }
-    const inputItems = raws.map((f, i) => ({ id: String(i), file: f }));
-    const withPreview = await extractPreviews(inputItems, () => {}, () => {});
-    const withFingerprint = await Promise.all(
-      withPreview.map(async (p) => ({
-        ...p,
-        fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
-      }))
-    );
-    const candidateList = withFingerprint.map((p) => ({
-      id: p.id,
-      file: p.file,
-      preview: p.preview,
-      cameraInfo: p.cameraInfo,
-      asShotWB: p.asShotWB,
-      skinStats: p.skinStats,
-      ...p.fingerprint,
-    }));
-    // Enriquece candidatos con el identificador de catálogo Lightroom (lr_local_id), si el
-    // plugin ya recopiló un snapshot (acción lr-collect-ids). Fuente secundaria: solo ayuda
-    // a desambiguar colisiones; si no hay snapshot, el flujo sigue igual que antes.
+  // Empareja los fingerprints guardados con una lista de candidatos (con previews ya
+  // disponibles) y los enriquece con el lr_local_id del catálogo si el plugin lo recopiló.
+  const applyCandidates = async (savedFingerprints, candidateList) => {
     try {
       const res = await base44.functions.invoke("editflow-engine", { action: "lr-catalog-ids" });
       const catalogPhotos = res?.data?.photos || [];
@@ -80,16 +57,42 @@ export default function DetalleProyectoPage() {
     } catch {
       // Sin plugin configurado todavía: se ignora, la desambiguación cae a revisión manual.
     }
-
     const result = matchFingerprints(savedFingerprints, candidateList);
     setMatches(result);
-
     const flagged = result.filter((r) => r.ambiguous).map((r) => ({ id: r.saved.id, needs_review: true }));
     const lrIdUpdates = result
       .filter((r) => r.matched && r.candidate?.lr_local_id && !r.saved.lr_local_id)
       .map((r) => ({ id: r.saved.id, lr_local_id: r.candidate.lr_local_id }));
     if (flagged.length) await bulkUpdateFingerprints(flagged);
     if (lrIdUpdates.length) await bulkUpdateFingerprints(lrIdUpdates);
+  };
+
+  // Re-extrae previews de la carpeta RAW y recalcula fingerprints. Solo se usa al reabrir
+  // un proyecto existente (sin previews en sesión); al crear, las previews ya están disponibles.
+  const recoverFromFolder = async (folderHandle, savedFingerprints) => {
+    const raws = [];
+    for await (const [name, entryHandle] of folderHandle.entries()) {
+      if (entryHandle.kind !== "file") continue;
+      if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
+      raws.push(await entryHandle.getFile());
+    }
+    const inputItems = raws.map((f, i) => ({ id: String(i), file: f }));
+    const withPreview = await extractPreviews(inputItems, () => {}, () => {});
+    const candidateList = await Promise.all(
+      withPreview.map(async (p) => {
+        const fingerprint = await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name });
+        return {
+          id: p.id,
+          file: p.file,
+          preview: p.preview,
+          cameraInfo: p.cameraInfo,
+          asShotWB: p.asShotWB,
+          skinStats: p.skinStats,
+          ...fingerprint,
+        };
+      })
+    );
+    await applyCandidates(savedFingerprints, candidateList);
   };
 
   const load = useCallback(async () => {
@@ -100,15 +103,30 @@ export default function DetalleProyectoPage() {
     setFingerprints(fps);
     setMode(p?.selection_saved ? "summary" : "select");
     setStatusDraft({});
-    // Muestra el proyecto al instante con los datos ya guardados; la recuperación de
-    // la carpeta (previews + re-emparejamiento) corre en segundo plano, sin bloquear.
+    // Muestra el proyecto al instante con los datos ya guardados.
     setLoading(false);
+    // Previews ya extraídas al crear el proyecto: se reutilizan sin volver a procesarlas.
+    const stashed = takePendingProjectPreviews(id);
+    if (stashed?.length) {
+      const candidateList = stashed.map((p, i) => ({
+        id: String(i),
+        preview: p.preview,
+        cameraInfo: p.cameraInfo,
+        asShotWB: p.asShotWB,
+        skinStats: p.skinStats,
+        ...p.fingerprint,
+      }));
+      (async () => {
+        try { await applyCandidates(fps, candidateList); } catch {}
+      })();
+    }
     if (b) {
       (async () => {
         try {
           const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
           setSync(s);
-          if (s.folderOk && s.folderHandle) await recoverFromFolder(s.folderHandle, fps);
+          // Solo re-extrae si no había previews en sesión (reabrir un proyecto existente).
+          if (s.folderOk && s.folderHandle && !stashed?.length) await recoverFromFolder(s.folderHandle, fps);
         } catch {
           // Sin acceso a la carpeta: el usuario puede re-sincronizar manualmente.
         }
