@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound } from "lucide-react";
+import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound, FolderHeart } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const navItems = [
   { to: "/herramientas", label: "Herramientas", icon: LayoutGrid },
+  { to: "/proyectos", label: "Proyectos", icon: FolderHeart },
   { to: "/preset-xmp", label: "Preset XMP", icon: FileImage },
   { to: "/lightroom", label: "Lightroom", icon: Plug },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },

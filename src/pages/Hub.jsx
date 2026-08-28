@@ -5,6 +5,12 @@ import { Images, Sparkles, FileImage, FolderHeart, Wand2 } from "lucide-react";
 // No ejecuta ninguna herramienta: cada tarjeta solo navega a su ruta.
 const tools = [
   {
+    to: "/proyectos",
+    title: "Proyectos",
+    desc: "Crea un proyecto nuevo o reabre uno guardado (solo metadatos). Recarga la carpeta/catálogo para volver a procesar.",
+    icon: FolderHeart,
+  },
+  {
     to: "/dashboard",
     title: "Selección",
     desc: "Culling IA por ráfagas: TOP_PICK / SELECT / REVIEW / REJECT sobre una carpeta RAW.",
@@ -21,12 +27,6 @@ const tools = [
     title: "Preset XMP",
     desc: "Aplica un preset .xmp de forma 100 % determinista. Sin IA, sin créditos.",
     icon: FileImage,
-  },
-  {
-    to: "/proyectos",
-    title: "Proyectos",
-    desc: "Crea un proyecto nuevo o reabre uno guardado (solo metadatos). Recarga la carpeta/catálogo para volver a procesar.",
-    icon: FolderHeart,
   },
   {
     to: "/estilos",
