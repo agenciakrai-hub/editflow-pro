@@ -14,6 +14,7 @@ import SelectionSummary from "@/modules/proyectos/components/SelectionSummary";
 import LocationNotFoundModal from "@/modules/proyectos/components/LocationNotFoundModal";
 import { COLOR_LABELS, lightroomLabelFor } from "@/lib/rawaistudio/labels";
 import { useToast } from "@/components/ui/use-toast";
+import { getCachedPreviews, cachePreviews } from "@/modules/proyectos/lib/previewCache";
 import PhotoCard from "@/components/rawaistudio/PhotoCard";
 import ReviewFilters from "@/components/rawaistudio/ReviewFilters";
 
@@ -55,6 +56,7 @@ export default function Seleccion() {
   const [savingSelection, setSavingSelection] = useState(false);
   const [projectLoading, setProjectLoading] = useState(false);
   const [resyncing, setResyncing] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [projectRawItems, setProjectRawItems] = useState([]);
   const [idToFpId, setIdToFpId] = useState({});
   const { checkSync, resyncFolder, resyncCatalog } = useFileSync();
@@ -105,35 +107,78 @@ export default function Seleccion() {
       setBinding(b);
       setFingerprints(fps);
       setShowProjectSummary(false);
+      // Muestra el proyecto al instante: deja de cargar aquí y recupera las fotos en segundo plano.
+      setProjectLoading(false);
+
+      // Instant: construye las fotos desde las previews cacheadas (IndexedDB) + la selección
+      // guardada, para que las imágenes aparezcan sin re-extraerlas de la carpeta RAW.
+      try {
+        const cached = await getCachedPreviews(fps.map((f) => f.fingerprint_hash).filter(Boolean));
+        if (cached.size) {
+          const built = fps.map((f) => {
+            const dataUrl = cached.get(f.fingerprint_hash);
+            const status = f.selection_status || "REVIEW";
+            const selected = status === "SELECT" || status === "TOP_PICK";
+            return {
+              id: f.id, file: { name: f.filename },
+              preview: dataUrl ? { dataUrl, base64: dataUrl, isPlaceholder: false } : null,
+              manualRotation: 0, aiSelected: selected, selectedForEdit: selected,
+              colorLabel: f.color_label || (selected ? "green" : "none"),
+              rating: f.rating || (selected ? 5 : 0), status, groupId: null, groupSize: 1,
+              complementary: false, reason: null, overallScore: 0, scores: null, rejectReasons: [],
+              confidence: null, category: null, groupRank: null, captureTime: f.capture_time,
+              cameraInfo: { make: f.camera_make, model: f.camera_model }, asShotWB: null, skinStats: null,
+              analysisComplete: false, missingDimensions: [], previewWarning: !dataUrl,
+              selectionFallback: false, fallbackReason: null, fingerprintId: f.id,
+            };
+          });
+          setPhotos(built);
+          setStage("review");
+        }
+      } catch {
+        // Sin caché todavía: las fotos llegarán tras la recuperación en segundo plano.
+      }
+
+      // Background: re-extrae los archivos reales, verifica la identidad por fingerprint y
+      // reemplaza las fotos en silencio (sin tarjeta de "Leyendo previews"). También rellena
+      // la caché para que el próximo apertura sea instantáneo.
       if (b) {
-        const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
-        setSync(s);
-        if (s.folderOk && s.folderHandle) await recoverFromFolder(s.folderHandle, fps);
+        setRecovering(true);
+        (async () => {
+          try {
+            const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
+            setSync(s);
+            if (s.folderOk && s.folderHandle) await recoverFromFolder(s.folderHandle, fps);
+          } catch (e) {
+            setError(e?.message || "No se pudo recuperar la carpeta");
+          } finally {
+            setRecovering(false);
+          }
+        })();
       }
     } catch (e) {
       setError(e?.message || "No se pudo cargar el proyecto");
+      setProjectLoading(false);
     }
-    setProjectLoading(false);
   };
 
   const recoverFromFolder = async (folderHandle, savedFingerprints) => {
-    setStage("previews");
     const raws = [];
     for await (const [name, entryHandle] of folderHandle.entries()) {
       if (entryHandle.kind !== "file") continue;
       if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
       raws.push(await entryHandle.getFile());
     }
-    setTotal(raws.length);
-    setDone(0);
     const items = raws.map((f, i) => ({ id: String(i), file: f }));
-    const withPreview = await extractPreviews(items, (d) => setDone(d));
+    const withPreview = await extractPreviews(items, () => {});
     const withFp = await Promise.all(
       withPreview.map(async (p) => ({
         ...p,
         fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
       }))
     );
+    // Rellena la caché de previews para que el próximo apertura del proyecto sea instantáneo.
+    cachePreviews(withFp.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl }))).catch(() => {});
     const candidates = withFp.map((p) => ({
       id: p.id, file: p.file, preview: p.preview, cameraInfo: p.cameraInfo,
       asShotWB: p.asShotWB, skinStats: p.skinStats, captureTime: p.captureTime,
@@ -516,7 +561,13 @@ export default function Seleccion() {
         />
       )}
 
-      {projectId && !projectLoading && !showProjectSummary && stage !== "review" && (
+      {projectId && !projectLoading && !showProjectSummary && stage !== "review" && recovering && (
+        <div className="mt-6 flex items-center gap-2 text-sm text-zinc-500">
+          <Loader2 className="h-4 w-4 animate-spin" /> Recuperando fotos de la carpeta…
+        </div>
+      )}
+
+      {projectId && !projectLoading && !showProjectSummary && stage !== "review" && !recovering && (
         <div className="mt-6 rounded-xl border border-dashed border-zinc-700 bg-[#141414] p-10 text-center">
           <p className="text-sm text-zinc-400">
             {sync && !sync.folderOk ? "No se pudieron recuperar las fotos: la carpeta RAW no está accesible." : "Sin fotos recuperadas."}
