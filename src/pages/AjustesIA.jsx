@@ -4,6 +4,7 @@ import { FolderOpen, Loader2, Sparkles, Package, Plug, CheckCircle2, ArrowLeft }
 import { base44 } from "@/api/base44Client";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
+import { runPool } from "@/lib/rawaistudio/promisePool";
 import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis";
 import { computeAutoBasicsPro } from "@/lib/rawaistudio/autoBasicsEngine";
 import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/lib/rawaistudio/paramDefs";
@@ -254,10 +255,8 @@ export default function AjustesIA() {
     setAwaitingConfirm(false);
     setResults([]);
     setProgress({ done: 0, total: photos.length });
-    const out = [];
-    let ok = 0;
-    for (let i = 0; i < photos.length; i++) {
-      const photo = photos[i];
+    let completed = 0;
+    const processed = await runPool(photos, 4, async (photo) => {
       try {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
@@ -274,16 +273,19 @@ export default function AjustesIA() {
           label: "Green",
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
-        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb });
-        ok++;
+        return { filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb };
       } catch {
         // Continúa con la siguiente aunque una falle.
+        return null;
       }
-      setProgress({ done: i + 1, total: photos.length });
-    }
+    }, () => {
+      completed += 1;
+      setProgress({ done: completed, total: photos.length });
+    });
+    const out = processed.filter(Boolean);
     setResults(out);
     setBusy(false);
-    toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
+    toast({ title: "Procesamiento completado", description: `${out.length} / ${photos.length} XMP listos` });
   };
 
   const downloadZip = async () => {
