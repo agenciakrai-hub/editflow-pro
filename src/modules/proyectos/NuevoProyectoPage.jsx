@@ -24,6 +24,7 @@ export default function NuevoProyectoPage() {
   const [items, setItems] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
 
   const pickCatalog = async () => {
     try {
@@ -38,14 +39,21 @@ export default function NuevoProyectoPage() {
 
   const extractFromFolder = async (handle) => {
     setExtracting(true);
+    setProgress({ done: 0, total: 0 });
     const raws = [];
     for await (const [name, entryHandle] of handle.entries()) {
       if (entryHandle.kind !== "file") continue;
       if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
       raws.push(await entryHandle.getFile());
     }
+    const total = raws.length;
+    setProgress({ done: 0, total });
     const inputItems = raws.map((f, i) => ({ id: String(i), file: f }));
-    const withPreview = await extractPreviews(inputItems, () => {}, () => {});
+    const withPreview = await extractPreviews(
+      inputItems,
+      (done) => setProgress({ done, total }),
+      () => {}
+    );
     const withFingerprint = await Promise.all(
       withPreview.map(async (p) => ({
         ...p,
@@ -172,8 +180,24 @@ export default function NuevoProyectoPage() {
       </div>
 
       {extracting && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" /> Leyendo previews embebidas…
+        <div className="rounded-xl border border-border bg-card p-4 space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="inline-flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Leyendo previews embebidas…
+            </span>
+            <span className="font-mono font-semibold tabular-nums">
+              {progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%
+            </span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
+            <div
+              className="h-full rounded-full bg-accent transition-all duration-150"
+              style={{ width: `${progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%` }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {progress.done} / {progress.total || 0} fotos procesadas
+          </p>
         </div>
       )}
 
