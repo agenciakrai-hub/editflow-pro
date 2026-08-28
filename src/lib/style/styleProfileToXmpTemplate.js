@@ -41,7 +41,9 @@ export function styleProfileToXmpTemplate(profile) {
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
     <rdf:Description rdf:about=""
-      xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"${attrStr}/>
+      xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"
+      crs:Version="15.0"
+      crs:ProcessVersion="15.0"${attrStr}/>
   </rdf:RDF>
 </x:xmpmeta>`;
 }
