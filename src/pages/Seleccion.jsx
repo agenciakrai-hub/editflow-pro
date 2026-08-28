@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { FolderOpen, Loader2, ArrowRight, Sparkles, RotateCcw, Download, Save } from "lucide-react";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
@@ -59,6 +59,9 @@ export default function Seleccion() {
   const [recovering, setRecovering] = useState(false);
   const [recoverPct, setRecoverPct] = useState(0);
   const [remoteJob, setRemoteJob] = useState(null);
+  // Evita el auto-guardado en la primera población de fotos (carga inicial desde caché
+  // o recuperación): solo persiste cuando la selección cambia realmente a partir de ahí.
+  const skipAutoSaveRef = useRef(true);
   const [projectRawItems, setProjectRawItems] = useState([]);
   const [idToFpId, setIdToFpId] = useState({});
   const { checkSync, resyncFolder, resyncCatalog } = useFileSync();
@@ -321,35 +324,48 @@ export default function Seleccion() {
     setResyncing(false);
   };
 
-  const saveProjectSelection = async () => {
+  // Persiste la selección actual en la base de datos (sobrescribe la anterior por id de
+  // fingerprint). silent=true lo usa el auto-guardado (sin toast ni resumen); el botón
+  // manual lo llama con showSummary para mostrar el resumen tras confirmar.
+  // NUNCA llama a setPhotos: de lo contrario reactivaría el efecto de auto-guardado en bucle.
+  const persistSelection = async ({ silent = false, showSummary = false } = {}) => {
     if (!photos.length || !projectId) return;
-    setSavingSelection(true);
+    if (!silent) setSavingSelection(true);
     try {
-      const updates = photos.map((p) => {
-        const newStatus = p.selectedForEdit
+      const updates = photos.map((p) => ({
+        id: p.fingerprintId,
+        selection_status: p.selectedForEdit
           ? (p.status === "TOP_PICK" ? "TOP_PICK" : "SELECT")
-          : (p.status === "REJECT" ? "REJECT" : "REVIEW");
-        return { id: p.fingerprintId, selection_status: newStatus, rating: p.rating || 0, color_label: p.colorLabel || "none" };
-      });
+          : (p.status === "REJECT" ? "REJECT" : "REVIEW"),
+        rating: p.rating || 0,
+        color_label: p.colorLabel || "none",
+      })).filter((u) => u.id);
+      if (!updates.length) return;
       await bulkUpdateFingerprints(updates);
       setFingerprints((prev) => prev.map((f) => {
         const u = updates.find((x) => x.id === f.id);
         return u ? { ...f, selection_status: u.selection_status, rating: u.rating, color_label: u.color_label } : f;
       }));
-      setPhotos((prev) => prev.map((p) => {
-        const u = updates.find((x) => x.id === p.fingerprintId);
-        if (!u) return p;
-        return { ...p, status: u.selection_status, selectedForEdit: u.selection_status === "SELECT" || u.selection_status === "TOP_PICK", rating: u.rating, colorLabel: u.color_label };
-      }));
       const selCount = updates.filter((u) => u.selection_status === "TOP_PICK" || u.selection_status === "SELECT").length;
       await updateProject(projectId, { selection_saved: true, status: "editing", selected_count: selCount });
-      setShowProjectSummary(true);
-      toast({ title: "Selección guardada", description: `${selCount} de ${photos.length} fotos seleccionadas` });
+      setProject((p) => (p ? { ...p, selection_saved: true, status: "editing", selected_count: selCount } : p));
+      if (showSummary) setShowProjectSummary(true);
+      if (!silent) toast({ title: "Selección guardada", description: `${selCount} de ${photos.length} fotos seleccionadas` });
     } catch (e) {
-      toast({ title: "No se pudo guardar", description: e?.message, variant: "destructive" });
+      if (!silent) toast({ title: "No se pudo guardar", description: e?.message, variant: "destructive" });
     }
-    setSavingSelection(false);
+    if (!silent) setSavingSelection(false);
   };
+
+  // Auto-guardado: cada vez que la selección cambia en la revisión (IA o ajuste manual),
+  // la persiste en segundo plano (con debounce), sobrescribiendo la selección anterior.
+  useEffect(() => {
+    if (!projectId || stage !== "review" || !photos.length) return;
+    if (skipAutoSaveRef.current) { skipAutoSaveRef.current = false; return; }
+    const t = setTimeout(() => { persistSelection({ silent: true }); }, 900);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [photos, stage, projectId]);
 
   // Ejecuta la misma selección IA que el flujo normal (selectBursts) sobre las fotos
   // recuperadas del proyecto. Reutiliza el motor existente, no crea uno nuevo.
@@ -621,7 +637,7 @@ export default function Seleccion() {
                   {stage === "selecting" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                   Seleccionar
                 </button>
-                <button onClick={saveProjectSelection} disabled={!photos.length || savingSelection}
+                <button onClick={() => persistSelection({ showSummary: true })} disabled={!photos.length || savingSelection}
                   className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40">
                   {savingSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   Guardar selección
