@@ -113,6 +113,7 @@ export default function Seleccion() {
 
       // Instant: construye las fotos desde las previews cacheadas (IndexedDB) + la selección
       // guardada, para que las imágenes aparezcan sin re-extraerlas de la carpeta RAW.
+      let instantShown = false;
       try {
         const cached = await getCachedPreviews(fps.map((f) => f.fingerprint_hash).filter(Boolean));
         if (cached.size) {
@@ -135,15 +136,16 @@ export default function Seleccion() {
           });
           setPhotos(built);
           setStage("review");
+          instantShown = true;
         }
       } catch {
         // Sin caché todavía: las fotos llegarán tras la recuperación en segundo plano.
       }
 
-      // Background: re-extrae los archivos reales, verifica la identidad por fingerprint y
-      // reemplaza las fotos en silencio (sin tarjeta de "Leyendo previews"). También rellena
-      // la caché para que el próximo apertura sea instantáneo.
-      if (b) {
+      // Solo re-procesa la carpeta si NO había previews cacheadas (primera reapertura tras
+      // crear el proyecto). Si ya están en caché, el proyecto abre al instante sin tocar
+      // los archivos. La recuperación rellena la caché para que la próxima vez sea instantánea.
+      if (b && !instantShown) {
         setRecovering(true);
         (async () => {
           try {
@@ -155,6 +157,14 @@ export default function Seleccion() {
           } finally {
             setRecovering(false);
           }
+        })();
+      } else if (b) {
+        // Con caché: solo comprueba el estado de sincronización (🟢/🔴) sin re-procesar nada.
+        (async () => {
+          try {
+            const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
+            setSync(s);
+          } catch {}
         })();
       }
     } catch (e) {
