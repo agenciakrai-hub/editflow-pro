@@ -37,9 +37,10 @@ export default function NewStyleForm({ onCreated }) {
       setGalleryUrl("");
       onCreated(profile);
     } catch (e) {
+      const readable = e?.response?.data?.error || e?.message || "Error desconocido";
       toast({
         title: "No se pudo crear el estilo",
-        description: e.message,
+        description: readable,
         variant: "destructive",
       });
     } finally {
