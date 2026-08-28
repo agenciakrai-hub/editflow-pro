@@ -57,6 +57,7 @@ export default function Seleccion() {
   const [projectLoading, setProjectLoading] = useState(false);
   const [resyncing, setResyncing] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [recoverPct, setRecoverPct] = useState(0);
   const [projectRawItems, setProjectRawItems] = useState([]);
   const [idToFpId, setIdToFpId] = useState({});
   const { checkSync, resyncFolder, resyncCatalog } = useFileSync();
@@ -169,14 +170,20 @@ export default function Seleccion() {
       if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
       raws.push(await entryHandle.getFile());
     }
+    const count = raws.length;
+    const total = count * 2;
+    setRecoverPct(0);
     const items = raws.map((f, i) => ({ id: String(i), file: f }));
-    const withPreview = await extractPreviews(items, () => {});
-    const withFp = await Promise.all(
-      withPreview.map(async (p) => ({
-        ...p,
-        fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
-      }))
-    );
+    const withPreview = await extractPreviews(items, (d) => {
+      if (total) setRecoverPct(Math.round((d / total) * 100));
+    });
+    const withFp = [];
+    for (let i = 0; i < withPreview.length; i++) {
+      const p = withPreview[i];
+      withFp.push({ ...p, fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }) });
+      if (total) setRecoverPct(Math.round(((count + i + 1) / total) * 100));
+    }
+    setRecoverPct(100);
     // Rellena la caché de previews para que el próximo apertura del proyecto sea instantáneo.
     cachePreviews(withFp.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl }))).catch(() => {});
     const candidates = withFp.map((p) => ({
@@ -562,8 +569,14 @@ export default function Seleccion() {
       )}
 
       {projectId && !projectLoading && !showProjectSummary && stage !== "review" && recovering && (
-        <div className="mt-6 flex items-center gap-2 text-sm text-zinc-500">
-          <Loader2 className="h-4 w-4 animate-spin" /> Recuperando fotos de la carpeta…
+        <div className="mt-6 rounded-xl border border-zinc-800 bg-[#141414] p-4 space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-zinc-400">Recuperando fotos de la carpeta…</span>
+            <span className="font-mono font-semibold tabular-nums text-zinc-200">{recoverPct}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+            <div className="h-full rounded-full bg-white transition-all duration-150" style={{ width: `${recoverPct}%` }} />
+          </div>
         </div>
       )}
 
