@@ -35,10 +35,22 @@ export async function listFingerprints(projectId) {
   return base44.entities.ProjectPhotoFingerprint.filter({ project_id: projectId });
 }
 
+// El SDK limita las operaciones masivas a 500 registros por llamada. Partimos en lotes
+// para que proyectos grandes (>500 fotos) no fallen al crear/actualizar fingerprints.
+const BULK_CHUNK = 400;
+
 export async function bulkCreateFingerprints(rows) {
-  return base44.entities.ProjectPhotoFingerprint.bulkCreate(rows);
+  const out = [];
+  for (let i = 0; i < rows.length; i += BULK_CHUNK) {
+    out.push(...(await base44.entities.ProjectPhotoFingerprint.bulkCreate(rows.slice(i, i + BULK_CHUNK))));
+  }
+  return out;
 }
 
 export async function bulkUpdateFingerprints(rows) {
-  return base44.entities.ProjectPhotoFingerprint.bulkUpdate(rows);
+  const out = [];
+  for (let i = 0; i < rows.length; i += BULK_CHUNK) {
+    out.push(...(await base44.entities.ProjectPhotoFingerprint.bulkUpdate(rows.slice(i, i + BULK_CHUNK))));
+  }
+  return out;
 }
