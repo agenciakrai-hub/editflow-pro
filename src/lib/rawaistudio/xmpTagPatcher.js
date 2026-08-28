@@ -117,6 +117,21 @@ function setXmpProperty(xmpText, tag, value) {
   return result.slice(0, bounds.closeStart) + property + "\n    " + result.slice(bounds.closeStart);
 }
 
+function setPhotoshopLabelColor(xmpText, value) {
+  let result = xmpText
+    .replace(/\s*photoshop:LabelColor\s*=\s*"[^"]*"/g, "")
+    .replace(/\s*<photoshop:LabelColor>[^<]*<\/photoshop:LabelColor>/g, "")
+    .replace(/\s*<photoshop:LabelColor\s*\/>/g, "");
+  const bounds = mainDescriptionBounds(result);
+  if (!bounds) return result;
+  const property = `\n      <photoshop:LabelColor>${value}</photoshop:LabelColor>`;
+  if (bounds.selfClosing) {
+    const opening = result.slice(bounds.openStart, bounds.openEnd).replace(/\/\s*>$/, ">");
+    return result.slice(0, bounds.openStart) + opening + property + "\n    </rdf:Description>" + result.slice(bounds.openEnd);
+  }
+  return result.slice(0, bounds.closeStart) + property + "\n    " + result.slice(bounds.closeStart);
+}
+
 export function addRatingAndLabel(xmpText, { rating, label } = {}) {
   let result = ensureNamespace(xmpText, "xmp", "http://ns.adobe.com/xap/1.0/");
   if (rating != null && rating > 0) {
@@ -124,6 +139,10 @@ export function addRatingAndLabel(xmpText, { rating, label } = {}) {
   }
   if (label) {
     result = setXmpProperty(result, "Label", label);
+  }
+  if (label === "Green") {
+    result = ensureNamespace(result, "photoshop", "http://ns.adobe.com/photoshop/1.0/");
+    result = setPhotoshopLabelColor(result, "green");
   }
   result = setAttribute(result, "crs", "HasSettings", "True");
   return result;
@@ -205,6 +224,11 @@ export function validateXmp(xmpText, { rating, label, aiValues, treatment, selec
   if (rating != null && rating > 0 && !hasRating) issues.push("xmp:Rating debe ser hijo directo y único del rdf:Description principal");
   if (label && !hasOnlyGlobalXmpProperty(xmpText, "Label", label)) {
     issues.push("xmp:Label debe ser hijo directo y único del rdf:Description principal");
+  }
+  if (label === "Green") {
+    const hasPhotoshopGreen = /<photoshop:LabelColor>green<\/photoshop:LabelColor>/.test(xmpText)
+      && /xmlns:photoshop\s*=\s*"http:\/\/ns\.adobe\.com\/photoshop\/1\.0\/"/.test(xmpText);
+    if (!hasPhotoshopGreen) issues.push("photoshop:LabelColor=green no está presente en el XMP final");
   }
   if (!/crs:HasSettings\s*=\s*"True"/.test(xmpText)) issues.push("crs:HasSettings no está presente en el XMP final — Lightroom ignorará los ajustes");
   for (const [tag, value] of Object.entries(aiValues || {})) {
