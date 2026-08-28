@@ -24,8 +24,8 @@ const tools = [
   },
   {
     to: "/proyectos",
-    title: "Mis proyectos",
-    desc: "Proyectos guardados (solo metadatos). Recarga la carpeta para volver a procesar.",
+    title: "Proyectos",
+    desc: "Crea un proyecto nuevo o reabre uno guardado (solo metadatos). Recarga la carpeta/catálogo para volver a procesar.",
     icon: FolderHeart,
   },
   {

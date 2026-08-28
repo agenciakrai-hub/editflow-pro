@@ -20,6 +20,7 @@ export default async function (req) {
     // Plugin HTTP actions — no user session (authenticated via X-LR-Token).
     if (action === "lr-pending") return await doLrPending(req);
     if (action === "lr-complete") return await doLrComplete(req, body);
+    if (action === "lr-collect-ids") return await doLrCollectIds(req, body);
 
     // User-auth actions.
     const base44 = createClientFromRequest(req);
@@ -34,6 +35,7 @@ export default async function (req) {
     if (action === "lr-token") return await doLrToken(base44, user);
     if (action === "lr-push") return await doLrPush(base44, user, body);
     if (action === "lr-stats") return await doLrStats(base44, user);
+    if (action === "lr-catalog-ids") return await doLrCatalogIds(base44, user);
 
     return Response.json({ error: "Acción no soportada: " + action }, { status: 400 });
   } catch (error) {
@@ -134,6 +136,7 @@ async function doPlugin() {
   folder.file("Info.lua", INFO_LUA);
   folder.file("Settings.lua", SETTINGS_LUA);
   folder.file("Sync.lua", SYNC_LUA);
+  folder.file("CollectIds.lua", COLLECT_IDS_LUA);
   folder.file("json.lua", JSON_LUA);
   folder.file("INSTALAR.txt", INSTALAR_TXT);
 
@@ -205,6 +208,35 @@ async function doLrStats(base44, user) {
   return Response.json({ pending, completed });
 }
 
+// action=lr-collect-ids (plugin, X-LR-Token) — el plugin envía los IDs/rutas de TODAS
+// las fotos del catálogo activo (LrApplication.activeCatalog()). Se guarda un snapshot
+// por token (reemplaza el anterior) para que el módulo de Proyectos pueda desambiguar
+// emparejamientos de fingerprint. Nunca modifica el .lrcat: solo lectura vía el SDK de LR.
+async function doLrCollectIds(req, body) {
+  const base44 = createClientFromRequest(req);
+  const token = req.headers.get("X-LR-Token") || "";
+  const tok = await findToken(base44, token);
+  if (!tok) return Response.json({ error: "Token inválido" }, { status: 401 });
+
+  const photos = Array.isArray(body.photos) ? body.photos : [];
+  await base44.asServiceRole.entities.LrCatalogSnapshot.deleteMany({ token });
+  await base44.asServiceRole.entities.LrCatalogSnapshot.create({ token, photos_json: JSON.stringify(photos) });
+  return Response.json({ stored: photos.length });
+}
+
+// action=lr-catalog-ids (user auth) — devuelve el snapshot de IDs de catálogo más reciente
+// del usuario, para que el frontend de Proyectos enriquezca sus candidatos re-extraídos.
+async function doLrCatalogIds(base44, user) {
+  const rows = await base44.asServiceRole.entities.LrToken.filter({ user_id: user.id });
+  if (!rows.length) return Response.json({ photos: [] });
+  const token = rows[0].token;
+  const snaps = await base44.asServiceRole.entities.LrCatalogSnapshot.filter({ token });
+  if (!snaps.length) return Response.json({ photos: [] });
+  let photos = [];
+  try { photos = JSON.parse(snaps[0].photos_json || "[]"); } catch { photos = []; }
+  return Response.json({ photos });
+}
+
 // action=lr-pending (plugin, X-LR-Token) — returns pending XMP jobs (base64) for
 // the token, so the Lua plugin can write sidecars next to matching photos.
 async function doLrPending(req) {
@@ -251,6 +283,7 @@ const INFO_LUA = `return {
     },
     LrLibraryMenuItems = {
         { title = "EditFlow Pro: Sincronizar seleccionadas", file = "Sync.lua" },
+        { title = "EditFlow Pro: Recopilar IDs de catálogo", file = "CollectIds.lua" },
         { title = "EditFlow Pro: Configurar (token)", file = "Settings.lua" },
     },
 }
@@ -408,6 +441,75 @@ LrTasks.startAsyncTask(function()
             "Aplicadas: " .. applied .. "  |  Sin coincidencia: " .. missing ..
             "\\n\\nNota: en DNG, Lightroom lee el XMP incrustado; los sidecar .xmp funcionan en RAW nativos (CR3/NEF/ARW).",
             "info")
+    end)
+end)
+`;
+
+const COLLECT_IDS_LUA = `local LrApplication = import "LrApplication"
+local LrDialogs = import "LrDialogs"
+local LrHttp = import "LrHttp"
+local LrPrefs = import "LrPrefs"
+local LrTasks = import "LrTasks"
+local LrFileUtils = import "LrFileUtils"
+local LrFunctionContext = import "LrFunctionContext"
+local LrProgressScope = import "LrProgressScope"
+
+local prefs = LrPrefs.prefsForPlugin()
+
+local function jsonEscape(s)
+    s = tostring(s or "")
+    s = s:gsub('"', "'")
+    s = s:gsub('\n', ' ')
+    return s
+end
+
+LrTasks.startAsyncTask(function()
+    LrFunctionContext.callWithContext("editflow_collect_ids", function(context)
+        if not prefs.token or prefs.token == "" then
+            LrDialogs.message("EditFlow Pro", "Configura primero el token (menú: Configurar).", "warning")
+            return
+        end
+        if not prefs.baseUrl or prefs.baseUrl == "" then
+            LrDialogs.message("EditFlow Pro", "Configura primero la URL del servidor (menú: Configurar).", "warning")
+            return
+        end
+        local catalog = LrApplication.activeCatalog()
+        local photos = catalog:getAllPhotos()
+        local progress = LrProgressScope { title = "EditFlow Pro: recopilando IDs del catálogo..." }
+        local parts = {}
+        for i, photo in ipairs(photos) do
+            local path = photo:getRawMetadata("path") or ""
+            local fileName = photo:getFormattedMetadata("fileName") or ""
+            local captureTime = photo:getFormattedMetadata("dateTimeOriginalISO8601") or ""
+            local cameraMake = photo:getFormattedMetadata("cameraMake") or ""
+            local cameraModel = photo:getFormattedMetadata("cameraModel") or ""
+            local fileSize = 0
+            local ok, attrs = pcall(function() return LrFileUtils.fileAttributes(path) end)
+            if ok and attrs and attrs.fileSize then fileSize = attrs.fileSize end
+            local localId = tostring(photo.localIdentifier)
+            parts[#parts + 1] = string.format(
+                '{"localId":"%s","fileName":"%s","path":"%s","captureTime":"%s","cameraMake":"%s","cameraModel":"%s","fileSize":%d}',
+                jsonEscape(localId), jsonEscape(fileName), jsonEscape(path), jsonEscape(captureTime),
+                jsonEscape(cameraMake), jsonEscape(cameraModel), fileSize
+            )
+            progress:setPortionComplete(i, #photos)
+            if progress:isCanceled() then break end
+        end
+        progress:done()
+
+        local body = '{"photos":[' .. table.concat(parts, ",") .. ']}'
+        local base = (prefs.baseUrl or ""):gsub("/+$", "")
+        local url = base .. "/api/functions/editflow-engine?action=lr-collect-ids"
+        local headers = {
+            { field = "Content-Type", value = "application/json" },
+            { field = "X-LR-Token", value = prefs.token or "" },
+        }
+        local resp = LrHttp.post(url, body, headers)
+        if resp then
+            LrDialogs.message("EditFlow Pro", "IDs de catálogo enviados: " .. #parts .. " fotos.", "info")
+        else
+            LrDialogs.message("EditFlow Pro", "No se pudo conectar con el servidor.", "error")
+        end
     end)
 end)
 `;

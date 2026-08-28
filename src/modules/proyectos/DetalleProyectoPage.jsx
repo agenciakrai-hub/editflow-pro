@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 import { getProject, getCatalogBinding, listFingerprints, updateCatalogBinding, bulkUpdateFingerprints } from "./hooks/useProjectStore";
 import { useFileSync } from "./hooks/useFileSync";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
@@ -54,11 +55,32 @@ export default function DetalleProyectoPage() {
       skinStats: p.skinStats,
       ...p.fingerprint,
     }));
+    // Enriquece candidatos con el identificador de catálogo Lightroom (lr_local_id), si el
+    // plugin ya recopiló un snapshot (acción lr-collect-ids). Fuente secundaria: solo ayuda
+    // a desambiguar; si no hay snapshot, el flujo sigue funcionando igual que antes.
+    try {
+      const res = await base44.functions.invoke("editflow-engine", { action: "lr-catalog-ids" });
+      const catalogPhotos = res?.data?.photos || [];
+      if (catalogPhotos.length) {
+        const byFileName = new Map(catalogPhotos.map((p) => [String(p.fileName || "").toLowerCase(), p.localId]));
+        candidateList.forEach((c) => {
+          const lrId = byFileName.get(String(c.filename || "").toLowerCase());
+          if (lrId) c.lr_local_id = lrId;
+        });
+      }
+    } catch {
+      // Sin plugin configurado todavía: se ignora, la desambiguación cae a revisión manual.
+    }
+
     const result = matchFingerprints(savedFingerprints, candidateList);
     setMatches(result);
 
     const flagged = result.filter((r) => r.ambiguous).map((r) => ({ id: r.saved.id, needs_review: true }));
+    const lrIdUpdates = result
+      .filter((r) => r.matched && r.candidate?.lr_local_id && !r.saved.lr_local_id)
+      .map((r) => ({ id: r.saved.id, lr_local_id: r.candidate.lr_local_id }));
     if (flagged.length) await bulkUpdateFingerprints(flagged);
+    if (lrIdUpdates.length) await bulkUpdateFingerprints(lrIdUpdates);
   };
 
   const load = useCallback(async () => {

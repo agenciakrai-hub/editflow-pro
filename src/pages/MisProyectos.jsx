@@ -34,6 +34,7 @@ export default function MisProyectos() {
       setProjects(Array.isArray(list) ? list : []);
     } catch (e) {
       setProjects([]);
+      toast({ title: "No se pudieron cargar los proyectos", description: e?.message, variant: "destructive" });
     }
     setLoading(false);
   };

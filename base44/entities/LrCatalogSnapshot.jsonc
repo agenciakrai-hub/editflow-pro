@@ -1,0 +1,38 @@
+{
+  "name": "LrCatalogSnapshot",
+  "type": "object",
+  "properties": {
+    "token": {
+      "type": "string"
+    },
+    "photos_json": {
+      "type": "string",
+      "description": "JSON array de fotos del cat\u00e1logo Lightroom recopiladas por el plugin: localId, fileName, path, captureTime, cameraMake, cameraModel, fileSize."
+    }
+  },
+  "required": [
+    "token"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}
