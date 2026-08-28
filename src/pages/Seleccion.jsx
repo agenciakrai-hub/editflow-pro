@@ -55,6 +55,8 @@ export default function Seleccion() {
   const [savingSelection, setSavingSelection] = useState(false);
   const [projectLoading, setProjectLoading] = useState(false);
   const [resyncing, setResyncing] = useState(false);
+  const [projectRawItems, setProjectRawItems] = useState([]);
+  const [idToFpId, setIdToFpId] = useState({});
   const { checkSync, resyncFolder, resyncCatalog } = useFileSync();
 
   const [quickFilter, setQuickFilter] = useState(projectId ? "all" : "select");
@@ -149,6 +151,10 @@ export default function Seleccion() {
       }
     } catch { /* sin plugin: la desambiguación cae a revisión manual */ }
     const results = matchFingerprints(savedFingerprints, candidates);
+    setProjectRawItems(withPreview);
+    const fpMap = {};
+    results.forEach((r) => { if (r.matched && r.candidate) fpMap[r.candidate.id] = r.saved.id; });
+    setIdToFpId(fpMap);
     const built = results
       .filter((r) => r.matched && r.candidate)
       .map((r) => {
@@ -230,6 +236,31 @@ export default function Seleccion() {
       toast({ title: "No se pudo guardar", description: e?.message, variant: "destructive" });
     }
     setSavingSelection(false);
+  };
+
+  // Ejecuta la misma selección IA que el flujo normal (selectBursts) sobre las fotos
+  // recuperadas del proyecto. Reutiliza el motor existente, no crea uno nuevo.
+  const runProjectSelection = async () => {
+    if (!projectRawItems.length) return;
+    setStage("selecting");
+    setTotal(projectRawItems.length);
+    setDone(0);
+    try {
+      const { keep, meta, selection_fallback, fallback_reason, selection_coverage_fallback, coverage_promotions } = await selectBursts(projectRawItems, (d, t) => {
+        setDone(d);
+        if (typeof t === "number") setTotal(t);
+      });
+      const built = projectRawItems.map((p) => {
+        const photo = buildPhotoFromSelection(p, keep, meta);
+        return { ...photo, fingerprintId: idToFpId[p.id] };
+      });
+      setPhotos(built);
+      setSelectionFallback(selection_fallback ? { active: true, reason: fallback_reason } : null);
+      setSelectionCoverage(selection_coverage_fallback ? { active: true, promotions: coverage_promotions || [] } : null);
+    } catch (e) {
+      setError(e?.message || "No se pudo ejecutar la selección IA");
+    }
+    setStage("review");
   };
 
   const goToEditFromProject = () => {
@@ -436,11 +467,18 @@ export default function Seleccion() {
           {!visible.length && <p className="mt-6 text-sm text-zinc-500">No hay fotos con estos filtros.</p>}
           <div className="mt-6 flex flex-wrap items-center gap-3">
             {projectId ? (
-              <button onClick={saveProjectSelection} disabled={!photos.length || savingSelection}
-                className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40">
-                {savingSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                Guardar selección
-              </button>
+              <>
+                <button onClick={runProjectSelection} disabled={!photos.length || stage === "selecting"}
+                  className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+                  {stage === "selecting" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                  Seleccionar
+                </button>
+                <button onClick={saveProjectSelection} disabled={!photos.length || savingSelection}
+                  className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40">
+                  {savingSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Guardar selección
+                </button>
+              </>
             ) : (
               <>
                 <button onClick={downloadSelectionXmp} disabled={!photos.length || downloadingSel}
