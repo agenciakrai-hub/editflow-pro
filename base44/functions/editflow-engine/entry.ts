@@ -22,6 +22,7 @@ export default async function (req) {
     if (action === "lr-complete") return await doLrComplete(req, body);
     if (action === "lr-collect-ids") return await doLrCollectIds(req, body);
     if (action === "lr-collect-corrections") return await doLrCollectCorrections(req, body);
+    if (action === "lr-list-styles") return await doLrListStyles(req);
 
     // User-auth actions.
     const base44 = createClientFromRequest(req);
@@ -139,6 +140,7 @@ async function doPlugin() {
   folder.file("Settings.lua", SETTINGS_LUA);
   folder.file("Sync.lua", SYNC_LUA);
   folder.file("CollectIds.lua", COLLECT_IDS_LUA);
+  folder.file("CollectCorrections.lua", COLLECT_CORRECTIONS_LUA);
   folder.file("json.lua", JSON_LUA);
   folder.file("INSTALAR.txt", INSTALAR_TXT);
 
@@ -285,6 +287,46 @@ const LEARNING_FULL_CORRECTIONS = 120;
 
 function roundTo(n, d) { const p = Math.pow(10, d); return Math.round(n * p) / p; }
 
+// Mapa de parámetros aprendidos → atributo crs del XMP. Sirve para recuperar los
+// valores iniciales que EditFlow aplicó (guardados en LrJob.xmp_content).
+const XMP_ATTR_FOR = {
+  exposure: "Exposure2012", contrast: "Contrast2012", highlights: "Highlights2012",
+  shadows: "Shadows2012", whites: "Whites2012", blacks: "Blacks2012",
+  temperature: "Temperature", tint: "Tint", vibrance: "Vibrance",
+  saturation: "Saturation", clarity: "Clarity2012", texture: "Texture2012",
+  dehaze: "Dehaze2012",
+};
+function parseInitialValuesFromXmp(xmp) {
+  const out = {};
+  const text = String(xmp || "");
+  for (const [lk, attr] of Object.entries(XMP_ATTR_FOR)) {
+    const m = new RegExp("crs:" + attr + '="(-?\\d+(?:\\.\\d+)?)"').exec(text);
+    if (m) out[lk] = parseFloat(m[1]);
+  }
+  if (out.dehaze === undefined) {
+    const m = /crs:Dehaze="(-?\d+(?:\.\d+)?)"/.exec(text);
+    if (m) out.dehaze = parseFloat(m[1]);
+  }
+  return out;
+}
+
+// action=lr-list-styles (plugin, X-LR-Token) — devuelve los estilos del usuario para
+// que el plugin muestre un selector y el fotógrafo indique a qué estilo pertenecen las
+// correcciones (asignación explícita, nunca silenciosa).
+async function doLrListStyles(req) {
+  const base44 = createClientFromRequest(req);
+  const token = req.headers.get("X-LR-Token") || "";
+  const tok = await findToken(base44, token);
+  if (!tok) return Response.json({ error: "Token inválido" }, { status: 401 });
+  const all = await base44.asServiceRole.entities.PhotographerStyle.list("-created_date", 200);
+  const mine = (Array.isArray(all) ? all : []).filter((s) => s.created_by_id === tok.user_id);
+  const out = mine.map((s) => ({
+    id: s.id, name: s.name, preset_id: s.preset_id || "", preset_name: s.preset_name || "",
+    learning_percentage: s.learning_percentage || 0, photos_processed: s.photos_processed || 0,
+  }));
+  return Response.json({ styles: out });
+}
+
 // Recalcula el resumen de aprendizaje de un estilo a partir de TODAS sus correcciones
 // registradas. Fórmula del porcentaje:
 //   learning = 100 * volumeFactor * (0.4 + 0.6 * coverageFactor)
@@ -326,50 +368,79 @@ async function recomputeStyleLearning(base44, styleId) {
   });
 }
 
-// action=lr-collect-corrections (plugin, X-LR-Token) — el plugin envía correcciones
-// reales realizadas por el fotógrafo en Lightroom sobre fotos procesadas por EditFlow.
-// Valida que el estilo exista, pertenezca al usuario del token y coincida el preset.
-// Si no puede determinar el preset/estilo de origen, descarta la corrección (no la
-// asigna silenciosamente a ningún estilo). Registra StyleCorrectionRecord y recalcula
-// el aprendizaje. No modifica motores: solo almacena aprendizaje.
+// action=lr-collect-corrections (plugin, X-LR-Token) — el plugin envía las correcciones
+// reales que el fotógrafo hizo en Lightroom sobre fotos procesadas por EditFlow. Los
+// valores iniciales NO los envía el plugin: se recuperan del LrJob (el XMP que EditFlow
+// empujó antes vía lr-push), fuente fiable anterior a la corrección. La foto se
+// identifica por token + filename (insensible a mayúsculas); 0 coincidencias o >1
+// (ambigua) → se descarta, nunca se resuelve silenciosamente. Se cruza con el snapshot
+// de catálogo (localId) si está disponible. Valida estilo + preset. No toca motores.
 async function doLrCollectCorrections(req, body) {
   const base44 = createClientFromRequest(req);
   const token = req.headers.get("X-LR-Token") || "";
   const tok = await findToken(base44, token);
   if (!tok) return Response.json({ error: "Token inválido" }, { status: 401 });
 
+  const styleId = String(body.style_id || "");
+  const presetId = String(body.preset_id || "");
+  if (!styleId) return Response.json({ error: "Falta style_id" }, { status: 400 });
+
+  let style;
+  try { style = await base44.asServiceRole.entities.PhotographerStyle.get(styleId); }
+  catch { return Response.json({ error: "Estilo no encontrado" }, { status: 404 }); }
+  if (!style || style.created_by_id !== tok.user_id) return Response.json({ error: "Estilo no válido para este token" }, { status: 403 });
+  if (presetId && style.preset_id && presetId !== style.preset_id) return Response.json({ error: "El preset no coincide con el estilo" }, { status: 400 });
+
+  // Snapshot de catálogo: auditoría de identificación por localId.
+  const snaps = await base44.asServiceRole.entities.LrCatalogSnapshot.filter({ token });
+  let snapByFilename = {};
+  if (snaps.length) {
+    let arr = []; try { arr = JSON.parse(snaps[0].photos_json || "[]"); } catch { arr = []; }
+    for (const p of arr) snapByFilename[String(p.fileName || "").toLowerCase()] = p;
+  }
+
+  // LrJob: fuente de los valores iniciales (XMP que EditFlow empujó).
+  const allJobs = await base44.asServiceRole.entities.LrJob.filter({ token });
+  const jobsByFilename = {};
+  for (const j of allJobs) {
+    const key = String(j.filename || "").toLowerCase();
+    if (!key) continue;
+    (jobsByFilename[key] ||= []).push(j);
+  }
+
   const corrections = Array.isArray(body.corrections) ? body.corrections : [];
   let stored = 0, rejected = 0;
-  const touched = new Set();
   for (const c of corrections) {
-    const styleId = String(c.style_id || "");
-    const presetId = String(c.preset_id || "");
-    if (!styleId) { rejected++; continue; }
-    let style;
-    try { style = await base44.asServiceRole.entities.PhotographerStyle.get(styleId); }
-    catch { rejected++; continue; }
-    if (!style || style.created_by_id !== tok.user_id) { rejected++; continue; }
-    if (presetId && style.preset_id && presetId !== style.preset_id) { rejected++; continue; }
-    const initial = c.initial_values || {};
-    const current = c.current_values || {};
+    const filename = String(c.filename || "").toLowerCase();
+    if (!filename) { rejected++; continue; }
+    // Identificación: snapshot localId (si existe) debe coincidir.
+    const snap = snapByFilename[filename];
+    if (snap && snap.localId && c.localId && String(snap.localId) !== String(c.localId)) {
+      rejected++; continue;
+    }
+    const matches = jobsByFilename[filename] || [];
+    if (matches.length === 0) { rejected++; continue; }   // sin inicial conocido
+    if (matches.length > 1) { rejected++; continue; }      // ambigua → no resuelve
+    const initial = parseInitialValuesFromXmp(matches[0].xmp_content);
+    const current = c.current_values || c.corrected_values || {};
     const delta = {};
     for (const k of LEARNING_TRACKED_PARAMS) {
       if (typeof initial[k] === "number" && typeof current[k] === "number") {
         delta[k] = roundTo(current[k] - initial[k], 2);
       }
     }
+    if (!Object.keys(delta).length) { rejected++; continue; } // nada que aprender
     await base44.asServiceRole.entities.StyleCorrectionRecord.create({
       style_id: styleId,
       preset_id: presetId || style.preset_id || "",
-      photo_fingerprint_id: String(c.photo_fingerprint_id || ""),
+      photo_fingerprint_id: String(c.localId || c.photo_fingerprint_id || ""),
       initial_values: initial,
       corrected_values: current,
       delta,
     });
-    touched.add(styleId);
     stored++;
   }
-  for (const styleId of touched) {
+  if (stored > 0) {
     try { await recomputeStyleLearning(base44, styleId); }
     catch (e) { console.error("recompute learning", styleId, e?.message || e); }
   }
@@ -405,6 +476,7 @@ const INFO_LUA = `return {
     LrLibraryMenuItems = {
         { title = "EditFlow Pro: Sincronizar seleccionadas", file = "Sync.lua" },
         { title = "EditFlow Pro: Recopilar IDs de catálogo", file = "CollectIds.lua" },
+        { title = "EditFlow Pro: Recopilar correcciones", file = "CollectCorrections.lua" },
         { title = "EditFlow Pro: Configurar (token)", file = "Settings.lua" },
     },
 }
@@ -631,6 +703,160 @@ LrTasks.startAsyncTask(function()
         else
             LrDialogs.message("EditFlow Pro", "No se pudo conectar con el servidor.", "error")
         end
+    end)
+end)
+`;
+
+const COLLECT_CORRECTIONS_LUA = `local LrApplication = import "LrApplication"
+local LrDialogs = import "LrDialogs"
+local LrHttp = import "LrHttp"
+local LrPrefs = import "LrPrefs"
+local LrTasks = import "LrTasks"
+local LrView = import "LrView"
+local LrBinding = import "LrBinding"
+local LrFunctionContext = import "LrFunctionContext"
+local LrFileUtils = import "LrFileUtils"
+local LrProgressScope = import "LrProgressScope"
+
+local prefs = LrPrefs.prefsForPlugin()
+local JSON = require "json"
+
+-- Mapeo de claves de getDevelopSettings a los parámetros aprendidos (minúsculas).
+local MAP = {
+  Exposure2012 = "exposure", Contrast2012 = "contrast", Highlights2012 = "highlights",
+  Shadows2012 = "shadows", Whites2012 = "whites", Blacks2012 = "blacks",
+  Temperature = "temperature", Tint = "tint", Vibrance = "vibrance",
+  Saturation = "saturation", Clarity2012 = "clarity", Texture2012 = "texture",
+  Dehaze2012 = "dehaze", Dehaze = "dehaze",
+}
+
+local function apiCall(action, body)
+    local base = (prefs.baseUrl or ""):gsub("/+$", "")
+    if base == "" then return nil end
+    local url = base .. "/api/functions/editflow-engine?action=" .. action
+    local headers = {
+        { field = "Content-Type", value = "application/json" },
+        { field = "X-LR-Token", value = prefs.token or "" },
+    }
+    return LrHttp.post(url, body or "{}", headers)
+end
+
+local function jstr(s)
+    s = tostring(s or "")
+    s = s:gsub('"', "'")
+    s = s:gsub('\n', ' ')
+    return '"' .. s .. '"'
+end
+
+local function jnum(n)
+    if n == nil then return "null" end
+    if type(n) ~= "number" then n = tonumber(n) or 0 end
+    local s = string.format("%.4f", n)
+    s = s:gsub("0+$", "")
+    s = s:gsub("%.$", "")
+    return s
+end
+
+LrTasks.startAsyncTask(function()
+    LrFunctionContext.callWithContext("editflow_collect_corrections", function(context)
+        if not prefs.token or prefs.token == "" then
+            LrDialogs.message("EditFlow Pro", "Configura primero el token (menú: Configurar).", "warning")
+            return
+        end
+        if not prefs.baseUrl or prefs.baseUrl == "" then
+            LrDialogs.message("EditFlow Pro", "Configura primero la URL del servidor (menú: Configurar).", "warning")
+            return
+        end
+
+        -- 1) Pedir la lista de estilos del usuario.
+        local raw = apiCall("lr-list-styles")
+        if not raw then
+            LrDialogs.message("EditFlow Pro", "No se pudo conectar con el servidor. Revisa URL y token.", "error")
+            return
+        end
+        local ok, data = pcall(function() return JSON.decode(raw) end)
+        if not ok or not data or not data.styles or #data.styles == 0 then
+            LrDialogs.message("EditFlow Pro", "No tienes estilos guardados. Procesa fotos con un preset de Cerebro primero.", "warning")
+            return
+        end
+
+        -- 2) Diálogo para seleccionar el estilo al que pertenecen las correcciones.
+        local bindable = LrBinding.makePropertyTable(context)
+        bindable.styleIndex = 1
+        local f = LrView.osFactory()
+        local items = {}
+        for i, s in ipairs(data.styles) do
+            items[i] = s.name .. "  (" .. (s.learning_percentage or 0) .. "%)"
+        end
+        local contents = f:column {
+            bind_to_object = bindable,
+            spacing = f:control_spacing(),
+            f:static_text { title = "Selecciona el estilo al que pertenecen las correcciones:" },
+            f:popup_menu { value = LrView.bind("styleIndex"), items = items },
+        }
+        local res = LrDialogs.presentModalDialog {
+            title = "EditFlow Pro - Recopilar correcciones",
+            contents = contents,
+        }
+        if res ~= "ok" then return end
+        local selectedStyle = data.styles[bindable.styleIndex] or data.styles[1]
+        if not selectedStyle then return end
+
+        -- 3) Recopilar correcciones de las fotos seleccionadas.
+        local catalog = LrApplication.activeCatalog()
+        local photos = catalog:getTargetPhotos()
+        if #photos == 0 then
+            LrDialogs.message("EditFlow Pro", "Selecciona al menos una foto corregida.", "warning")
+            return
+        end
+
+        local progress = LrProgressScope { title = "EditFlow Pro: recopilando correcciones..." }
+        local parts = {}
+        for i, photo in ipairs(photos) do
+            local fileName = photo:getFormattedMetadata("fileName") or ""
+            local localId = tostring(photo.localIdentifier)
+            local captureTime = photo:getFormattedMetadata("dateTimeOriginalISO8601") or ""
+            local cameraMake = photo:getFormattedMetadata("cameraMake") or ""
+            local cameraModel = photo:getFormattedMetadata("cameraModel") or ""
+            local path = photo:getRawMetadata("path") or ""
+            local fileSize = 0
+            local okA, attrs = pcall(function() return LrFileUtils.fileAttributes(path) end)
+            if okA and attrs and attrs.fileSize then fileSize = attrs.fileSize end
+            local settings = photo:getDevelopSettings()
+            local cvParts = {}
+            for lrKey, lk in pairs(MAP) do
+                if settings[lrKey] ~= nil then
+                    cvParts[#cvParts + 1] = '"' .. lk .. '":' .. jnum(settings[lrKey])
+                end
+            end
+            parts[#parts + 1] = '{"filename":' .. jstr(fileName)
+                .. ',"localId":' .. jstr(localId)
+                .. ',"captureTime":' .. jstr(captureTime)
+                .. ',"cameraMake":' .. jstr(cameraMake)
+                .. ',"cameraModel":' .. jstr(cameraModel)
+                .. ',"fileSize":' .. tostring(fileSize)
+                .. ',"current_values":{' .. table.concat(cvParts, ",") .. '}}'
+            progress:setPortionComplete(i, #photos)
+            if progress:isCanceled() then break end
+        end
+        progress:done()
+
+        local body = '{"style_id":' .. jstr(selectedStyle.id)
+            .. ',"preset_id":' .. jstr(selectedStyle.preset_id or "")
+            .. ',"corrections":[' .. table.concat(parts, ",") .. ']}'
+        local resp = apiCall("lr-collect-corrections", body)
+        local stored, rejected = 0, 0
+        if resp then
+            local okR, rdata = pcall(function() return JSON.decode(resp) end)
+            if okR and rdata then
+                stored = rdata.stored or 0
+                rejected = rdata.rejected or 0
+            end
+        end
+        LrDialogs.message("EditFlow Pro",
+            "Correcciones registradas: " .. stored .. "  |  Descartadas: " .. rejected ..
+            "\\n\\nSolo se envían metadatos y valores numéricos. Nunca se suben RAW ni fotos.",
+            "info")
     end)
 end)
 `;
