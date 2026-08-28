@@ -480,6 +480,8 @@ const INFO_LUA = `return {
     VERSION = { major = 1, minor = 0, revision = 0 },
     LrExportMenuItems = {
         { title = "EditFlow Pro: Sincronizar seleccionadas", file = "Sync.lua" },
+        { title = "EditFlow Pro: Recopilar IDs de catálogo", file = "CollectIds.lua" },
+        { title = "EditFlow Pro: 🧠 Aprendizaje", file = "CollectCorrections.lua" },
         { title = "EditFlow Pro: Configurar (token)", file = "Settings.lua" },
     },
     LrLibraryMenuItems = {
