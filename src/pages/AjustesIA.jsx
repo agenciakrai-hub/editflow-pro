@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, Loader2, Sparkles, Package, Plug, CheckCircle2, ArrowLeft } from "lucide-react";
+import { FolderOpen, Loader2, Sparkles, Package, Plug, CheckCircle2, ArrowLeft, Brain } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
@@ -81,6 +81,12 @@ export default function AjustesIA() {
   const [extracting, setExtracting] = useState(false);
   const [extDone, setExtDone] = useState(0);
   const [metrics, setMetrics] = useState(null);
+  // ---- Cerebro: presets y estilos registrados del fotógrafo ----
+  const [cerebroPresets, setCerebroPresets] = useState([]);
+  const [selectedCerebroPreset, setSelectedCerebroPreset] = useState(null);
+  const [cerebroStyles, setCerebroStyles] = useState([]);
+  const [selectedStyle, setSelectedStyle] = useState(null);
+  const [loadingStylePreset, setLoadingStylePreset] = useState(false);
 
   const enabledParams = useMemo(() => enabledKeys(config), [config]);
   const preferences = useMemo(() => preferencesFromConfig(config), [config]);
@@ -96,16 +102,34 @@ export default function AjustesIA() {
       .catch(() => setProfiles([]));
   }, []);
 
+  // Cerebro: carga los presets y estilos registrados del fotógrafo.
+  useEffect(() => {
+    base44.entities.PresetRegistry.list("-created_date", 100)
+      .then(setCerebroPresets)
+      .catch(() => setCerebroPresets([]));
+    base44.entities.PhotographerStyle.list("-created_date", 100)
+      .then(setCerebroStyles)
+      .catch(() => setCerebroStyles([]));
+  }, []);
+
   const chooseEditStyle = (styleMode) => {
     setEditStyleMode(styleMode);
     if (styleMode === "none") {
       setPresetTemplateText("");
       setPresetFile(null);
       setSelectedProfile(null);
+      setSelectedCerebroPreset(null);
+      setSelectedStyle(null);
     } else if (styleMode === "preset") {
       setSelectedProfile(null);
+      setSelectedStyle(null);
+      setSelectedCerebroPreset(null);
       setPresetTemplateText("");
       setPresetFile(null);
+    } else if (styleMode === "mis-estilos") {
+      setSelectedProfile(null);
+      setPresetFile(null);
+      setPresetTemplateText("");
     }
   };
 
@@ -113,6 +137,82 @@ export default function AjustesIA() {
     setSelectedProfile(profile);
     setPresetTemplateText(styleProfileToXmpTemplate(profile));
     setPresetFile(null);
+  };
+
+  // ---- Cerebro: integración de presets y estilos como ENTRADA del motor ----
+  // No modifica los motores: solo carga la plantilla del preset como presetTemplateText
+  // (la misma variable que ya usa el motor) y, al procesar, registra el estilo.
+  const fetchPresetTemplate = async (preset) => {
+    if (!preset?.preset_file_url) return "";
+    try {
+      const res = await fetch(preset.preset_file_url);
+      return await res.text();
+    } catch {
+      return "";
+    }
+  };
+
+  const selectCerebroPreset = async (preset) => {
+    setSelectedCerebroPreset(preset);
+    setSelectedStyle(null);
+    setLoadingStylePreset(true);
+    const text = await fetchPresetTemplate(preset);
+    setPresetTemplateText(text);
+    setPresetFile(null);
+    setLoadingStylePreset(false);
+  };
+
+  const selectCerebroStyle = async (style) => {
+    setSelectedStyle(style);
+    const preset = cerebroPresets.find((p) => p.id === style.preset_id);
+    if (preset) {
+      setSelectedCerebroPreset(preset);
+      setLoadingStylePreset(true);
+      const text = await fetchPresetTemplate(preset);
+      setPresetTemplateText(text);
+      setPresetFile(null);
+      setLoadingStylePreset(false);
+    }
+  };
+
+  // Cerebro: registra/actualiza el estilo asociado al preset tras un procesamiento.
+  // Identidad = preset_id + usuario → no crea duplicados; acumula photos_processed
+  // y conserva initial_config (snapshot de nacimiento) del primer uso.
+  const registerStyleAfterProcess = async (count) => {
+    if (!selectedCerebroPreset || !count) return;
+    try {
+      const existing = cerebroStyles.find((s) => s.preset_id === selectedCerebroPreset.id);
+      const nowIso = new Date().toISOString();
+      if (existing) {
+        await base44.entities.PhotographerStyle.update(existing.id, {
+          photos_processed: (existing.photos_processed || 0) + count,
+          last_updated: nowIso,
+        });
+        setCerebroStyles((prev) => prev.map((s) => s.id === existing.id
+          ? { ...s, photos_processed: (s.photos_processed || 0) + count, last_updated: nowIso }
+          : s));
+      } else {
+        const created = await base44.entities.PhotographerStyle.create({
+          name: `${selectedCerebroPreset.name} — Estilo`,
+          preset_id: selectedCerebroPreset.id,
+          preset_name: selectedCerebroPreset.name,
+          preset_version: selectedCerebroPreset.version || "v1",
+          initial_config: {
+            mode,
+            precisionMode,
+            treatment,
+            preset_name: selectedCerebroPreset.name,
+            preset_version: selectedCerebroPreset.version,
+            parameters: selectedCerebroPreset.parameters,
+          },
+          photos_processed: count,
+          last_updated: nowIso,
+        });
+        setCerebroStyles((prev) => [created, ...prev]);
+      }
+    } catch (e) {
+      console.error("registerStyleAfterProcess", e?.message || e);
+    }
   };
 
   const useSession = () => {
@@ -213,6 +313,7 @@ export default function AjustesIA() {
     setResults(out);
     setBusy(false);
     toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
+    registerStyleAfterProcess(ok);
   };
 
   // FASE 1 del Revelado Híbrido: 1 llamada IA con K representantes → perfil de sesión,
@@ -313,6 +414,7 @@ export default function AjustesIA() {
     setResults(out);
     setBusy(false);
     toast({ title: "Procesamiento completado", description: `${out.length} / ${photos.length} XMP listos` });
+    registerStyleAfterProcess(out.length);
   };
 
   const downloadZip = async () => {
@@ -501,8 +603,36 @@ export default function AjustesIA() {
                   </button>
                 ))}
               </div>
+              <button
+                type="button"
+                onClick={() => chooseEditStyle("mis-estilos")}
+                className={`mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${editStyleMode === "mis-estilos" ? "bg-emerald-500 text-black" : "border border-emerald-600 text-emerald-400 hover:bg-emerald-950/40"}`}
+              >
+                <Brain className="h-3.5 w-3.5" /> ✨ Mis Estilos
+              </button>
               {editStyleMode === "preset" && (
-                <p className="mt-2 text-xs text-zinc-500">Carga tu preset .xmp en el bloque de abajo.</p>
+                <div className="mt-2 space-y-2">
+                  {cerebroPresets.length > 0 && (
+                    <div>
+                      <p className="text-xs text-zinc-500">Presets registrados en Cerebro:</p>
+                      <select
+                        value={selectedCerebroPreset?.id || ""}
+                        onChange={(e) => {
+                          const p = cerebroPresets.find((x) => x.id === e.target.value);
+                          if (p) selectCerebroPreset(p);
+                        }}
+                        className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200"
+                      >
+                        <option value="">Selecciona un preset…</option>
+                        {cerebroPresets.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}{p.version ? ` (${p.version})` : ""}</option>
+                        ))}
+                      </select>
+                      {loadingStylePreset && <p className="mt-1 text-xs text-zinc-500">Cargando preset…</p>}
+                    </div>
+                  )}
+                  <p className="text-xs text-zinc-500">o carga un preset .xmp local en el bloque de abajo.</p>
+                </div>
               )}
               {editStyleMode === "profile" && (
                 <div className="mt-2">
@@ -525,6 +655,36 @@ export default function AjustesIA() {
                         <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
                     </select>
+                  )}
+                </div>
+              )}
+              {editStyleMode === "mis-estilos" && (
+                <div className="mt-2">
+                  {cerebroStyles.length === 0 ? (
+                    <p className="text-xs text-zinc-500">
+                      No tienes estilos guardados. Procesa fotos con un preset de Cerebro para crear uno automáticamente.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {cerebroStyles.map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={() => selectCerebroStyle(s)}
+                          className={`w-full rounded-md border px-3 py-2 text-left text-xs transition-colors ${selectedStyle?.id === s.id ? "border-emerald-500 bg-emerald-950/40" : "border-zinc-700 hover:bg-zinc-800"}`}
+                        >
+                          <p className="font-semibold text-zinc-200">{s.name}</p>
+                          <p className="mt-0.5 text-zinc-500">
+                            {s.photos_processed || 0} fotos · {s.learning_percentage || 0}% aprendizaje · {s.correction_count || 0} correcciones
+                          </p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {selectedStyle && (
+                    <p className="mt-2 text-xs text-emerald-400">
+                      Configuración automática aplicada: preset «{selectedStyle.preset_name}» cargado como plantilla de entrada.
+                    </p>
                   )}
                 </div>
               )}
