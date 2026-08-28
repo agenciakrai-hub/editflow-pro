@@ -1,22 +1,28 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Save } from "lucide-react";
 import { base44 } from "@/api/base44Client";
-import { getProject, getCatalogBinding, listFingerprints, updateCatalogBinding, bulkUpdateFingerprints } from "./hooks/useProjectStore";
+import { getProject, getCatalogBinding, listFingerprints, updateProject, updateCatalogBinding, bulkUpdateFingerprints } from "./hooks/useProjectStore";
 import { useFileSync } from "./hooks/useFileSync";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
-import { computeFingerprint, matchFingerprints } from "./lib/projectFingerprint";
+import { computeFingerprint, matchFingerprints, statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { buildSelectedPhotosArray, loadSelectionIntoSession } from "./lib/recoverSelection";
 import SyncStatusCard from "./components/SyncStatusCard";
-import ResyncDialog from "./components/ResyncDialog";
-import VolverAEditarButton from "./components/VolverAEditarButton";
+import LocationNotFoundModal from "./components/LocationNotFoundModal";
+import SelectionSummary from "./components/SelectionSummary";
+import PhotoFingerprintGrid from "./components/PhotoFingerprintGrid";
 import { useToast } from "@/components/ui/use-toast";
 
-// Reabre un proyecto: comprueba accesibilidad de carpeta RAW y .lrcat (🟢/🟡/🔴), y si la
-// carpeta sigue accesible re-extrae previews y recupera automáticamente la selección
-// guardada por fingerprint. Nunca mueve/copia/modifica/sube archivos.
+// Reabre un proyecto: comprueba accesibilidad de carpeta RAW y .lrcat (🟢/🟡/🔴, de forma
+// independiente de la selección), y si la carpeta sigue accesible re-extrae previews y
+// recupera automáticamente la identidad guardada por fingerprint. Nunca mueve, copia,
+// modifica ni sube archivos.
+//
+// Punto de continuidad del proyecto: si ya existe una selección guardada (selection_saved)
+// muestra el RESUMEN persistente con [Volver a selección] / [Pasar a edición]; si no,
+// muestra directamente la interfaz de selección con [Guardar selección].
 export default function DetalleProyectoPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -30,6 +36,9 @@ export default function DetalleProyectoPage() {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [resyncing, setResyncing] = useState(false);
+  const [mode, setMode] = useState("select"); // "select" | "summary"
+  const [statusDraft, setStatusDraft] = useState({});
+  const [saving, setSaving] = useState(false);
 
   const recoverFromFolder = async (folderHandle, savedFingerprints) => {
     const raws = [];
@@ -57,7 +66,7 @@ export default function DetalleProyectoPage() {
     }));
     // Enriquece candidatos con el identificador de catálogo Lightroom (lr_local_id), si el
     // plugin ya recopiló un snapshot (acción lr-collect-ids). Fuente secundaria: solo ayuda
-    // a desambiguar; si no hay snapshot, el flujo sigue funcionando igual que antes.
+    // a desambiguar colisiones; si no hay snapshot, el flujo sigue igual que antes.
     try {
       const res = await base44.functions.invoke("editflow-engine", { action: "lr-catalog-ids" });
       const catalogPhotos = res?.data?.photos || [];
@@ -89,6 +98,8 @@ export default function DetalleProyectoPage() {
     setProject(p);
     setBinding(b);
     setFingerprints(fps);
+    setMode(p?.selection_saved ? "summary" : "select");
+    setStatusDraft({});
     if (b) {
       const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
       setSync(s);
@@ -131,10 +142,44 @@ export default function DetalleProyectoPage() {
     setResyncing(false);
   };
 
-  const volverAEditar = () => {
+  const cycleStatus = (fpId) => {
+    setStatusDraft((prev) => {
+      const current = prev[fpId] ?? fingerprints.find((f) => f.id === fpId)?.selection_status ?? "REVIEW";
+      return { ...prev, [fpId]: SELECTION_CYCLE[current] || "REVIEW" };
+    });
+  };
+
+  const saveSelection = async () => {
+    setSaving(true);
+    try {
+      const updates = fingerprints.map((f) => {
+        const status = statusDraft[f.id] ?? f.selection_status;
+        return { id: f.id, selection_status: status, ...statusMeta(status) };
+      });
+      await bulkUpdateFingerprints(updates);
+      const updatedFingerprints = fingerprints.map((f) => ({ ...f, ...updates.find((u) => u.id === f.id) }));
+      setFingerprints(updatedFingerprints);
+      setMatches((prev) => prev.map((m) => ({ ...m, saved: updatedFingerprints.find((f) => f.id === m.saved.id) || m.saved })));
+      const selCount = updates.filter((u) => u.selection_status === "TOP_PICK" || u.selection_status === "SELECT").length;
+      await updateProject(project.id, { selection_saved: true, status: "editing", selected_count: selCount });
+      setProject((p) => ({ ...p, selection_saved: true, status: "editing", selected_count: selCount }));
+      setStatusDraft({});
+      setMode("summary");
+      toast({ title: "Selección guardada", description: `${selCount} de ${fingerprints.length} fotos seleccionadas` });
+    } catch (e) {
+      toast({ title: "No se pudo guardar la selección", description: e?.message, variant: "destructive" });
+    }
+    setSaving(false);
+  };
+
+  const goToEdit = () => {
     const selected = buildSelectedPhotosArray(matches);
     if (!selected.length) {
-      toast({ title: "Sin fotos recuperadas", description: "Re-sincroniza la carpeta RAW primero", variant: "destructive" });
+      toast({
+        title: "Sin fotos seleccionadas recuperadas",
+        description: "Verifica que la carpeta RAW esté sincronizada y que haya fotos en Top pick/Seleccionada.",
+        variant: "destructive",
+      });
       return;
     }
     loadSelectionIntoSession(selected);
@@ -153,10 +198,19 @@ export default function DetalleProyectoPage() {
     return <p className="text-sm text-muted-foreground">Proyecto no encontrado.</p>;
   }
 
-  const selectedCount =
-    matches.filter((m) => m.matched && (m.saved.selection_status === "TOP_PICK" || m.saved.selection_status === "SELECT")).length ||
-    fingerprints.filter((f) => f.selection_status === "TOP_PICK" || f.selection_status === "SELECT").length;
   const ambiguousCount = matches.filter((m) => m.ambiguous).length;
+  const missingFolder = !!binding && !!sync && !sync.folderOk;
+  const missingCatalog = !!binding && !!binding.catalog_handle_ref && !!sync && !sync.catalogOk;
+
+  const gridItems = fingerprints.map((f) => {
+    const m = matches.find((mm) => mm.saved.id === f.id);
+    return {
+      id: f.id,
+      filename: f.filename,
+      status: statusDraft[f.id] ?? f.selection_status,
+      previewUrl: m?.candidate?.preview?.dataUrl,
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -164,7 +218,7 @@ export default function DetalleProyectoPage() {
         <div>
           <h1 className="text-2xl font-semibold">{project.title}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {project.event_date || "Sin fecha"} · {fingerprints.length} fotos · {selectedCount} seleccionadas
+            {project.event_date || "Sin fecha"} · {fingerprints.length} fotos registradas
           </p>
         </div>
         <button
@@ -180,41 +234,23 @@ export default function DetalleProyectoPage() {
           <SyncStatusCard
             title="Carpeta RAW"
             status={sync.folderOk ? "synced" : sync.catalogOk ? "partial" : "missing"}
-            message={
-              !sync.folderOk
-                ? "La carpeta de fotografías ha cambiado de ubicación. Selecciona la nueva carpeta para volver a sincronizar."
-                : binding.raw_folder_name
-            }
+            message={sync.folderOk ? binding.raw_folder_name : "No accesible"}
           />
           <SyncStatusCard
             title="Catálogo Lightroom"
             status={sync.catalogOk ? "synced" : sync.folderOk ? "partial" : "missing"}
-            message={
-              !sync.catalogOk
-                ? "El catálogo de Lightroom ha cambiado de ubicación. Selecciona el nuevo catálogo para volver a sincronizar."
-                : binding.catalog_filename || "No asociado"
-            }
+            message={sync.catalogOk ? binding.catalog_filename || "No asociado" : "No accesible"}
           />
         </div>
       )}
 
-      {binding && !sync?.folderOk && (
-        <ResyncDialog
-          message="La carpeta de fotografías ha cambiado de ubicación. Selecciona la nueva carpeta para volver a sincronizar."
-          buttonLabel="Seleccionar nueva carpeta RAW"
-          onResync={doResyncFolder}
-          loading={resyncing || checking}
-        />
-      )}
-
-      {binding && binding.catalog_handle_ref && !sync?.catalogOk && (
-        <ResyncDialog
-          message="El catálogo de Lightroom ha cambiado de ubicación. Selecciona el nuevo catálogo para volver a sincronizar."
-          buttonLabel="Seleccionar nuevo catálogo .lrcat"
-          onResync={doResyncCatalog}
-          loading={resyncing || checking}
-        />
-      )}
+      <LocationNotFoundModal
+        missingFolder={missingFolder}
+        missingCatalog={missingCatalog}
+        onRelocateFolder={doResyncFolder}
+        onRelocateCatalog={doResyncCatalog}
+        loading={resyncing || checking}
+      />
 
       {ambiguousCount > 0 && (
         <p className="text-xs text-yellow-500">
@@ -222,25 +258,32 @@ export default function DetalleProyectoPage() {
         </p>
       )}
 
-      <div className="rounded-xl border border-border bg-card overflow-hidden">
-        <ul className="divide-y divide-border max-h-96 overflow-auto">
-          {fingerprints.map((f) => {
-            const m = matches.find((mm) => mm.saved.id === f.id);
-            const recovered = m?.matched;
-            return (
-              <li key={f.id} className="flex items-center justify-between px-4 py-2 text-sm">
-                <span className="truncate font-mono text-xs text-foreground/80">{f.filename}</span>
-                <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                  {f.selection_status}
-                  {sync?.folderOk && (recovered ? " · recuperada" : " · sin recuperar")}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-
-      <VolverAEditarButton onClick={volverAEditar} disabled={!sync?.folderOk} count={selectedCount} />
+      {mode === "summary" ? (
+        <SelectionSummary
+          fingerprints={fingerprints}
+          onBackToSelection={() => setMode("select")}
+          onGoToEdit={goToEdit}
+          editDisabled={!sync?.folderOk}
+        />
+      ) : (
+        <div className="space-y-4">
+          {!project.selection_saved && (
+            <p className="text-sm text-muted-foreground">Este proyecto todavía no tiene una selección guardada.</p>
+          )}
+          <p className="text-sm text-muted-foreground">
+            {fingerprints.length} fotografías disponibles · toca cada tarjeta para cambiar su estado.
+          </p>
+          <PhotoFingerprintGrid items={gridItems} onCycleStatus={cycleStatus} />
+          <button
+            onClick={saveSelection}
+            disabled={saving}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground disabled:opacity-40"
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            Guardar selección
+          </button>
+        </div>
+      )}
     </div>
   );
 }

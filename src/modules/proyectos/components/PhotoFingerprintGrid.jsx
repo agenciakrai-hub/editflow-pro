@@ -1,5 +1,5 @@
-const STATUS_LABEL = { TOP_PICK: "Top pick", SELECT: "Seleccionada", REVIEW: "A revisar", REJECT: "Descartada" };
-const STATUS_COLOR = {
+export const STATUS_LABEL = { TOP_PICK: "Top pick", SELECT: "Seleccionada", REVIEW: "A revisar", REJECT: "Descartada" };
+export const STATUS_COLOR = {
   TOP_PICK: "border-accent text-accent",
   SELECT: "border-foreground text-foreground",
   REVIEW: "border-muted-foreground text-muted-foreground",

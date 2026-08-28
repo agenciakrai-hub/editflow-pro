@@ -31,6 +31,11 @@
       "type": "number",
       "default": 0
     },
+    "selection_saved": {
+      "type": "boolean",
+      "default": false,
+      "description": "true una vez el fot\u00f3grafo ha guardado al menos una vez la selecci\u00f3n (TOP_PICK/SELECT/REVIEW/REJECT) de este proyecto. Controla si Detalle muestra el resumen persistente o la interfaz de selecci\u00f3n."
+    },
     "edited_count": {
       "type": "number",
       "default": 0

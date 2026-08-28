@@ -24,6 +24,17 @@ export async function computeFingerprint({ file, bytes, preview, relativePath })
   };
 }
 
+// Ciclo manual de estados de selección, compartido por la creación y la re-edición del
+// proyecto (evita duplicar el mismo mapa en NuevoProyectoPage y DetalleProyectoPage).
+export const SELECTION_CYCLE = { REVIEW: "SELECT", SELECT: "TOP_PICK", TOP_PICK: "REJECT", REJECT: "REVIEW" };
+
+// Deriva rating/color_label a partir del selection_status — misma convención en creación
+// y re-edición: TOP_PICK/SELECT llevan 5 estrellas + etiqueta verde (Lightroom), el resto no.
+export function statusMeta(status) {
+  const selected = status === "TOP_PICK" || status === "SELECT";
+  return { rating: selected ? 5 : 0, color_label: selected ? "green" : "none" };
+}
+
 const PHASH_MATCH_THRESHOLD = 8; // distancia Hamming máxima para considerar coincidencia visual
 const TIME_TOLERANCE_MS = 2000;
 const MIN_MATCH_SCORE = 60;

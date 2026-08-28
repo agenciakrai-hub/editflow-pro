@@ -4,13 +4,11 @@ import { FolderOpen, FileText, Loader2, Save, ArrowLeft } from "lucide-react";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
-import { computeFingerprint } from "./lib/projectFingerprint";
+import { computeFingerprint, statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { saveHandle } from "./lib/idbHandles";
 import { createProject, createCatalogBinding, bulkCreateFingerprints } from "./hooks/useProjectStore";
 import PhotoFingerprintGrid from "./components/PhotoFingerprintGrid";
 import { useToast } from "@/components/ui/use-toast";
-
-const CYCLE = { REVIEW: "SELECT", SELECT: "TOP_PICK", TOP_PICK: "REJECT", REJECT: "REVIEW" };
 
 // Crea un proyecto: nombre + fecha + catálogo .lrcat + carpeta RAW. Lee los RAW igual que
 // el flujo de Selección (extractPreviews, reutilizado sin modificar) y calcula un
@@ -70,7 +68,7 @@ export default function NuevoProyectoPage() {
   };
 
   const cycleStatus = (id) => {
-    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: CYCLE[it.status] || "REVIEW" } : it)));
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: SELECTION_CYCLE[it.status] || "REVIEW" } : it)));
   };
 
   const save = async () => {
@@ -88,10 +86,13 @@ export default function NuevoProyectoPage() {
       const catalogRef = catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }) : null;
 
       const selCount = items.filter((it) => it.status === "TOP_PICK" || it.status === "SELECT").length;
+      // La propia creación ya es la primera pasada de selección + guardado: al abrir el
+      // proyecto en Detalle debe verse directamente el resumen, no la interfaz de selección.
       const project = await createProject({
         title: title.trim(),
         event_date: eventDate || undefined,
-        status: "selection",
+        status: "editing",
+        selection_saved: true,
         photo_count: items.length,
         selected_count: selCount,
         lightroom_catalog_name: catalogHandle?.name || "",
@@ -117,8 +118,7 @@ export default function NuevoProyectoPage() {
           camera_model: it.fingerprint.camera_model,
           file_size: it.fingerprint.file_size,
           selection_status: it.status,
-          rating: it.status === "TOP_PICK" || it.status === "SELECT" ? 5 : 0,
-          color_label: it.status === "TOP_PICK" || it.status === "SELECT" ? "green" : "none",
+          ...statusMeta(it.status),
         }))
       );
 
