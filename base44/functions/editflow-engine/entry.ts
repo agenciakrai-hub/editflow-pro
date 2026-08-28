@@ -21,6 +21,7 @@ export default async function (req) {
     if (action === "lr-pending") return await doLrPending(req);
     if (action === "lr-complete") return await doLrComplete(req, body);
     if (action === "lr-collect-ids") return await doLrCollectIds(req, body);
+    if (action === "lr-collect-corrections") return await doLrCollectCorrections(req, body);
 
     // User-auth actions.
     const base44 = createClientFromRequest(req);
@@ -36,6 +37,7 @@ export default async function (req) {
     if (action === "lr-push") return await doLrPush(base44, user, body);
     if (action === "lr-stats") return await doLrStats(base44, user);
     if (action === "lr-catalog-ids") return await doLrCatalogIds(base44, user);
+    if (action === "style-corrections") return await doStyleCorrections(base44, user, body);
 
     return Response.json({ error: "Acción no soportada: " + action }, { status: 400 });
   } catch (error) {
@@ -267,6 +269,125 @@ async function doLrComplete(req, body) {
     catch (e) { console.error("lr-complete update", id, e?.message || e); }
   }
   return Response.json({ completed: ids.length });
+}
+
+// ---- Cerebro / aprendizaje ----
+
+// Parámetros básicos de los que se aprende. No incluye parámetros creativos del
+// preset (esos pertenecen al motor creativo); solo los técnicos que el fotógrafo
+// corrige manualmente en Lightroom.
+const LEARNING_TRACKED_PARAMS = [
+  "exposure", "contrast", "highlights", "shadows", "whites", "blacks",
+  "temperature", "tint", "vibrance", "saturation", "clarity", "texture", "dehaze",
+];
+// Número de correcciones que se considera "aprendizaje completo" (100 % de volumen).
+const LEARNING_FULL_CORRECTIONS = 120;
+
+function roundTo(n, d) { const p = Math.pow(10, d); return Math.round(n * p) / p; }
+
+// Recalcula el resumen de aprendizaje de un estilo a partir de TODAS sus correcciones
+// registradas. Fórmula del porcentaje:
+//   learning = 100 * volumeFactor * (0.4 + 0.6 * coverageFactor)
+//   volumeFactor   = min(1, correction_count / 120)  — cuántas correcciones hay
+//   coverageFactor = params corregidos / total tracked — cuántos parámetros distintos
+// Una corrección aislada mueve el porcentaje < 1 % (no cambia drásticamente el estilo).
+// confidence: low <25 %, medium 25-60 %, high >60 %.
+async function recomputeStyleLearning(base44, styleId) {
+  const records = await base44.asServiceRole.entities.StyleCorrectionRecord.filter({ style_id: styleId });
+  const sumBy = {};
+  const correctedParams = new Set();
+  for (const r of records) {
+    const d = r.delta || {};
+    for (const k of LEARNING_TRACKED_PARAMS) {
+      if (typeof d[k] === "number") {
+        correctedParams.add(k);
+        if (!sumBy[k]) sumBy[k] = { sum: 0, count: 0 };
+        sumBy[k].sum += d[k];
+        sumBy[k].count += 1;
+      }
+    }
+  }
+  const corrections_summary = {};
+  for (const k of Object.keys(sumBy)) {
+    corrections_summary[k] = { mean: roundTo(sumBy[k].sum / sumBy[k].count, 2), count: sumBy[k].count };
+  }
+  const correction_count = records.length;
+  const volumeFactor = Math.min(1, correction_count / LEARNING_FULL_CORRECTIONS);
+  const coverageFactor = LEARNING_TRACKED_PARAMS.length ? correctedParams.size / LEARNING_TRACKED_PARAMS.length : 0;
+  const learning_percentage = Math.round(100 * volumeFactor * (0.4 + 0.6 * coverageFactor));
+  const confidence = learning_percentage >= 60 ? "high" : learning_percentage >= 25 ? "medium" : "low";
+  await base44.asServiceRole.entities.PhotographerStyle.update(styleId, {
+    correction_count,
+    corrections_summary,
+    learning_percentage,
+    confidence,
+    last_sync: new Date().toISOString(),
+    last_updated: new Date().toISOString(),
+  });
+}
+
+// action=lr-collect-corrections (plugin, X-LR-Token) — el plugin envía correcciones
+// reales realizadas por el fotógrafo en Lightroom sobre fotos procesadas por EditFlow.
+// Valida que el estilo exista, pertenezca al usuario del token y coincida el preset.
+// Si no puede determinar el preset/estilo de origen, descarta la corrección (no la
+// asigna silenciosamente a ningún estilo). Registra StyleCorrectionRecord y recalcula
+// el aprendizaje. No modifica motores: solo almacena aprendizaje.
+async function doLrCollectCorrections(req, body) {
+  const base44 = createClientFromRequest(req);
+  const token = req.headers.get("X-LR-Token") || "";
+  const tok = await findToken(base44, token);
+  if (!tok) return Response.json({ error: "Token inválido" }, { status: 401 });
+
+  const corrections = Array.isArray(body.corrections) ? body.corrections : [];
+  let stored = 0, rejected = 0;
+  const touched = new Set();
+  for (const c of corrections) {
+    const styleId = String(c.style_id || "");
+    const presetId = String(c.preset_id || "");
+    if (!styleId) { rejected++; continue; }
+    let style;
+    try { style = await base44.asServiceRole.entities.PhotographerStyle.get(styleId); }
+    catch { rejected++; continue; }
+    if (!style || style.created_by_id !== tok.user_id) { rejected++; continue; }
+    if (presetId && style.preset_id && presetId !== style.preset_id) { rejected++; continue; }
+    const initial = c.initial_values || {};
+    const current = c.current_values || {};
+    const delta = {};
+    for (const k of LEARNING_TRACKED_PARAMS) {
+      if (typeof initial[k] === "number" && typeof current[k] === "number") {
+        delta[k] = roundTo(current[k] - initial[k], 2);
+      }
+    }
+    await base44.asServiceRole.entities.StyleCorrectionRecord.create({
+      style_id: styleId,
+      preset_id: presetId || style.preset_id || "",
+      photo_fingerprint_id: String(c.photo_fingerprint_id || ""),
+      initial_values: initial,
+      corrected_values: current,
+      delta,
+    });
+    touched.add(styleId);
+    stored++;
+  }
+  for (const styleId of touched) {
+    try { await recomputeStyleLearning(base44, styleId); }
+    catch (e) { console.error("recompute learning", styleId, e?.message || e); }
+  }
+  return Response.json({ stored, rejected });
+}
+
+// action=style-corrections (user auth) — devuelve el historial de correcciones de un
+// estilo (vía asServiceRole) para que el frontend de Cerebro lo muestre. Valida que el
+// estilo pertenezca al usuario.
+async function doStyleCorrections(base44, user, body) {
+  const styleId = String(body.style_id || "");
+  if (!styleId) return Response.json({ corrections: [] });
+  let style;
+  try { style = await base44.entities.PhotographerStyle.get(styleId); }
+  catch { return Response.json({ corrections: [] }); }
+  if (!style || style.created_by_id !== user.id) return Response.json({ corrections: [] });
+  const records = await base44.asServiceRole.entities.StyleCorrectionRecord.filter({ style_id: styleId });
+  return Response.json({ corrections: records });
 }
 
 // ---- Lua plugin sources (backslash-free; safe inside TS template literals) ----

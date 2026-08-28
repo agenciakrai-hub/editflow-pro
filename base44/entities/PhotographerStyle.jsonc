@@ -4,7 +4,7 @@
   "properties": {
     "name": {
       "type": "string",
-      "description": "Nombre del estilo, ej. 'Boda Editorial \u2014 Kiko'."
+      "description": "Nombre del estilo, ej. 'Boda Editorial V3 \u2014 Kiko'."
     },
     "preset_id": {
       "type": "string",
@@ -23,15 +23,30 @@
       "default": "v1",
       "description": "Versi\u00f3n del estilo. Cambia al reentrenar sin destruir el aprendizaje anterior."
     },
+    "initial_config": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Snapshot de la configuraci\u00f3n con la que naci\u00f3 el estilo: preset, ajustes b\u00e1sicos, color, tratamiento. Solo par\u00e1metros realmente utilizados por el flujo de edici\u00f3n."
+    },
     "corrections_summary": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Promedio acumulado de correcciones por par\u00e1metro (exposure, contrast, highlights, shadows, temperature, etc.)."
+      "description": "Promedio acumulado de correcciones por par\u00e1metro (mean + count). Recalculado por lr-collect-corrections."
     },
     "correction_count": {
       "type": "number",
       "default": 0,
-      "description": "N\u00famero de correcciones registradas que alimentan el estilo."
+      "description": "N\u00famero de correcciones reales registradas que alimentan el estilo."
+    },
+    "photos_processed": {
+      "type": "number",
+      "default": 0,
+      "description": "N\u00famero real de fotograf\u00edas procesadas con este estilo (acumulado)."
+    },
+    "learning_percentage": {
+      "type": "number",
+      "default": 0,
+      "description": "Grado de conocimiento acumulado (0-100) a partir de correcciones reales. Calculado por el backend."
     },
     "confidence": {
       "type": "string",
@@ -41,11 +56,16 @@
         "high"
       ],
       "default": "low",
-      "description": "Confianza del aprendizaje: sube con el n\u00famero de correcciones."
+      "description": "Confianza del aprendizaje: sube con el porcentaje de aprendizaje."
     },
     "last_updated": {
       "type": "string",
       "format": "date-time"
+    },
+    "last_sync": {
+      "type": "string",
+      "format": "date-time",
+      "description": "\u00daltima sincronizaci\u00f3n de correcciones desde Lightroom."
     }
   },
   "required": [

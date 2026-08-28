@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Loader2, Wand2, X, History, TrendingUp } from "lucide-react";
+import { Plus, Trash2, Loader2, Wand2, X, History, GraduationCap, Camera, Clock, FileText } from "lucide-react";
 import { listStyles, createStyle, deleteStyle, listCorrections } from "./hooks/useCerebroStore";
 import { listPresets } from "./hooks/useCerebroStore";
 import { useToast } from "@/components/ui/use-toast";
@@ -148,17 +148,40 @@ export default function MisEstilos() {
                   </button>
                 </div>
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-4 text-xs">
-                <span className="inline-flex items-center gap-1 text-muted-foreground">
-                  <TrendingUp className="h-3 w-3" /> {s.correction_count || 0} correcciones
-                </span>
-                <span className={`font-medium ${CONFIDENCE_COLORS[s.confidence] || CONFIDENCE_COLORS.low}`}>
-                  Confianza: {CONFIDENCE_LABELS[s.confidence] || "Baja"}
-                </span>
-                {s.last_updated && (
-                  <span className="text-muted-foreground">Actualizado {new Date(s.last_updated).toLocaleDateString()}</span>
-                )}
+              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                <div className="rounded-md bg-secondary px-2.5 py-2">
+                  <p className="text-muted-foreground flex items-center gap-1"><Camera className="h-3 w-3" /> Fotos procesadas</p>
+                  <p className="mt-0.5 text-sm font-semibold">{s.photos_processed || 0}</p>
+                </div>
+                <div className="rounded-md bg-secondary px-2.5 py-2">
+                  <p className="text-muted-foreground flex items-center gap-1"><History className="h-3 w-3" /> Correcciones</p>
+                  <p className="mt-0.5 text-sm font-semibold">{s.correction_count || 0}</p>
+                </div>
+                <div className="rounded-md bg-secondary px-2.5 py-2">
+                  <p className="text-muted-foreground flex items-center gap-1"><GraduationCap className="h-3 w-3" /> Aprendizaje</p>
+                  <p className="mt-0.5 text-sm font-semibold">{s.learning_percentage || 0}%</p>
+                </div>
+                <div className="rounded-md bg-secondary px-2.5 py-2">
+                  <p className="text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3" /> Confianza</p>
+                  <p className={`mt-0.5 text-sm font-semibold ${CONFIDENCE_COLORS[s.confidence] || CONFIDENCE_COLORS.low}`}>
+                    {CONFIDENCE_LABELS[s.confidence] || "Baja"}
+                  </p>
+                </div>
               </div>
+
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                <span>Creado: {new Date(s.created_date).toLocaleDateString()}</span>
+                {s.last_sync && <span>Última sincronización: {new Date(s.last_sync).toLocaleDateString()}</span>}
+              </div>
+
+              {s.initial_config && Object.keys(s.initial_config).length > 0 && (
+                <div className="mt-2 rounded-md border border-border bg-background p-2">
+                  <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><FileText className="h-3 w-3" /> Configuración inicial</p>
+                  <p className="mt-1 text-xs text-muted-foreground break-words">
+                    {Object.entries(s.initial_config).map(([k, v]) => `${k}: ${v}`).join(" · ")}
+                  </p>
+                </div>
+              )}
 
               {historyFor?.id === s.id && (
                 <div className="mt-3 rounded-md border border-border bg-background p-3">

@@ -28,8 +28,11 @@ export async function deleteStyle(id) {
 }
 
 // ---- Correcciones aprendidas ----
+// Se leen vía backend (asServiceRole) para validar propiedad del estilo; el plugin
+// escribe los registros sin created_by_id de usuario, así no se exponen directo por RLS.
 export async function listCorrections(styleId) {
-  return base44.entities.StyleCorrectionRecord.filter({ style_id: styleId });
+  const res = await base44.functions.invoke("editflow-engine", { action: "style-corrections", style_id: styleId });
+  return res?.data?.corrections || [];
 }
 export async function createCorrection(data) {
   return base44.entities.StyleCorrectionRecord.create(data);
