@@ -13,10 +13,10 @@ function loadImage(url) {
 }
 
 // Devuelve el hash como BigInt (64 bits) o null si no se pudo calcular.
-export async function computePHash(dataUrl) {
+export async function computePHash(dataUrl, decodedSource = null) {
   if (!dataUrl) return null;
   try {
-    const img = await loadImage(dataUrl);
+    const img = decodedSource || await loadImage(dataUrl);
     const canvas = document.createElement("canvas");
     canvas.width = 8;
     canvas.height = 8;

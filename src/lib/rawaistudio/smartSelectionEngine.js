@@ -53,10 +53,10 @@ export async function extractPreviews(items, onProgress, onTiming) {
     try { preview = await extractRawPreview(item.file, 800, { bytes: bytes || undefined }); }
     catch { preview = placeholderPreview(); }
 
-    const phash = preview?.dataUrl ? await computePHash(preview.dataUrl) : null;
     if (preview?.base64 && !preview.isPlaceholder) {
       try { preview.decodedSource = await decodePreviewImage(preview.base64); } catch {}
     }
+    const phash = preview?.dataUrl ? await computePHash(preview.dataUrl, preview.decodedSource) : null;
     let captureTime = null, focal = null, aperture = null, iso = null;
     let cameraInfo = null;
     let asShotWB = null;
