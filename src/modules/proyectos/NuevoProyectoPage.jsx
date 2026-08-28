@@ -25,6 +25,7 @@ export default function NuevoProyectoPage() {
   const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
+  const [phase, setPhase] = useState("extracting");
 
   const pickCatalog = async () => {
     try {
@@ -39,6 +40,7 @@ export default function NuevoProyectoPage() {
 
   const extractFromFolder = async (handle) => {
     setExtracting(true);
+    setPhase("extracting");
     setProgress({ done: 0, total: 0 });
     const raws = [];
     for await (const [name, entryHandle] of handle.entries()) {
@@ -46,7 +48,8 @@ export default function NuevoProyectoPage() {
       if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
       raws.push(await entryHandle.getFile());
     }
-    const total = raws.length;
+    const count = raws.length;
+    const total = count * 2;
     setProgress({ done: 0, total });
     const inputItems = raws.map((f, i) => ({ id: String(i), file: f }));
     const withPreview = await extractPreviews(
@@ -54,13 +57,17 @@ export default function NuevoProyectoPage() {
       (done) => setProgress({ done, total }),
       () => {}
     );
-    const withFingerprint = await Promise.all(
-      withPreview.map(async (p) => ({
+    setPhase("fingerprinting");
+    const withFingerprint = [];
+    for (let i = 0; i < withPreview.length; i++) {
+      const p = withPreview[i];
+      withFingerprint.push({
         ...p,
         status: "REVIEW",
         fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
-      }))
-    );
+      });
+      setProgress({ done: count + i + 1, total });
+    }
     setItems(withFingerprint);
     setExtracting(false);
   };
@@ -183,7 +190,8 @@ export default function NuevoProyectoPage() {
         <div className="rounded-xl border border-border bg-card p-4 space-y-2">
           <div className="flex items-center justify-between text-sm">
             <span className="inline-flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Leyendo previews embebidas…
+              <Loader2 className="h-4 w-4 animate-spin" />{" "}
+              {phase === "extracting" ? "Leyendo previews embebidas…" : "Calculando huellas digitales…"}
             </span>
             <span className="font-mono font-semibold tabular-nums">
               {progress.total ? Math.round((progress.done / progress.total) * 100) : 0}%
@@ -196,7 +204,9 @@ export default function NuevoProyectoPage() {
             />
           </div>
           <p className="text-xs text-muted-foreground">
-            {progress.done} / {progress.total || 0} fotos procesadas
+            {phase === "extracting"
+              ? `${progress.done} / ${progress.total / 2 || 0} fotos procesadas`
+              : `${Math.max(0, progress.done - progress.total / 2)} / ${progress.total / 2 || 0} huellas calculadas`}
           </p>
         </div>
       )}
