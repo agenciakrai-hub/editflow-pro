@@ -7,7 +7,8 @@ import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis";
 import { computeAutoBasicsPro } from "@/lib/rawaistudio/autoBasicsEngine";
 import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/lib/rawaistudio/paramDefs";
-import { patchXmpAttributes, addRatingAndLabel, addOrientation, writeWhiteBalance, setAttribute } from "@/lib/rawaistudio/xmpTagPatcher";
+import { patchXmpAttributes, addRatingAndLabel, addOrientation, writeWhiteBalance } from "@/lib/rawaistudio/xmpTagPatcher";
+import { sanitizeTreatment } from "@/lib/style/treatmentSanitizer";
 import WbBreakdown from "@/components/rawaistudio/WbBreakdown";
 import { styleProfileToXmpTemplate } from "@/lib/style/styleProfileToXmpTemplate";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
@@ -30,68 +31,18 @@ const DEFAULT_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
   </rdf:RDF>
 </x:xmpmeta>`;
 
-// Sanitiza el TRATAMIENTO Color/B&N de la plantilla del preset ANTES de parchear los
-// básicos. Evita que un preset B/N fuerce monocromo en un RAW de color (Leica DNG y
-// otros). No toca CameraProfile/ProfileName ni ningún perfil de cámara. No altera
-// Exposure/Contrast/Highlights/Shadows/Whites/Blacks/Temperature/Tint (los parchea el
-// motor, no este helper).
-//   treatment: "auto" | "color" | "monochrome"
-//   cameraInfo: photo.cameraInfo (con isMonochrome true/false/null)
-function stripGrayscale(xmp) {
-  let r = xmp.replace(/\s*crs:ConvertToGrayscale\s*=\s*"[^"]*"/g, "");
-  r = r.replace(/\s*<crs:ConvertToGrayscale\s*>[^<]*<\/crs:ConvertToGrayscale>/g, "");
-  r = r.replace(/\s*<crs:ConvertToGrayscale\s*\/>/g, "");
-  return r;
-}
-function neutralizeBwTreatment(xmp) {
-  return xmp
-    .replace(/(crs:Treatment\s*=\s*")Black &amp; White(")/g, "$1Color$2")
-    .replace(/(crs:Treatment\s*=\s*")Black & White(")/g, "$1Color$2");
-}
-
-// Tratamiento Color: un preset/perfil puede forzar B/N sin ConvertToGrayscale usando
-// crs:Saturation="-100" (desaturacion total). Solo se neutraliza cuando el valor
-// contradice Color (<= -95, B/N practico); los desaturados creativos moderados (p.ej.
-// -14) se respetan. Cubre atributo y elemento hijo. No toca nada mas.
-function neutralizeDesaturatingSaturation(xmp) {
-  const attrRe = /crs:Saturation\s*=\s*"(-?\d+(?:\.\d+)?)"/;
-  const am = xmp.match(attrRe);
-  if (am && parseFloat(am[1]) <= -95) {
-    xmp = xmp.replace(/crs:Saturation\s*=\s*"[^"]*"/, 'crs:Saturation="0"');
-  }
-  const elemRe = /<crs:Saturation\s*>(-?\d+(?:\.\d+)?)<\/crs:Saturation>/;
-  const em = xmp.match(elemRe);
-  if (em && parseFloat(em[1]) <= -95) {
-    xmp = xmp.replace(/<crs:Saturation\s*>[^<]*<\/crs:Saturation>/, "<crs:Saturation>0</crs:Saturation>");
-  }
-  return xmp;
-}
-function setGrayscaleFlag(xmp, value) {
-  const re = /crs:ConvertToGrayscale\s*=\s*"[^"]*"/;
-  if (re.test(xmp)) return xmp.replace(re, `crs:ConvertToGrayscale="${value}"`);
-  const selfClosing = /<rdf:Description\b([^>]*?)\/>/;
-  if (selfClosing.test(xmp)) return xmp.replace(selfClosing, `<rdf:Description$1\n   crs:ConvertToGrayscale="${value}"/>`);
-  return xmp.replace(/(<rdf:Description[^>]*?)(>)/, `$1\n   crs:ConvertToGrayscale="${value}"$2`);
-}
-function sanitizeTreatment(xmp, treatment, cameraInfo) {
-  const isMono = !!(cameraInfo && cameraInfo.isMonochrome);
-  // Sensor realmente monocromo (Leica Monochrom…): respetar SIEMPRE el carácter
-  // monocromo, sea cual sea el modo elegido. No se fuerza color sobre un sensor
-  // sin Bayer — no tendría sentido y contradice la regla obligatoria.
-  if (isMono) return xmp;
-  if (treatment === "monochrome") return setGrayscaleFlag(xmp, "True");
-  if (treatment === "color") {
-    // Color explicito: eliminar cualquier orden de escala de grises heredada del
-    // preset/perfil, forzar crs:Treatment="Color" y neutralizar Saturation que fuerce
-    // B/N (<= -95). No toca CameraProfile, WB ni los 6 basicos de IA.
-    let r = stripGrayscale(xmp);
-    r = neutralizeBwTreatment(r);
-    r = neutralizeDesaturatingSaturation(r);
-    if (!/crs:Treatment\s*=/.test(r)) r = setAttribute(r, "crs", "Treatment", "Color");
-    return r;
-  }
-  // auto + cámara de color: elimina el B/N impuesto por el preset.
-  return neutralizeBwTreatment(stripGrayscale(xmp));
+// Capa técnica: los 6 básicos que el motor IA (autoBasicsEngine / hybridAdaptEngine)
+// calcula por foto. Cuando hay una plantilla de estilo/preset (presetTemplateText), la IA
+// solo aporta estos 6 básicos; los creativos (Vibrance/Saturation/Clarity/Texture/Dehaze/
+// Sharpness) vienen del perfil/preset y NO se sobreescriben. Así se respeta la separación
+// de capas: perfil = look creativo, IA = básicos, WB = Kelvin absoluto. La sanitización
+// del tratamiento Color/Monocromo vive en src/lib/style/treatmentSanitizer.js.
+const TECHNICAL_KEYS = ["Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012", "Whites2012", "Blacks2012"];
+function restrictToTechnicalBasics(values, hasTemplate) {
+  if (!hasTemplate) return values;
+  const out = {};
+  for (const k of TECHNICAL_KEYS) if (typeof values[k] === "number") out[k] = values[k];
+  return out;
 }
 
 // Ajustes IA — herramienta INDEPENDIENTE. Carga su propia carpeta RAW o usa las fotos
@@ -231,16 +182,17 @@ export default function AjustesIA() {
           aiValues = {};
           for (const k of enabledParams) if (typeof all[k] === "number") aiValues[k] = all[k];
         }
+        const finalValues = restrictToTechnicalBasics(aiValues, !!presetTemplateText);
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
+        xmp = patchXmpAttributes(xmp, finalValues);
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
-        xmp = patchXmpAttributes(xmp, aiValues);
         xmp = writeWhiteBalance(xmp, wb);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
           label: "Green",
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
-        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb });
+        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: finalValues, wb });
         ok++;
       } catch {
         // Continúa con la siguiente aunque una falle.
@@ -280,7 +232,8 @@ export default function AjustesIA() {
       for (const photo of samplePhotos) {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
-        const { values, wb: sampleWb } = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        const { values: rawValues, wb: sampleWb } = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        const values = restrictToTechnicalBasics(rawValues, !!presetTemplateText);
         sampleOut.push({ id: photo.id, filename: photo.file.name, preview: base64, values, wb: sampleWb });
       }
       setSamples(sampleOut);
@@ -306,12 +259,13 @@ export default function AjustesIA() {
       try {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
-        const { values: aiValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        const { values: rawValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        const aiValues = restrictToTechnicalBasics(rawValues, !!presetTemplateText);
         const needsCorrection = Object.values(aiValues).some((v) => v) || (wb?.write && Math.abs(wb.temperatureDelta) > 0);
         const allZero = !needsCorrection;
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
-        xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = patchXmpAttributes(xmp, aiValues);
+        xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = writeWhiteBalance(xmp, wb);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
