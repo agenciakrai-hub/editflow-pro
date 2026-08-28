@@ -28,13 +28,38 @@ export function setAttribute(xmpText, namespace, tag, value) {
   return xmpText.replace(/(<rdf:Description[^>]*?)(>)/, `$1\n   ${namespace}:${tag}="${value}"$2`);
 }
 
-function ensureNamespace(xmpText, prefix, uri) {
-  if (new RegExp(`xmlns:${prefix}\\s*=`).test(xmpText)) return xmpText;
-  const selfClosing = /<rdf:Description\b([^>]*?)\/>/;
-  if (selfClosing.test(xmpText)) {
-    return xmpText.replace(selfClosing, `<rdf:Description$1\n   xmlns:${prefix}="${uri}"/>`);
+function mainDescriptionBounds(xmpText) {
+  const opening = /<rdf:Description\b(?=[^>]*\brdf:about\s*=\s*(["'])\s*\1)[^>]*>/i.exec(xmpText);
+  if (!opening) return null;
+  const openStart = opening.index;
+  const openEnd = openStart + opening[0].length;
+  if (/\/\s*>$/.test(opening[0])) return { openStart, openEnd, selfClosing: true };
+
+  const tagPattern = /<\/?rdf:Description\b[^>]*>/gi;
+  tagPattern.lastIndex = openEnd;
+  let depth = 1;
+  let match;
+  while ((match = tagPattern.exec(xmpText))) {
+    if (/^<\/rdf:Description/i.test(match[0])) depth -= 1;
+    else if (!/\/\s*>$/.test(match[0])) depth += 1;
+    if (depth === 0) return { openStart, openEnd, closeStart: match.index, selfClosing: false };
   }
-  return xmpText.replace(/(<rdf:Description[^>]*?)(>)/, `$1\n   xmlns:${prefix}="${uri}"$2`);
+  return null;
+}
+
+function updateMainOpening(xmpText, update) {
+  const bounds = mainDescriptionBounds(xmpText);
+  if (!bounds) return xmpText;
+  const opening = xmpText.slice(bounds.openStart, bounds.openEnd);
+  return xmpText.slice(0, bounds.openStart) + update(opening) + xmpText.slice(bounds.openEnd);
+}
+
+function ensureNamespace(xmpText, prefix, uri) {
+  const bounds = mainDescriptionBounds(xmpText);
+  if (!bounds) return xmpText;
+  const opening = xmpText.slice(bounds.openStart, bounds.openEnd);
+  if (new RegExp(`xmlns:${prefix}\\s*=`).test(opening)) return xmpText;
+  return updateMainOpening(xmpText, (tag) => tag.replace(/\/?>(?=$)/, `\n   xmlns:${prefix}="${uri}"$&`));
 }
 
 // Elimina la forma de elemento hijo (<crs:Tag>valor</crs:Tag>) de un atributo crs.
@@ -75,27 +100,21 @@ export function patchXmpAttributes(xmpTemplateText, values) {
 // elemento hijo con el valor nuevo. Si el rdf:Description es autocerrado, se
 // convierte en apertura+cierre para poder colgar el elemento hijo dentro.
 function setXmpProperty(xmpText, tag, value) {
-  // 1. Elemento hijo con contenido: <xmp:Tag>old</xmp:Tag> → reemplazar texto.
-  const elemRegex = new RegExp(`(<xmp:${tag}>)([^<]*)(</xmp:${tag}>)`);
-  if (elemRegex.test(xmpText)) return xmpText.replace(elemRegex, `$1${value}$3`);
-  // 2. Elemento hijo autocerrado: <xmp:Tag/> → convertir en elemento con contenido.
-  const selfCloseRegex = new RegExp(`<xmp:${tag}\\s*/>`);
-  if (selfCloseRegex.test(xmpText)) return xmpText.replace(selfCloseRegex, `<xmp:${tag}>${value}</xmp:${tag}>`);
-  // 3. Atributo: xmp:Tag="old" → eliminarlo; se reescribe como elemento hijo abajo.
-  let result = xmpText;
-  const attrRegex = new RegExp(`\\s*xmp:${tag}\\s*=\\s*"[^"]*"`);
-  if (attrRegex.test(result)) result = result.replace(attrRegex, "");
-  // 4. Insertar como elemento hijo en el primer rdf:Description.
-  const selfClosingDesc = /<rdf:Description\b([^>]*?)\/>/;
-  if (selfClosingDesc.test(result)) {
-    return result.replace(selfClosingDesc, `<rdf:Description$1>\n      <xmp:${tag}>${value}</xmp:${tag}>\n    </rdf:Description>`);
+  // Elimina cualquier metadato homónimo, incluso si una exportación anterior lo dejó
+  // dentro de una máscara. Rating y Label son metadatos globales de la foto, no de una
+  // corrección local.
+  let result = xmpText
+    .replace(new RegExp(`\\s*xmp:${tag}\\s*=\\s*"[^"]*"`, "g"), "")
+    .replace(new RegExp(`\\s*<xmp:${tag}>[^<]*</xmp:${tag}>`, "g"), "")
+    .replace(new RegExp(`\\s*<xmp:${tag}\\s*/>`, "g"), "");
+  const bounds = mainDescriptionBounds(result);
+  if (!bounds) return result;
+  const property = `\n      <xmp:${tag}>${value}</xmp:${tag}>`;
+  if (bounds.selfClosing) {
+    const opening = result.slice(bounds.openStart, bounds.openEnd).replace(/\/\s*>$/, ">");
+    return result.slice(0, bounds.openStart) + opening + property + "\n    </rdf:Description>" + result.slice(bounds.openEnd);
   }
-  const closeRegex = /(<\/rdf:Description>)/;
-  if (closeRegex.test(result)) {
-    return result.replace(closeRegex, `      <xmp:${tag}>${value}</xmp:${tag}>\n    $1`);
-  }
-  // Fallback final (XMP sin rdf:Description cerrado): atributo.
-  return setAttribute(result, "xmp", tag, value);
+  return result.slice(0, bounds.closeStart) + property + "\n    " + result.slice(bounds.closeStart);
 }
 
 export function addRatingAndLabel(xmpText, { rating, label } = {}) {
@@ -135,6 +154,38 @@ export function writeWhiteBalance(xmpText, wb) {
   return result;
 }
 
+// Comprueba que una propiedad XMP es hija directa de la descripción principal de la
+// fotografía, no de una máscara, corrección local u otra descripción secundaria.
+function directMainXmpProperty(xmpText, tag, value) {
+  const bounds = mainDescriptionBounds(xmpText);
+  if (!bounds || bounds.selfClosing) return false;
+  const content = xmpText.slice(bounds.openEnd, bounds.closeStart);
+  const tokenPattern = /<\/?([\w:.-]+)\b[^>]*>/g;
+  let depth = 0;
+  let token;
+  while ((token = tokenPattern.exec(content))) {
+    const raw = token[0];
+    const name = token[1];
+    if (raw.startsWith("</")) {
+      depth = Math.max(0, depth - 1);
+      continue;
+    }
+    if (depth === 0 && name === `xmp:${tag}`) {
+      const close = `</xmp:${tag}>`;
+      const end = content.indexOf(close, tokenPattern.lastIndex);
+      return end !== -1 && content.slice(tokenPattern.lastIndex, end) === String(value);
+    }
+    if (!/\/\s*>$/.test(raw)) depth += 1;
+  }
+  return false;
+}
+
+function hasOnlyGlobalXmpProperty(xmpText, tag, value) {
+  const all = xmpText.match(new RegExp(`<xmp:${tag}>[^<]*</xmp:${tag}>`, "g")) || [];
+  const attrs = xmpText.match(new RegExp(`xmp:${tag}\\s*=`, "g")) || [];
+  return directMainXmpProperty(xmpText, tag, value) && all.length === 1 && attrs.length === 0;
+}
+
 // Comprobación REAL del contenido del archivo final — nunca dar por "OK" un XMP solo
 // porque se haya generado en memoria. Relee el texto ya escrito y confirma que cada
 // atributo que Lightroom necesita (xmp:Rating, xmp:Label y cada crs:<param> calculado por
@@ -148,13 +199,12 @@ export function validateXmp(xmpText, { rating, label, aiValues, treatment, selec
   // Validación del color verde y rating: comprueba AMBAS formas (atributo y elemento
   // hijo) porque Lightroom puede escribir xmp:Label y xmp:Rating de cualquiera de
   // las dos maneras en sus sidecars .xmp.
-  const hasGreenLabel = /xmp:Label\s*=\s*"Green"/.test(xmpText) || /<xmp:Label>Green<\/xmp:Label>/.test(xmpText);
-  if (selectedByAI && !hasGreenLabel) issues.push('xmp:Label="Green" no está presente en el XMP final — la foto fue seleccionada por la IA pero el color verde no se escribió');
-  const hasRating = rating != null && rating > 0 && (new RegExp(`xmp:Rating\\s*=\\s*"${rating}"`).test(xmpText) || new RegExp(`<xmp:Rating>${rating}</xmp:Rating>`).test(xmpText));
-  if (rating != null && rating > 0 && !hasRating) issues.push("xmp:Rating no está presente en el XMP final");
-  if (label) {
-    const hasLabel = new RegExp(`xmp:Label\\s*=\\s*"${label}"`).test(xmpText) || new RegExp(`<xmp:Label>${label}</xmp:Label>`).test(xmpText);
-    if (!hasLabel) issues.push("xmp:Label no está presente en el XMP final");
+  const hasGreenLabel = hasOnlyGlobalXmpProperty(xmpText, "Label", "Green");
+  if (selectedByAI && !hasGreenLabel) issues.push('xmp:Label="Green" debe ser hijo directo y único del rdf:Description principal');
+  const hasRating = rating != null && rating > 0 && hasOnlyGlobalXmpProperty(xmpText, "Rating", String(rating));
+  if (rating != null && rating > 0 && !hasRating) issues.push("xmp:Rating debe ser hijo directo y único del rdf:Description principal");
+  if (label && !hasOnlyGlobalXmpProperty(xmpText, "Label", label)) {
+    issues.push("xmp:Label debe ser hijo directo y único del rdf:Description principal");
   }
   if (!/crs:HasSettings\s*=\s*"True"/.test(xmpText)) issues.push("crs:HasSettings no está presente en el XMP final — Lightroom ignorará los ajustes");
   for (const [tag, value] of Object.entries(aiValues || {})) {
