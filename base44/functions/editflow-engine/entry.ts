@@ -265,10 +265,11 @@ async function doLrComplete(req, body) {
   const tok = await findToken(base44, token);
   if (!tok) return Response.json({ error: "Token inválido" }, { status: 401 });
 
-  const ids = Array.isArray(body.ids) ? body.ids : [];
-  for (const id of ids) {
-    try { await base44.asServiceRole.entities.LrJob.update(String(id), { status: "completed" }); }
-    catch (e) { console.error("lr-complete update", id, e?.message || e); }
+  const ids = Array.isArray(body.ids) ? body.ids.map(String).filter(Boolean) : [];
+  if (ids.length) {
+    try {
+      await base44.asServiceRole.entities.LrJob.bulkUpdate(ids.map((id) => ({ id, status: "completed" })));
+    } catch (e) { console.error("lr-complete bulkUpdate", e?.message || e); }
   }
   return Response.json({ completed: ids.length });
 }
@@ -399,17 +400,40 @@ async function doLrCollectCorrections(req, body) {
     for (const p of arr) snapByFilename[String(p.fileName || "").toLowerCase()] = p;
   }
 
-  // LrJob: fuente de los valores iniciales (XMP que EditFlow empujó).
+  // LrJob: fuente de los valores iniciales (XMP que EditFlow empujó). Para evitar que
+  // trabajos antiguos del mismo archivo provoquen coincidencias ambiguas, nos quedamos
+  // solo con el MÁS RELEVANTE por filename: el último completado (el que realmente se
+  // escribió en Lightroom) y, si no hay ninguno completado, el último pendiente. No se
+  // borra ningún LrJob: solo se acota la búsqueda.
   const allJobs = await base44.asServiceRole.entities.LrJob.filter({ token });
   const jobsByFilename = {};
-  for (const j of allJobs) {
+  const sortedJobs = [...allJobs].sort((a, b) => {
+    const ca = a.status === "completed" ? 1 : 0;
+    const cb = b.status === "completed" ? 1 : 0;
+    if (ca !== cb) return cb - ca;
+    return new Date(b.updated_date || b.created_date || 0) - new Date(a.updated_date || a.created_date || 0);
+  });
+  for (const j of sortedJobs) {
     const key = String(j.filename || "").toLowerCase();
     if (!key) continue;
-    (jobsByFilename[key] ||= []).push(j);
+    if (!jobsByFilename[key]) jobsByFilename[key] = j;
+  }
+
+  // Idempotencia: una misma corrección de una misma foto en el mismo estilo no debe
+  // duplicarse. Clave estable = style_id + (localId || photo_fingerprint_id). Si ya
+  // existe un registro para esa clave (en BD o ya creado en este lote), se actualiza
+  // en lugar de crear uno nuevo, por lo que correction_count y learning_percentage no
+  // se inflan al reenviar la misma corrección.
+  const existingRecords = await base44.asServiceRole.entities.StyleCorrectionRecord.filter({ style_id: styleId });
+  const recordByKey = {};
+  for (const r of existingRecords) {
+    const k = String(r.photo_fingerprint_id || "").toLowerCase();
+    if (k) recordByKey[k] = r;
   }
 
   const corrections = Array.isArray(body.corrections) ? body.corrections : [];
-  let stored = 0, rejected = 0;
+  let stored = 0, updated = 0, rejected = 0;
+  const seenCreated = {};
   for (const c of corrections) {
     const filename = String(c.filename || "").toLowerCase();
     if (!filename) { rejected++; continue; }
@@ -418,10 +442,9 @@ async function doLrCollectCorrections(req, body) {
     if (snap && snap.localId && c.localId && String(snap.localId) !== String(c.localId)) {
       rejected++; continue;
     }
-    const matches = jobsByFilename[filename] || [];
-    if (matches.length === 0) { rejected++; continue; }   // sin inicial conocido
-    if (matches.length > 1) { rejected++; continue; }      // ambigua → no resuelve
-    const initial = parseInitialValuesFromXmp(matches[0].xmp_content);
+    const job = jobsByFilename[filename];
+    if (!job) { rejected++; continue; }   // sin inicial conocido
+    const initial = parseInitialValuesFromXmp(job.xmp_content);
     const current = c.current_values || c.corrected_values || {};
     const delta = {};
     for (const k of LEARNING_TRACKED_PARAMS) {
@@ -430,18 +453,35 @@ async function doLrCollectCorrections(req, body) {
       }
     }
     if (!Object.keys(delta).length) { rejected++; continue; } // nada que aprender
-    await base44.asServiceRole.entities.StyleCorrectionRecord.create({
-      style_id: styleId,
-      preset_id: presetId || style.preset_id || "",
-      photo_fingerprint_id: String(c.localId || c.photo_fingerprint_id || ""),
-      initial_values: initial,
-      corrected_values: current,
-      delta,
-    });
-    stored++;
+    const fpId = String(c.localId || c.photo_fingerprint_id || "");
+    const dedupKey = fpId.toLowerCase();
+    const prev = dedupKey ? recordByKey[dedupKey] : null;
+    const prevInBatch = dedupKey ? seenCreated[dedupKey] : null;
+    if (prev) {
+      await base44.asServiceRole.entities.StyleCorrectionRecord.update(prev.id, {
+        initial_values: initial, corrected_values: current, delta,
+      });
+      updated++;
+    } else if (prevInBatch) {
+      await base44.asServiceRole.entities.StyleCorrectionRecord.update(prevInBatch, {
+        initial_values: initial, corrected_values: current, delta,
+      });
+      updated++;
+    } else {
+      const created = await base44.asServiceRole.entities.StyleCorrectionRecord.create({
+        style_id: styleId,
+        preset_id: presetId || style.preset_id || "",
+        photo_fingerprint_id: fpId,
+        initial_values: initial,
+        corrected_values: current,
+        delta,
+      });
+      if (dedupKey) seenCreated[dedupKey] = created.id;
+      stored++;
+    }
   }
   let updatedPct = style.learning_percentage || 0;
-  if (stored > 0) {
+  if (stored > 0 || updated > 0) {
     try {
       await recomputeStyleLearning(base44, styleId);
       const refreshed = await base44.asServiceRole.entities.PhotographerStyle.get(styleId);
@@ -449,7 +489,7 @@ async function doLrCollectCorrections(req, body) {
     } catch (e) { console.error("recompute learning", styleId, e?.message || e); }
   }
   return Response.json({
-    stored, rejected,
+    stored, updated, rejected,
     analyzed: corrections.length,
     style_name: style.name,
     learning_percentage: updatedPct,
@@ -477,17 +517,17 @@ const INFO_LUA = `return {
     LrSdkMinimumVersion = 6.0,
     LrToolkitIdentifier = "com.editflowpro.sync",
     LrPluginName = "EditFlow Pro",
-    VERSION = { major = 1, minor = 0, revision = 0 },
+    VERSION = { major = 1, minor = 1, revision = 0 },
     LrExportMenuItems = {
         { title = "EditFlow Pro: Sincronizar seleccionadas", file = "Sync.lua" },
         { title = "EditFlow Pro: Recopilar IDs de catálogo", file = "CollectIds.lua" },
-        { title = "EditFlow Pro: 🧠 Aprendizaje", file = "CollectCorrections.lua" },
+        { title = "EditFlow Pro: 🧠 Recopilar correcciones", file = "CollectCorrections.lua" },
         { title = "EditFlow Pro: Configurar (token)", file = "Settings.lua" },
     },
     LrLibraryMenuItems = {
         { title = "EditFlow Pro: Sincronizar seleccionadas", file = "Sync.lua" },
         { title = "EditFlow Pro: Recopilar IDs de catálogo", file = "CollectIds.lua" },
-        { title = "EditFlow Pro: 🧠 Aprendizaje", file = "CollectCorrections.lua" },
+        { title = "EditFlow Pro: 🧠 Recopilar correcciones", file = "CollectCorrections.lua" },
         { title = "EditFlow Pro: Configurar (token)", file = "Settings.lua" },
     },
 }
@@ -662,8 +702,10 @@ local prefs = LrPrefs.prefsForPlugin()
 
 local function jsonEscape(s)
     s = tostring(s or "")
-    s = s:gsub('"', "'")
-    s = s:gsub('\n', ' ')
+    local BS = string.char(92)
+    s = s:gsub(BS, BS .. BS)
+    s = s:gsub('"', BS .. '"')
+    s = s:gsub('%c', ' ')
     return s
 end
 
@@ -754,8 +796,10 @@ end
 
 local function jstr(s)
     s = tostring(s or "")
-    s = s:gsub('"', "'")
-    s = s:gsub('\n', ' ')
+    local BS = string.char(92)
+    s = s:gsub(BS, BS .. BS)
+    s = s:gsub('"', BS .. '"')
+    s = s:gsub('%c', ' ')
     return '"' .. s .. '"'
 end
 
@@ -990,4 +1034,15 @@ NOTA sobre formatos
 -------------------
 - En RAW nativos (CR3, NEF, ARW) el plugin escribe un sidecar .xmp junto a la foto.
 - En DNG, Lightroom lee el XMP incrustado; si no ves cambios, usa "Leer metadatos del archivo".
+
+ACTUALIZACION DEL PLUGIN
+------------------------
+Si actualizaste el plugin y no aparecen las nuevas acciones (p. ej. "Recopilar
+correcciones"):
+1. Sustituye la carpeta EditFlowPro.lrplugin por la nueva (descomprime el ZIP nuevo).
+2. En Lightroom Classic: Archivo > Administrador de plugins, selecciona EditFlow Pro y
+   pulsa "Recargar" (Reload).
+3. IMPORTANTE: las nuevas acciones de menu solo se registran al REINICIAR Lightroom
+   Classic. Cierra y vuelve a abrir Lightroom para que aparezcan.
+4. Verifica la version en el Administrador de plugins (debe ser 1.1 o superior).
 `;

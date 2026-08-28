@@ -15,7 +15,10 @@ export default function LightroomPage() {
   const [downloading, setDownloading] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [copied, setCopied] = useState(false);
-  const serverUrl = window.location.origin;
+  // URL pública real del endpoint de EditFlow. window.location.origin apunta al host de
+  // preview en el builder/PWA y sería incorrecto para el plugin. El plugin ya es
+  // configurable (Settings.lua): si el usuario tiene una URL válida propia, la conserva.
+  const serverUrl = "https://edit-flow-augmented-pro.base44.app";
 
   useEffect(() => {
     (async () => {
@@ -120,6 +123,7 @@ export default function LightroomPage() {
           <p className={stepClass}><span className="font-semibold text-foreground">•</span> Descomprime el ZIP → carpeta <span className="font-mono">EditFlowPro.lrplugin</span></p>
           <p className={stepClass}><span className="font-semibold text-foreground">•</span> Lightroom → Archivo → Administrador de plugins → Agregar</p>
           <p className={stepClass}><span className="font-semibold text-foreground">•</span> Selecciona la carpeta <span className="font-mono">EditFlowPro.lrplugin</span> → Listo</p>
+          <p className={stepClass}><span className="font-semibold text-foreground">•</span> <span>Actualización:</span> sustituye la carpeta, pulsa "Recargar" y reinicia Lightroom Classic para ver las nuevas acciones.</p>
         </div>
       </div>
 
