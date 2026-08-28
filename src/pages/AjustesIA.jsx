@@ -7,7 +7,7 @@ import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { analyzePhotometrics } from "@/lib/rawaistudio/photometricAnalysis";
 import { computeAutoBasicsPro } from "@/lib/rawaistudio/autoBasicsEngine";
 import { defaultParameterConfig, enabledKeys, preferencesFromConfig } from "@/lib/rawaistudio/paramDefs";
-import { patchXmpAttributes, addRatingAndLabel, addOrientation, writeWhiteBalance } from "@/lib/rawaistudio/xmpTagPatcher";
+import { patchXmpAttributes, addRatingAndLabel, addOrientation, writeWhiteBalance, setAttribute } from "@/lib/rawaistudio/xmpTagPatcher";
 import WbBreakdown from "@/components/rawaistudio/WbBreakdown";
 import { styleProfileToXmpTemplate } from "@/lib/style/styleProfileToXmpTemplate";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
@@ -63,9 +63,12 @@ function sanitizeTreatment(xmp, treatment, cameraInfo) {
   if (isMono) return xmp;
   if (treatment === "monochrome") return setGrayscaleFlag(xmp, "True");
   if (treatment === "color") {
+    // Color explicito: eliminar cualquier orden de escala de grises heredada del
+    // preset/perfil y forzar crs:Treatment="Color". No toca CameraProfile, WB ni basicos.
     let r = stripGrayscale(xmp);
-    r = setGrayscaleFlag(r, "False");
-    return neutralizeBwTreatment(r);
+    r = neutralizeBwTreatment(r);
+    if (!/crs:Treatment\s*=/.test(r)) r = setAttribute(r, "crs", "Treatment", "Color");
+    return r;
   }
   // auto + cámara de color: elimina el B/N impuesto por el preset.
   return neutralizeBwTreatment(stripGrayscale(xmp));
@@ -208,13 +211,13 @@ export default function AjustesIA() {
           aiValues = {};
           for (const k of enabledParams) if (typeof all[k] === "number") aiValues[k] = all[k];
         }
-        let xmp = mode === "free" ? (presetTemplateText || DEFAULT_TEMPLATE) : DEFAULT_TEMPLATE;
+        let xmp = presetTemplateText || DEFAULT_TEMPLATE;
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = writeWhiteBalance(xmp, wb);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
-          label: fromSession ? lightroomLabelFor(photo.colorLabel) : null,
+          label: "Green",
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
         out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb });
@@ -292,7 +295,7 @@ export default function AjustesIA() {
         xmp = writeWhiteBalance(xmp, wb);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
-          label: fromSession ? lightroomLabelFor(photo.colorLabel) : null,
+          label: "Green",
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
         out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb });
