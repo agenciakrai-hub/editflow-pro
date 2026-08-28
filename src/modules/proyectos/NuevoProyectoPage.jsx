@@ -107,13 +107,14 @@ export default function NuevoProyectoPage() {
       const catalogRef = catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }) : null;
 
       const selCount = items.filter((it) => it.status === "TOP_PICK" || it.status === "SELECT").length;
-      // La propia creación ya es la primera pasada de selección + guardado: al abrir el
-      // proyecto en Detalle debe verse directamente el resumen, no la interfaz de selección.
+      // La selección solo se marca como guardada cuando realmente existe una selección.
+      // Sin selección (0 fotos marcadas), el proyecto queda como borrador y al abrirlo se
+      // muestra la interfaz de selección, no el resumen vacío.
       const project = await createProject({
         title: title.trim(),
         event_date: eventDate || undefined,
-        status: "editing",
-        selection_saved: true,
+        status: selCount > 0 ? "editing" : "draft",
+        selection_saved: selCount > 0,
         photo_count: items.length,
         selected_count: selCount,
         lightroom_catalog_name: catalogHandle?.name || "",

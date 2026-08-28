@@ -61,6 +61,10 @@ export default function MisProyectos() {
     if (!window.confirm("¿Eliminar este proyecto? Solo se borran los metadatos guardados.")) return;
     setDeleting(id);
     try {
+      // Borra en cascada los registros asociados del proyecto antes de eliminarlo, para
+      // que no queden huérfanos. Filtra por project_id: solo afecta a este proyecto.
+      await base44.entities.ProjectPhotoFingerprint.deleteMany({ project_id: id });
+      await base44.entities.CatalogBinding.deleteMany({ project_id: id });
       await base44.entities.Project.delete(id);
       toast({ title: "Proyecto eliminado" });
       load();

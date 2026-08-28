@@ -300,7 +300,7 @@ export default function AjustesIA() {
         xmp = writeWhiteBalance(xmp, wb);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
-          label: "Green",
+          label: photo.colorLabel && photo.colorLabel !== "none" ? lightroomLabelFor(photo.colorLabel) : null,
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
         out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: finalValues, wb });
@@ -393,7 +393,7 @@ export default function AjustesIA() {
         xmp = writeWhiteBalance(xmp, wb);
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
-          label: "Green",
+          label: photo.colorLabel && photo.colorLabel !== "none" ? lightroomLabelFor(photo.colorLabel) : null,
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
         const xmpMs = performance.now() - xmpStart;
