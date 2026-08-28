@@ -149,7 +149,12 @@ export default function Seleccion() {
               rating: f.rating || (selected ? 5 : 0), status, groupId: null, groupSize: 1,
               complementary: false, reason: null, overallScore: 0, scores: null, rejectReasons: [],
               confidence: null, category: null, groupRank: null, captureTime: f.capture_time,
+              // phash restaurado desde el fingerprint guardado (fingerprint_hash = pHash en
+              // hex). Sin él, groupIntoScenes degrada a agrupación solo temporal y fusiona
+              // escenas visualmente distintas en pocas ráfagas grandes (17 vs 130).
+              phash: f.fingerprint_hash ? BigInt("0x" + f.fingerprint_hash) : null,
               cameraInfo: { make: f.camera_make, model: f.camera_model }, asShotWB: null, skinStats: null,
+              technical: { sharpness: 0, exposureScore: 0.5, corrupt: false },
               analysisComplete: false, missingDimensions: [], previewWarning: !dataUrl,
               selectionFallback: false, fallbackReason: null, fingerprintId: f.id,
             };
