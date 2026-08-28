@@ -225,7 +225,25 @@ async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
   if (!apiKey) {
     throw new Error("Gemini falló: GEMINI_API_KEY no configurado (introúcelo en Base44 → Settings → Secrets)");
   }
-  return callGeminiOnce(apiKey, cfg, opts);
+  // Reintento SOLO en errores transitorios del proveedor (503 high-demand / 429 rate-limit),
+  // misma key y mismo modelo — NO es failover a otro proveedor (respeta el aislamiento de
+  // Gemini). Google recomienda reintentar estos estados. Sin reintento en 400/404
+  // (errores definitivos: imagen inválida, modelo deprecated).
+  const transient = new Set([429, 503]);
+  const maxAttempts = 3;
+  let lastErr: any;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await callGeminiOnce(apiKey, cfg, opts);
+    } catch (e: any) {
+      lastErr = e;
+      if (!transient.has(e.httpStatus) || attempt === maxAttempts) throw e;
+      const backoffMs = 2000 * Math.pow(2, attempt - 1); // 2s, 4s
+      console.log(`[aiProvider] gemini ${e.httpStatus} transitorio, reintentando en ${backoffMs}ms (intento ${attempt}/${maxAttempts})`);
+      await new Promise((r) => setTimeout(r, backoffMs));
+    }
+  }
+  throw lastErr;
 }
 
 // Punto unico de ruteo. SIN FAILOVER.
