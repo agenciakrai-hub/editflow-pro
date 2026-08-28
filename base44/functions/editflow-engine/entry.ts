@@ -440,11 +440,20 @@ async function doLrCollectCorrections(req, body) {
     });
     stored++;
   }
+  let updatedPct = style.learning_percentage || 0;
   if (stored > 0) {
-    try { await recomputeStyleLearning(base44, styleId); }
-    catch (e) { console.error("recompute learning", styleId, e?.message || e); }
+    try {
+      await recomputeStyleLearning(base44, styleId);
+      const refreshed = await base44.asServiceRole.entities.PhotographerStyle.get(styleId);
+      updatedPct = refreshed?.learning_percentage ?? updatedPct;
+    } catch (e) { console.error("recompute learning", styleId, e?.message || e); }
   }
-  return Response.json({ stored, rejected });
+  return Response.json({
+    stored, rejected,
+    analyzed: corrections.length,
+    style_name: style.name,
+    learning_percentage: updatedPct,
+  });
 }
 
 // action=style-corrections (user auth) — devuelve el historial de correcciones de un
@@ -476,7 +485,7 @@ const INFO_LUA = `return {
     LrLibraryMenuItems = {
         { title = "EditFlow Pro: Sincronizar seleccionadas", file = "Sync.lua" },
         { title = "EditFlow Pro: Recopilar IDs de catálogo", file = "CollectIds.lua" },
-        { title = "EditFlow Pro: Recopilar correcciones", file = "CollectCorrections.lua" },
+        { title = "EditFlow Pro: 🧠 Aprendizaje", file = "CollectCorrections.lua" },
         { title = "EditFlow Pro: Configurar (token)", file = "Settings.lua" },
     },
 }
@@ -845,17 +854,25 @@ LrTasks.startAsyncTask(function()
             .. ',"preset_id":' .. jstr(selectedStyle.preset_id or "")
             .. ',"corrections":[' .. table.concat(parts, ",") .. ']}'
         local resp = apiCall("lr-collect-corrections", body)
-        local stored, rejected = 0, 0
+        local stored, rejected, analyzed, pct, sname = 0, 0, #photos, 0, selectedStyle.name or ""
         if resp then
             local okR, rdata = pcall(function() return JSON.decode(resp) end)
             if okR and rdata then
                 stored = rdata.stored or 0
                 rejected = rdata.rejected or 0
+                analyzed = rdata.analyzed or #photos
+                pct = rdata.learning_percentage or 0
+                sname = rdata.style_name or sname
             end
         end
         LrDialogs.message("EditFlow Pro",
-            "Correcciones registradas: " .. stored .. "  |  Descartadas: " .. rejected ..
-            "\\n\\nSolo se envían metadatos y valores numéricos. Nunca se suben RAW ni fotos.",
+            "🧠 Aprendizaje sincronizado\\n\\n" ..
+            "Estilo: " .. sname .. "\\n" ..
+            "Fotografías analizadas: " .. analyzed .. "\\n" ..
+            "Correcciones encontradas: " .. stored .. "\\n" ..
+            "Correcciones enviadas: " .. stored .. "\\n" ..
+            "Aprendizaje actual: " .. pct .. " %\\n\\n" ..
+            "Solo se envían metadatos y valores numéricos. Nunca se suben RAW ni fotos.",
             "info")
     end)
 end)
