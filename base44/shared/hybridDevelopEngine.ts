@@ -45,7 +45,17 @@ export async function generateSessionProfile(
 ): Promise<{ base_recipe: Record<string, number>; analysis: string; confidence: number }> {
   if (!representatives?.length) throw new Error("representatives requerido (min 1 preview)");
 
-  const file_urls = representatives.map((r) => `data:image/jpeg;base64,${r.preview_base64}`);
+  // Gemini procesa las previews como inline_data. Ocho JPEG de 800px en una sola petición
+  // exceden de forma intermitente el tiempo de respuesta del proveedor; el adaptador acaba
+  // agotando sus tres reintentos y el handler devuelve 500. Tres muestras repartidas por la
+  // sesión mantienen el perfil global y dejan margen para generar la respuesta estructurada.
+  const maxRepresentatives = 3;
+  const sampled = representatives.length <= maxRepresentatives
+    ? representatives
+    : Array.from({ length: maxRepresentatives }, (_, index) => (
+      representatives[Math.round(index * (representatives.length - 1) / (maxRepresentatives - 1))]
+    ));
+  const file_urls = sampled.map((r) => `data:image/jpeg;base64,${r.preview_base64}`);
 
   const propList = PROFILE_KEYS.map((k) => {
     const r = RANGES[k];
