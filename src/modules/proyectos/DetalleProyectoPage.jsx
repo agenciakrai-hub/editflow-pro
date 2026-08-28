@@ -100,12 +100,20 @@ export default function DetalleProyectoPage() {
     setFingerprints(fps);
     setMode(p?.selection_saved ? "summary" : "select");
     setStatusDraft({});
-    if (b) {
-      const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
-      setSync(s);
-      if (s.folderOk && s.folderHandle) await recoverFromFolder(s.folderHandle, fps);
-    }
+    // Muestra el proyecto al instante con los datos ya guardados; la recuperación de
+    // la carpeta (previews + re-emparejamiento) corre en segundo plano, sin bloquear.
     setLoading(false);
+    if (b) {
+      (async () => {
+        try {
+          const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
+          setSync(s);
+          if (s.folderOk && s.folderHandle) await recoverFromFolder(s.folderHandle, fps);
+        } catch {
+          // Sin acceso a la carpeta: el usuario puede re-sincronizar manualmente.
+        }
+      })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, checkSync]);
 
