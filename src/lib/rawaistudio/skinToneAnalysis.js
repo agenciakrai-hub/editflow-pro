@@ -33,11 +33,14 @@ const SKIN_CR = [133, 173];
 const NEUTRAL_BRIGHT = [80, 240];
 const NEUTRAL_MAX_DIFF = 14;
 
-export async function analyzeSkinTone(base64Jpeg) {
-  const img = await loadImage(base64Jpeg);
-  const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
-  const w = Math.max(1, Math.round(img.width * scale));
-  const h = Math.max(1, Math.round(img.height * scale));
+export async function analyzeSkinTone(base64Jpeg, decodedSource = null) {
+  // Reutiliza la misma preview JPEG ya decodificada cuando está disponible.
+  const img = decodedSource || await loadImage(base64Jpeg);
+  const sourceWidth = img.naturalWidth || img.width;
+  const sourceHeight = img.naturalHeight || img.height;
+  const scale = Math.min(1, MAX_DIM / Math.max(sourceWidth, sourceHeight));
+  const w = Math.max(1, Math.round(sourceWidth * scale));
+  const h = Math.max(1, Math.round(sourceHeight * scale));
   const canvas = document.createElement("canvas");
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext("2d");

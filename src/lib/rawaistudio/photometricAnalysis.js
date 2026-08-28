@@ -28,11 +28,16 @@ function loadImage(base64) {
 // boda suele estar cerca del centro del encuadre, así que un fondo muy claro u oscuro en
 // los bordes ya no puede desplazar por sí solo la decisión de exposición tanto como el
 // centro de la imagen.
-export async function analyzePhotometrics(base64Jpeg) {
-  const img = await loadImage(base64Jpeg);
-  const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
-  const w = Math.max(1, Math.round(img.width * scale));
-  const h = Math.max(1, Math.round(img.height * scale));
+export async function analyzePhotometrics(base64Jpeg, decodedSource = null) {
+  // decodedSource es la misma preview JPEG ya decodificada durante la extracción.
+  // Al dibujar directamente desde ella se conservan exactamente los mismos píxeles
+  // de origen que al volver a cargar el mismo data URL.
+  const img = decodedSource || await loadImage(base64Jpeg);
+  const sourceWidth = img.naturalWidth || img.width;
+  const sourceHeight = img.naturalHeight || img.height;
+  const scale = Math.min(1, MAX_DIM / Math.max(sourceWidth, sourceHeight));
+  const w = Math.max(1, Math.round(sourceWidth * scale));
+  const h = Math.max(1, Math.round(sourceHeight * scale));
 
   const canvas = document.createElement("canvas");
   canvas.width = w; canvas.height = h;

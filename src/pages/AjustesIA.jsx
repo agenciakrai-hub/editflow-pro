@@ -21,6 +21,7 @@ import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelecto
 import ParameterPanel from "@/components/rawaistudio/ParameterPanel";
 import PresetLoadSection from "@/components/rawaistudio/PresetLoadSection";
 import HybridValidationPanel from "@/components/rawaistudio/HybridValidationPanel";
+import PerformanceMetrics from "@/components/rawaistudio/PerformanceMetrics";
 
 // Plantilla XMP mínima cuando no hay preset .xmp: define el namespace crs y deja
 // que la IA rellene los básicos. (Mismo contrato que EditorStudio.)
@@ -79,6 +80,7 @@ export default function AjustesIA() {
   const [awaitingConfirm, setAwaitingConfirm] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extDone, setExtDone] = useState(0);
+  const [metrics, setMetrics] = useState(null);
 
   const enabledParams = useMemo(() => enabledKeys(config), [config]);
   const preferences = useMemo(() => preferencesFromConfig(config), [config]);
@@ -141,8 +143,14 @@ export default function AjustesIA() {
   const runExtract = async (raws) => {
     setExtracting(true);
     setExtDone(0);
+    const totalStart = performance.now();
+    const timing = { extractionMs: 0, skinMs: 0 };
     const items = raws.map((f, i) => ({ id: String(i), file: f }));
-    const withPreview = await extractPreviews(items, (d) => setExtDone(d));
+    const withPreview = await extractPreviews(items, (d) => setExtDone(d), (itemTiming) => {
+      timing.extractionMs += itemTiming.extractionMs;
+      timing.skinMs += itemTiming.skinMs;
+    });
+    setMetrics({ ...timing, photometricMs: 0, adaptationMs: 0, xmpMs: 0, zipMs: 0, totalMs: performance.now() - totalStart, photoCount: withPreview.length });
     setPhotos(withPreview.map((p) => ({ ...p, manualRotation: 0, rating: 0, colorLabel: "none" })));
     setExtracting(false);
   };
@@ -211,6 +219,8 @@ export default function AjustesIA() {
   // y aplica el motor local a 5 fotos de muestra. Muestra la validación ANTES de procesar
   // toda la sesión. No consume más IA (el resto es adaptación local por foto).
   const runHybridPreview = async () => {
+    const totalStart = performance.now();
+    const timing = { photometricMs: 0, adaptationMs: 0, xmpMs: 0, zipMs: 0 };
     setBusy(true);
     setResults([]);
     setSynced(false);
@@ -234,11 +244,16 @@ export default function AjustesIA() {
       const sampleOut = [];
       for (const photo of samplePhotos) {
         const base64 = photo.preview?.base64;
-        const stats = base64 ? await analyzePhotometrics(base64) : null;
+        const photometricStart = performance.now();
+        const stats = base64 ? await analyzePhotometrics(base64, photo.preview?.decodedSource) : null;
+        timing.photometricMs += performance.now() - photometricStart;
+        const adaptationStart = performance.now();
         const { values: rawValues, wb: sampleWb } = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        timing.adaptationMs += performance.now() - adaptationStart;
         const values = restrictToTechnicalBasics(rawValues, !!presetTemplateText);
         sampleOut.push({ id: photo.id, filename: photo.file.name, preview: base64, values, wb: sampleWb });
       }
+      setMetrics((previous) => ({ ...(previous || {}), ...timing, totalMs: performance.now() - totalStart, photoCount: photos.length }));
       setSamples(sampleOut);
       setAwaitingConfirm(true);
     } catch (e) {
@@ -251,6 +266,8 @@ export default function AjustesIA() {
   // (adaptación local por foto, sin más llamadas IA) y deja los XMP listos para exportar.
   const confirmHybridAll = async () => {
     if (!profile) return;
+    const totalStart = performance.now();
+    const timing = { photometricMs: 0, adaptationMs: 0, xmpMs: 0, zipMs: 0 };
     setBusy(true);
     setAwaitingConfirm(false);
     setResults([]);
@@ -259,11 +276,16 @@ export default function AjustesIA() {
     const processed = await runPool(photos, 4, async (photo) => {
       try {
         const base64 = photo.preview?.base64;
-        const stats = base64 ? await analyzePhotometrics(base64) : null;
+        const photometricStart = performance.now();
+        const stats = base64 ? await analyzePhotometrics(base64, photo.preview?.decodedSource) : null;
+        const photometricMs = performance.now() - photometricStart;
+        const adaptationStart = performance.now();
         const { values: rawValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        const adaptationMs = performance.now() - adaptationStart;
         const aiValues = restrictToTechnicalBasics(rawValues, !!presetTemplateText);
         const needsCorrection = Object.values(aiValues).some((v) => v) || (wb?.write && Math.abs(wb.temperatureDelta) > 0);
         const allZero = !needsCorrection;
+        const xmpStart = performance.now();
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
@@ -273,6 +295,10 @@ export default function AjustesIA() {
           label: "Green",
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
+        const xmpMs = performance.now() - xmpStart;
+        timing.photometricMs += photometricMs;
+        timing.adaptationMs += adaptationMs;
+        timing.xmpMs += xmpMs;
         return { filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb };
       } catch {
         // Continúa con la siguiente aunque una falle.
@@ -283,6 +309,7 @@ export default function AjustesIA() {
       setProgress({ done: completed, total: photos.length });
     });
     const out = processed.filter(Boolean);
+    setMetrics((previous) => ({ ...(previous || {}), ...timing, totalMs: performance.now() - totalStart, photoCount: out.length }));
     setResults(out);
     setBusy(false);
     toast({ title: "Procesamiento completado", description: `${out.length} / ${photos.length} XMP listos` });
@@ -302,6 +329,7 @@ export default function AjustesIA() {
       return;
     }
     setZipping(true);
+    const zipStart = performance.now();
     try {
       const res = await base44.functions.invoke("editflow-engine", {
         action: "zip-xmp",
@@ -319,6 +347,7 @@ export default function AjustesIA() {
     } catch (e) {
       toast({ title: "Error al generar el ZIP", description: e.message, variant: "destructive" });
     }
+    setMetrics((previous) => previous ? { ...previous, zipMs: performance.now() - zipStart } : previous);
     setZipping(false);
   };
 
@@ -637,6 +666,7 @@ export default function AjustesIA() {
                 Validación: {results.filter((r) => r.needsCorrection).length} fotos con corrección aplicada ·{" "}
                 {results.filter((r) => !r.needsCorrection).length} ya equilibradas (sin ajuste).
               </p>
+              <PerformanceMetrics metrics={metrics} />
               {results.some((r) => r.wb) && (
                 <div className="rounded-md border border-zinc-800 bg-[#141414] p-3 space-y-1.5">
                   <p className="text-xs font-medium text-zinc-300">Balance de blancos por foto</p>

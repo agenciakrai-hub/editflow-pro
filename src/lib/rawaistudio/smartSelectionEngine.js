@@ -20,6 +20,7 @@ import { computePHash, phashDistance } from "./perceptualHash";
 import { readCaptureTimeFromBytes } from "./captureTime";
 import { readCameraMetadataFromBytes, readAsShotWhiteBalance } from "./cameraMetadata";
 import { analyzeSkinTone } from "./skinToneAnalysis";
+import { decodePreviewImage } from "./previewDecodeCache";
 
 const PREVIEW_CONCURRENCY = 6;
 const BATCH_CONCURRENCY = 3;
@@ -42,9 +43,10 @@ export function scoreOf(p) {
 
 // items: [{id, file}] -> [{id, file, preview, captureTime, phash, cameraInfo, technical}]
 // PASS 1: lee el buffer UNA vez y reutiliza para preview + EXIF + cámara + pHash.
-export async function extractPreviews(items, onProgress) {
+export async function extractPreviews(items, onProgress, onTiming) {
   let done = 0;
   return runPool(items, PREVIEW_CONCURRENCY, async (item) => {
+    const extractionStart = performance.now();
     let bytes = null;
     try { bytes = new Uint8Array(await item.file.arrayBuffer()); } catch { bytes = null; }
     let preview;
@@ -52,6 +54,9 @@ export async function extractPreviews(items, onProgress) {
     catch { preview = placeholderPreview(); }
 
     const phash = preview?.dataUrl ? await computePHash(preview.dataUrl) : null;
+    if (preview?.base64 && !preview.isPlaceholder) {
+      try { preview.decodedSource = await decodePreviewImage(preview.base64); } catch {}
+    }
     let captureTime = null, focal = null, aperture = null, iso = null;
     let cameraInfo = null;
     let asShotWB = null;
@@ -60,10 +65,15 @@ export async function extractPreviews(items, onProgress) {
       try { cameraInfo = readCameraMetadataFromBytes(bytes); } catch {}
       try { asShotWB = readAsShotWhiteBalance(bytes); } catch {}
     }
+    const extractionMs = performance.now() - extractionStart;
     let skinStats = null;
+    let skinMs = 0;
     if (preview?.base64 && !preview.isPlaceholder) {
-      try { skinStats = await analyzeSkinTone(preview.base64); } catch { skinStats = null; }
+      const skinStart = performance.now();
+      try { skinStats = await analyzeSkinTone(preview.base64, preview.decodedSource); } catch { skinStats = null; }
+      skinMs = performance.now() - skinStart;
     }
+    onTiming?.({ extractionMs, skinMs });
 
     const corrupt = !preview || preview.isPlaceholder;
     const technical = {
