@@ -1,0 +1,50 @@
+{
+  "name": "StyleCorrectionRecord",
+  "type": "object",
+  "properties": {
+    "style_id": {
+      "type": "string",
+      "description": "Referencia al PhotographerStyle al que pertenece la correcci\u00f3n."
+    },
+    "preset_id": {
+      "type": "string",
+      "description": "Preset utilizado en la edici\u00f3n que gener\u00f3 la correcci\u00f3n."
+    },
+    "photo_fingerprint_id": {
+      "type": "string",
+      "description": "Fingerprint de la foto corregida (opcional)."
+    },
+    "initial_values": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Valores que EditFlow aplic\u00f3 inicialmente (lo que hizo la IA/preset)."
+    },
+    "corrected_values": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Valores finales tras la correcci\u00f3n manual del fot\u00f3grafo en Lightroom."
+    },
+    "delta": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Diferencia corregido - inicial por par\u00e1metro."
+    }
+  },
+  "required": [
+    "style_id"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

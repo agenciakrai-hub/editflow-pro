@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Images, Sparkles, FileImage, FolderHeart, Wand2 } from "lucide-react";
+import { Images, Sparkles, FileImage, FolderHeart, Wand2, Brain } from "lucide-react";
 
 // Hub de herramientas. Presenta las tres herramientas independientes como tarjetas.
 // No ejecuta ninguna herramienta: cada tarjeta solo navega a su ruta.
@@ -33,6 +33,12 @@ const tools = [
     title: "Creador de estilos",
     desc: "Aprende el look de un fotógrafo desde una galería pública y aplícalo como capa creativa en Ajustes IA.",
     icon: Wand2,
+  },
+  {
+    to: "/cerebro",
+    title: "Cerebro",
+    desc: "Memoria del fotógrafo: presets registrados, estilos aprendidos e historial de correcciones.",
+    icon: Brain,
   },
 ];
 

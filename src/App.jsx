@@ -26,6 +26,7 @@ import AjustesIA from '@/pages/AjustesIA';
 import PresetXMP from '@/pages/PresetXMP';
 import AIProviders from '@/pages/AIProviders';
 import Estilos from '@/pages/Estilos';
+import Cerebro from '@/pages/Cerebro';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -68,6 +69,7 @@ const AuthenticatedApp = () => {
           <Route path="/preset-xmp" element={<PresetXMP />} />
           <Route path="/proveedores-ia" element={<AIProviders />} />
           <Route path="/estilos" element={<Estilos />} />
+          <Route path="/cerebro" element={<Cerebro />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>

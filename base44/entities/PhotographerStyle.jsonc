@@ -1,0 +1,68 @@
+{
+  "name": "PhotographerStyle",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nombre del estilo, ej. 'Boda Editorial \u2014 Kiko'."
+    },
+    "preset_id": {
+      "type": "string",
+      "description": "Referencia al PresetRegistry base."
+    },
+    "preset_name": {
+      "type": "string",
+      "description": "Snapshot del nombre del preset base."
+    },
+    "preset_version": {
+      "type": "string",
+      "description": "Snapshot de la versi\u00f3n del preset base."
+    },
+    "style_version": {
+      "type": "string",
+      "default": "v1",
+      "description": "Versi\u00f3n del estilo. Cambia al reentrenar sin destruir el aprendizaje anterior."
+    },
+    "corrections_summary": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Promedio acumulado de correcciones por par\u00e1metro (exposure, contrast, highlights, shadows, temperature, etc.)."
+    },
+    "correction_count": {
+      "type": "number",
+      "default": 0,
+      "description": "N\u00famero de correcciones registradas que alimentan el estilo."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default": "low",
+      "description": "Confianza del aprendizaje: sube con el n\u00famero de correcciones."
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

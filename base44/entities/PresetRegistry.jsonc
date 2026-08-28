@@ -1,0 +1,59 @@
+{
+  "name": "PresetRegistry",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "preset_identifier": {
+      "type": "string",
+      "description": "Identificador \u00fanico del preset (UUID o URL del archivo subido)."
+    },
+    "version": {
+      "type": "string",
+      "default": "v1"
+    },
+    "incorporated_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "preset_type": {
+      "type": "string",
+      "enum": [
+        "lightroom",
+        "camera_profile",
+        "custom"
+      ],
+      "default": "lightroom"
+    },
+    "preset_file_url": {
+      "type": "string",
+      "description": "URL del archivo .xmp/.lrtemplate subido v\u00eda UploadFile."
+    },
+    "parameters": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Par\u00e1metros legibles del preset cuando est\u00e9n disponibles."
+    },
+    "description": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}
