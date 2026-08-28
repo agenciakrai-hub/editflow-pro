@@ -143,7 +143,7 @@ export default function Seleccion() {
             const selected = status === "SELECT" || status === "TOP_PICK";
             return {
               id: f.id, file: { name: f.filename },
-              preview: dataUrl ? { dataUrl, base64: dataUrl, isPlaceholder: false } : null,
+              preview: dataUrl ? { dataUrl, base64: (dataUrl.split(",")[1] || dataUrl), isPlaceholder: false } : null,
               manualRotation: 0, aiSelected: selected, selectedForEdit: selected,
               colorLabel: f.color_label || (selected ? "green" : "none"),
               rating: f.rating || (selected ? 5 : 0), status, groupId: null, groupSize: 1,
@@ -349,18 +349,28 @@ export default function Seleccion() {
   // Ejecuta la misma selección IA que el flujo normal (selectBursts) sobre las fotos
   // recuperadas del proyecto. Reutiliza el motor existente, no crea uno nuevo.
   const runProjectSelection = async () => {
-    if (!projectRawItems.length) return;
+    // Si el proyecto abrió por caché (sin re-extraer la carpeta), projectRawItems está
+    // vacío. En ese caso usamos las photos ya cargadas (con su preview cacheada) para
+    // que la selección IA funcione sin necesidad de volver a leer los RAW.
+    const items = projectRawItems.length ? projectRawItems : photos.map((p) => ({
+      id: p.id, file: p.file, preview: p.preview, cameraInfo: p.cameraInfo,
+      asShotWB: p.asShotWB, skinStats: p.skinStats, captureTime: p.captureTime,
+    }));
+    if (!items.length) return;
+    const fpMap = projectRawItems.length
+      ? idToFpId
+      : Object.fromEntries(photos.map((p) => [p.id, p.fingerprintId]).filter(([, v]) => v));
     setStage("selecting");
-    setTotal(projectRawItems.length);
+    setTotal(items.length);
     setDone(0);
     try {
-      const { keep, meta, selection_fallback, fallback_reason, selection_coverage_fallback, coverage_promotions } = await selectBursts(projectRawItems, (d, t) => {
+      const { keep, meta, selection_fallback, fallback_reason, selection_coverage_fallback, coverage_promotions } = await selectBursts(items, (d, t) => {
         setDone(d);
         if (typeof t === "number") setTotal(t);
       });
-      const built = projectRawItems.map((p) => {
+      const built = items.map((p) => {
         const photo = buildPhotoFromSelection(p, keep, meta);
-        return { ...photo, fingerprintId: idToFpId[p.id] };
+        return { ...photo, fingerprintId: fpMap[p.id] };
       });
       setPhotos(built);
       setSelectionFallback(selection_fallback ? { active: true, reason: fallback_reason } : null);
