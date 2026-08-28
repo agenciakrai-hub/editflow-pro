@@ -48,6 +48,24 @@ function neutralizeBwTreatment(xmp) {
     .replace(/(crs:Treatment\s*=\s*")Black &amp; White(")/g, "$1Color$2")
     .replace(/(crs:Treatment\s*=\s*")Black & White(")/g, "$1Color$2");
 }
+
+// Tratamiento Color: un preset/perfil puede forzar B/N sin ConvertToGrayscale usando
+// crs:Saturation="-100" (desaturacion total). Solo se neutraliza cuando el valor
+// contradice Color (<= -95, B/N practico); los desaturados creativos moderados (p.ej.
+// -14) se respetan. Cubre atributo y elemento hijo. No toca nada mas.
+function neutralizeDesaturatingSaturation(xmp) {
+  const attrRe = /crs:Saturation\s*=\s*"(-?\d+(?:\.\d+)?)"/;
+  const am = xmp.match(attrRe);
+  if (am && parseFloat(am[1]) <= -95) {
+    xmp = xmp.replace(/crs:Saturation\s*=\s*"[^"]*"/, 'crs:Saturation="0"');
+  }
+  const elemRe = /<crs:Saturation\s*>(-?\d+(?:\.\d+)?)<\/crs:Saturation>/;
+  const em = xmp.match(elemRe);
+  if (em && parseFloat(em[1]) <= -95) {
+    xmp = xmp.replace(/<crs:Saturation\s*>[^<]*<\/crs:Saturation>/, "<crs:Saturation>0</crs:Saturation>");
+  }
+  return xmp;
+}
 function setGrayscaleFlag(xmp, value) {
   const re = /crs:ConvertToGrayscale\s*=\s*"[^"]*"/;
   if (re.test(xmp)) return xmp.replace(re, `crs:ConvertToGrayscale="${value}"`);
@@ -64,9 +82,11 @@ function sanitizeTreatment(xmp, treatment, cameraInfo) {
   if (treatment === "monochrome") return setGrayscaleFlag(xmp, "True");
   if (treatment === "color") {
     // Color explicito: eliminar cualquier orden de escala de grises heredada del
-    // preset/perfil y forzar crs:Treatment="Color". No toca CameraProfile, WB ni basicos.
+    // preset/perfil, forzar crs:Treatment="Color" y neutralizar Saturation que fuerce
+    // B/N (<= -95). No toca CameraProfile, WB ni los 6 basicos de IA.
     let r = stripGrayscale(xmp);
     r = neutralizeBwTreatment(r);
+    r = neutralizeDesaturatingSaturation(r);
     if (!/crs:Treatment\s*=/.test(r)) r = setAttribute(r, "crs", "Treatment", "Color");
     return r;
   }
