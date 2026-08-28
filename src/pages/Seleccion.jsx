@@ -677,16 +677,29 @@ export default function Seleccion() {
       )}
 
       {projectId && !projectLoading && !showProjectSummary && stage !== "review" && !recovering && !remoteJob && (
-        <div className="mt-6 rounded-xl border border-dashed border-zinc-700 bg-[#141414] p-10 text-center">
-          <p className="text-sm text-zinc-400">
-            {sync && !sync.folderOk ? "No se pudieron recuperar las fotos: la carpeta RAW no está accesible." : "Sin fotos recuperadas."}
-          </p>
+        <div className="mt-6 rounded-xl border border-dashed border-zinc-700 bg-[#141414] p-8 text-center space-y-3">
+          {sync && !sync.folderOk && !sync.folderHandle ? (
+            <>
+              <p className="text-sm text-zinc-300">Este proyecto se gestiona desde otro equipo.</p>
+              <p className="text-xs text-zinc-500">
+                Las fotos viven en la carpeta RAW del equipo donde se creó el proyecto. Si se está procesando allí, verás el progreso aquí en tiempo real; para editarlas, abre el proyecto en ese equipo.
+              </p>
+              <button onClick={doResyncFolder}
+                className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-800">
+                <FolderOpen className="h-3.5 w-3.5" /> Reubicar carpeta en este dispositivo
+              </button>
+            </>
+          ) : (
+            <p className="text-sm text-zinc-400">
+              {sync && !sync.folderOk ? "No se pudieron recuperar las fotos: la carpeta RAW no está accesible." : "Sin fotos recuperadas."}
+            </p>
+          )}
         </div>
       )}
 
       <LocationNotFoundModal
-        missingFolder={!!binding && !!sync && !sync.folderOk}
-        missingCatalog={!!binding && !!binding.catalog_handle_ref && !!sync && !sync.catalogOk}
+        missingFolder={!!binding && !!sync && !sync.folderOk && !!sync.folderHandle}
+        missingCatalog={!!binding && !!binding.catalog_handle_ref && !!sync && !sync.catalogOk && !!sync.catalogHandle}
         onRelocateFolder={doResyncFolder}
         onRelocateCatalog={doResyncCatalog}
         loading={resyncing}
