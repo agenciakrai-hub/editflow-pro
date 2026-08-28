@@ -58,6 +58,7 @@ export default function Seleccion() {
   const [resyncing, setResyncing] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [recoverPct, setRecoverPct] = useState(0);
+  const [remoteJob, setRemoteJob] = useState(null);
   const [projectRawItems, setProjectRawItems] = useState([]);
   const [idToFpId, setIdToFpId] = useState({});
   const { checkSync, resyncFolder, resyncCatalog } = useFileSync();
@@ -93,6 +94,25 @@ export default function Seleccion() {
     setSelectionFallback(selection_fallback ? { active: true, reason: fallback_reason } : null);
     setSelectionCoverage(selection_coverage_fallback ? { active: true, promotions: coverage_promotions || [] } : null);
     setStage("review");
+  };
+
+  // Recuperación local en segundo plano: re-extrae previews de la carpeta RAW, verifica
+  // identidad por fingerprint y rellena la caché. Extraída a función para poder invocarla
+  // tanto al abrir el proyecto como al detectar que otro dispositivo terminó su procesado.
+  const startOwnRecovery = (b, fps) => {
+    if (!b) return;
+    setRecovering(true);
+    (async () => {
+      try {
+        const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
+        setSync(s);
+        if (s.folderOk && s.folderHandle) await recoverFromFolder(s.folderHandle, fps);
+      } catch (e) {
+        setError(e?.message || "No se pudo recuperar la carpeta");
+      } finally {
+        setRecovering(false);
+      }
+    })();
   };
 
   // ---- Modo proyecto: abre un proyecto existente, comprueba RAW + catálogo, recupera
@@ -142,30 +162,28 @@ export default function Seleccion() {
         // Sin caché todavía: las fotos llegarán tras la recuperación en segundo plano.
       }
 
-      // Solo re-procesa la carpeta si NO había previews cacheadas (primera reapertura tras
-      // crear el proyecto). Si ya están en caché, el proyecto abre al instante sin tocar
-      // los archivos. La recuperación rellena la caché para que la próxima vez sea instantánea.
-      if (b && !instantShown) {
-        setRecovering(true);
-        (async () => {
-          try {
-            const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
-            setSync(s);
-            if (s.folderOk && s.folderHandle) await recoverFromFolder(s.folderHandle, fps);
-          } catch (e) {
-            setError(e?.message || "No se pudo recuperar la carpeta");
-          } finally {
-            setRecovering(false);
-          }
-        })();
-      } else if (b) {
+      if (instantShown) {
         // Con caché: solo comprueba el estado de sincronización (🟢/🔴) sin re-procesar nada.
-        (async () => {
-          try {
-            const s = await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref);
-            setSync(s);
-          } catch {}
-        })();
+        if (b) {
+          (async () => {
+            try { setSync(await checkSync(b.catalog_handle_ref, b.raw_folder_handle_ref)); } catch {}
+          })();
+        }
+      } else {
+        // Sin caché local: comprueba si el mismo usuario ya está procesando este proyecto
+        // en otro dispositivo (p. ej. el equipo de sobremesa). Si es así, sigue su progreso
+        // en vivo en lugar de empezar una recuperación propia que duplicaría el trabajo.
+        let remote = null;
+        try {
+          const jobs = await base44.entities.ProjectProcessingJob.filter({ project_id: projectId, status: "processing" }, "-updated_date", 1);
+          remote = jobs?.[0];
+        } catch {}
+        if (remote && Date.now() - new Date(remote.updated_date).getTime() < 120000) {
+          setRemoteJob(remote);
+        } else {
+          if (remote) { try { await base44.entities.ProjectProcessingJob.update(remote.id, { status: "failed" }); } catch {} }
+          startOwnRecovery(b, fps);
+        }
       }
     } catch (e) {
       setError(e?.message || "No se pudo cargar el proyecto");
@@ -183,19 +201,47 @@ export default function Seleccion() {
     const count = raws.length;
     const total = count * 2;
     setRecoverPct(0);
+    // Publica el progreso en la base de datos para que el mismo usuario pueda verlo
+    // desde otro dispositivo (p. ej. el móvil) mientras este equipo procesa la carpeta.
+    let jobId = null;
+    let lastPct = -1;
+    let lastPhase = null;
+    const syncJob = async (progress, phase, status = "processing") => {
+      try {
+        if (!jobId) {
+          const j = await base44.entities.ProjectProcessingJob.create({ project_id: projectId, status, progress, phase });
+          jobId = j.id;
+        } else if (status !== "processing" || Math.abs(progress - lastPct) >= 4 || phase !== lastPhase) {
+          await base44.entities.ProjectProcessingJob.update(jobId, { status, progress, phase });
+        }
+        lastPct = progress; lastPhase = phase;
+      } catch {}
+    };
+    await syncJob(0, "extracting");
     const items = raws.map((f, i) => ({ id: String(i), file: f }));
-    const withPreview = await extractPreviews(items, (d) => {
-      if (total) setRecoverPct(Math.round((d / total) * 100));
-    });
-    const withFp = [];
-    for (let i = 0; i < withPreview.length; i++) {
-      const p = withPreview[i];
-      withFp.push({ ...p, fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }) });
-      if (total) setRecoverPct(Math.round(((count + i + 1) / total) * 100));
+    let withPreview = [];
+    let withFp = [];
+    try {
+      withPreview = await extractPreviews(items, (d) => {
+        const pct = total ? Math.round((d / total) * 100) : 0;
+        setRecoverPct(pct);
+        syncJob(pct, "extracting");
+      });
+      for (let i = 0; i < withPreview.length; i++) {
+        const p = withPreview[i];
+        withFp.push({ ...p, fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }) });
+        const pct = total ? Math.round(((count + i + 1) / total) * 100) : 0;
+        setRecoverPct(pct);
+        syncJob(pct, "fingerprinting");
+      }
+      setRecoverPct(100);
+      await syncJob(100, "fingerprinting", "completed");
+      // Rellena la caché de previews para que el próximo apertura del proyecto sea instantáneo.
+      cachePreviews(withFp.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl }))).catch(() => {});
+    } catch (e) {
+      await syncJob(lastPct, lastPhase, "failed");
+      throw e;
     }
-    setRecoverPct(100);
-    // Rellena la caché de previews para que el próximo apertura del proyecto sea instantáneo.
-    cachePreviews(withFp.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl }))).catch(() => {});
     const candidates = withFp.map((p) => ({
       id: p.id, file: p.file, preview: p.preview, cameraInfo: p.cameraInfo,
       asShotWB: p.asShotWB, skinStats: p.skinStats, captureTime: p.captureTime,
@@ -340,6 +386,31 @@ export default function Seleccion() {
     loadProject();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // Sondea el trabajo de procesado que otro dispositivo del mismo usuario está ejecutando:
+  // actualiza el progreso en vivo y, cuando termina (o caduca), arranca la recuperación local.
+  useEffect(() => {
+    if (!remoteJob) return;
+    let alive = true;
+    const poll = async () => {
+      try {
+        const jobs = await base44.entities.ProjectProcessingJob.filter({ project_id: projectId, status: "processing" }, "-updated_date", 1);
+        const j = jobs?.[0];
+        if (!alive) return;
+        if (!j) { setRemoteJob(null); startOwnRecovery(binding, fingerprints); return; }
+        if (Date.now() - new Date(j.updated_date).getTime() > 120000) {
+          try { await base44.entities.ProjectProcessingJob.update(j.id, { status: "failed" }); } catch {}
+          setRemoteJob(null);
+          startOwnRecovery(binding, fingerprints);
+          return;
+        }
+        setRemoteJob(j);
+      } catch {}
+    };
+    const t = setInterval(poll, 3000);
+    return () => { alive = false; clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remoteJob?.id]);
 
   const toggleColor = (key) => {
     setColorFilter((prev) => {
@@ -590,7 +661,22 @@ export default function Seleccion() {
         </div>
       )}
 
-      {projectId && !projectLoading && !showProjectSummary && stage !== "review" && !recovering && (
+      {projectId && !projectLoading && !showProjectSummary && stage !== "review" && remoteJob && (
+        <div className="mt-6 rounded-xl border border-zinc-800 bg-[#141414] p-4 space-y-2">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-zinc-400">
+              Procesando en otro dispositivo… {remoteJob.phase === "fingerprinting" ? "calculando huellas" : "leyendo previews"}
+            </span>
+            <span className="font-mono font-semibold tabular-nums text-zinc-200">{remoteJob.progress || 0}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800">
+            <div className="h-full rounded-full bg-white transition-all duration-300" style={{ width: `${remoteJob.progress || 0}%` }} />
+          </div>
+          <p className="text-xs text-zinc-500">Sigue el proceso en tiempo real. Al terminar, las fotos se cargarán aquí automáticamente.</p>
+        </div>
+      )}
+
+      {projectId && !projectLoading && !showProjectSummary && stage !== "review" && !recovering && !remoteJob && (
         <div className="mt-6 rounded-xl border border-dashed border-zinc-700 bg-[#141414] p-10 text-center">
           <p className="text-sm text-zinc-400">
             {sync && !sync.folderOk ? "No se pudieron recuperar las fotos: la carpeta RAW no está accesible." : "Sin fotos recuperadas."}

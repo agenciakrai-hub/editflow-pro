@@ -1,0 +1,47 @@
+{
+  "name": "ProjectProcessingJob",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Proyecto cuyo procesado (extracci\u00f3n de previews + huellas) est\u00e1 en curso."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "processing",
+        "completed",
+        "failed"
+      ],
+      "default": "processing",
+      "description": "Estado del trabajo: processing mientras se extraen previews y calculan huellas; completed al terminar; failed si se interrumpe."
+    },
+    "progress": {
+      "type": "number",
+      "default": 0,
+      "description": "Porcentaje de avance (0-100) del procesado, actualizado por el dispositivo que procesa."
+    },
+    "phase": {
+      "type": "string",
+      "default": "extracting",
+      "description": "Fase actual: extracting (leyendo previews embebidas) o fingerprinting (calculando huellas)."
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}
