@@ -6,8 +6,9 @@ import { useToast } from "@/components/ui/use-toast";
 
 // Mis Proyectos — lista los proyectos guardados del usuario (solo metadatos, sin previews
 // ni RAW). Cada usuario ve únicamente los proyectos que él creó (RLS por created_by_id).
-// Al reabrir un proyecto ves qué quedó seleccionado; las imágenes hay que recargarlas para
-// volver a procesar (los RAW nunca se almacenan).
+// Los contadores (fotos / seleccionadas / top) se calculan SIEMPRE a partir de los
+// ProjectPhotoFingerprint reales — la misma fuente de verdad que usa DetalleProyectoPage —
+// nunca del campo legado `photos_metadata` del Project, que el flujo actual no rellena.
 
 const STATUS_STYLE = {
   TOP_PICK: { dot: "bg-amber-400", text: "text-amber-400", label: "Top pick" },
@@ -23,6 +24,7 @@ function statusInfo(s) {
 export default function MisProyectos() {
   const { toast } = useToast();
   const [projects, setProjects] = useState(null);
+  const [fpByProject, setFpByProject] = useState({});
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState({});
   const [deleting, setDeleting] = useState(null);
@@ -31,9 +33,21 @@ export default function MisProyectos() {
     setLoading(true);
     try {
       const list = await base44.entities.Project.list("-created_date", 50);
-      setProjects(Array.isArray(list) ? list : []);
+      const projectList = Array.isArray(list) ? list : [];
+      setProjects(projectList);
+
+      // Una sola consulta para todos los proyectos del usuario (RLS ya restringe a los
+      // suyos), agrupada por project_id — evita N consultas y mantiene la misma fuente de
+      // verdad que DetalleProyectoPage.
+      const fps = await base44.entities.ProjectPhotoFingerprint.list("-created_date", 2000);
+      const grouped = {};
+      for (const f of Array.isArray(fps) ? fps : []) {
+        (grouped[f.project_id] ||= []).push(f);
+      }
+      setFpByProject(grouped);
     } catch (e) {
       setProjects([]);
+      setFpByProject({});
       toast({ title: "No se pudieron cargar los proyectos", description: e?.message, variant: "destructive" });
     }
     setLoading(false);
@@ -89,9 +103,9 @@ export default function MisProyectos() {
       {!loading && projects && projects.length > 0 && (
         <div className="space-y-3">
           {projects.map((p) => {
-            const meta = Array.isArray(p.photos_metadata) ? p.photos_metadata : [];
-            const selCount = meta.filter((m) => m.status === "TOP_PICK" || m.status === "SELECT").length;
-            const topCount = meta.filter((m) => m.status === "TOP_PICK").length;
+            const fps = fpByProject[p.id] || [];
+            const selCount = fps.filter((f) => f.selection_status === "TOP_PICK" || f.selection_status === "SELECT").length;
+            const topCount = fps.filter((f) => f.selection_status === "TOP_PICK").length;
             const isOpen = !!open[p.id];
             return (
               <div key={p.id} className="rounded-xl border border-border bg-card overflow-hidden">
@@ -101,7 +115,7 @@ export default function MisProyectos() {
                     <div>
                       <p className="text-sm font-semibold">{p.title}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {p.event_date || "Sin fecha"} · {meta.length} fotos · {selCount} seleccionadas · {topCount} top
+                        {p.event_date || "Sin fecha"} · {fps.length} fotos · {selCount} seleccionadas · {topCount} top
                       </p>
                     </div>
                   </button>
@@ -118,19 +132,19 @@ export default function MisProyectos() {
                 </div>
                 {isOpen && (
                   <div className="border-t border-border">
-                    {meta.length === 0 ? (
+                    {fps.length === 0 ? (
                       <p className="p-4 text-xs text-muted-foreground">Sin fotos registradas.</p>
                     ) : (
                       <ul className="divide-y divide-border max-h-80 overflow-auto">
-                        {meta.map((m, i) => {
-                          const s = statusInfo(m.status);
+                        {fps.map((f) => {
+                          const s = statusInfo(f.selection_status);
                           return (
-                            <li key={i} className="flex items-center justify-between px-4 py-2 text-sm">
-                              <span className="truncate font-mono text-xs text-foreground/80">{m.filename}</span>
+                            <li key={f.id} className="flex items-center justify-between px-4 py-2 text-sm">
+                              <span className="truncate font-mono text-xs text-foreground/80">{f.filename}</span>
                               <span className="flex items-center gap-2">
-                                {!!m.rating && (
+                                {!!f.rating && (
                                   <span className="flex items-center gap-0.5 text-amber-500">
-                                    <Star className="h-3 w-3 fill-amber-500" /> {m.rating}
+                                    <Star className="h-3 w-3 fill-amber-500" /> {f.rating}
                                   </span>
                                 )}
                                 <span className={`flex items-center gap-1.5 text-xs ${s.text}`}>
