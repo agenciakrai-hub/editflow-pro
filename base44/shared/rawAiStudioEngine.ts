@@ -167,10 +167,9 @@ export const LLM_BATCH_SIZE = 6;
 // (rawAiStudioAnalyze), donde las previews llegan como base64. El flujo cloud ya tiene
 // las URLs subidas desde el navegador y pasa previewFileUrl directamente.
 //
-// NVIDIA: cuando el proveedor activo para `task` es nvidia, devuelve data URLs
-// (data:image/jpeg;base64,...) directamente, SIN llamar a UploadFile. El adaptador
-// NVIDIA acepta data URLs en image_url (OpenAI vision). Qwen/Base44 siguen usando
-// UploadFile para obtener file_url http — su flujo no cambia.
+// NVIDIA/Gemini: cuando el proveedor activo para `task` es nvidia o gemini, devuelve
+// data URLs (data:image/jpeg;base64,...) directamente, SIN llamar a UploadFile. Base44
+// sigue usando UploadFile para obtener file_url http — su flujo no cambia.
 export async function uploadPreviewBatch(
   base44: any,
   previews: Array<{ id: string; previewBase64: string }>,

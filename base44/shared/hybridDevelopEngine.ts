@@ -8,9 +8,9 @@
 // Arquitectura: N fotos → K representantes (K << N) → 1 llamada IA → perfil → adaptación
 // local por foto. Económico: consumo de IA proporcional al nº de escenas, no al total.
 //
-// Proveedor: el activo para "ajustes" (gemini/qwen/nvidia). Las previews van como data
-// URLs directas — sin UploadFile ni InvokeLLM Base44 (los créditos de integración pueden
-// estar agotados). Si no hay proveedor externo configurado, se fuerza Qwen.
+// Proveedor: el activo para "ajustes" (gemini/nvidia). Las previews van como data URLs
+// directas — sin UploadFile ni InvokeLLM Base44 (no consume créditos de integración).
+// Si no hay proveedor externo configurado, se fuerza Gemini (gratis).
 
 import { invokeVision, activeProviderFor } from "./aiProviderAdapter.ts";
 
@@ -84,10 +84,10 @@ Devuelve un JSON con las claves exactas listadas, mas "analysis" (frase corta de
   properties.confidence_score = { type: "number" };
   const schema = { type: "object", properties, required: [...PROFILE_KEYS, "analysis", "confidence_score"] };
 
-  // Proveedor externo segun active_ajustes; si no hay ninguno, se fuerza Qwen. Nunca cae
-  // a Base44/InvokeLLM: las previews van como data URLs directas.
+  // Proveedor externo segun active_ajustes; si no hay ninguno, se fuerza Gemini (gratis,
+  // sin creditos). Nunca cae a Base44/InvokeLLM: las previews van como data URLs directas.
   let provider = await activeProviderFor(base44, "ajustes");
-  if (provider !== "qwen" && provider !== "gemini" && provider !== "nvidia") provider = "qwen";
+  if (provider !== "gemini" && provider !== "nvidia") provider = "gemini";
   const result = await invokeVision(base44, {
     task: "ajustes",
     prompt,

@@ -8,18 +8,20 @@
 //
 // Proveedores:
 //   - base44 : InvokeLLM (integracion Base44). Requiere UploadFile para generar file_urls.
-//   - qwen   : HTTP OpenAI-compatible a DashScope. file_urls http (via UploadFile).
+//   - gemini : HTTP directo a Google Gemini (generativelanguage). Previews como data URLs
+//              inline (sin UploadFile ni InvokeLLM). Tier gratuito: no consume creditos
+//              de integracion Base44.
 //   - nvidia : HTTP OpenAI-compatible a NVIDIA NIM (minimaxai/minimax-m3). Recibe file_urls
 //              que pueden ser data:image/jpeg;base64,... (el motor evita UploadFile para
-//              esta ruta) o URLs http. Mismo contrato de salida que qwen/base44.
+//              esta ruta) o URLs http. Mismo contrato de salida que gemini/base44.
 //
-// Secret: QWEN_API_KEY y NVIDIA_API_KEY se leen via base44:runtime secrets.get(). Solo
+// Secret: NVIDIA_API_KEY y GEMINI_API_KEY se leen via base44:runtime secrets.get(). Solo
 // existen en backend; nunca se devuelven al frontend ni se persisten en entidades.
 
 import { secrets } from "base44:runtime";
 
 export type AiTask = "seleccion" | "ajustes";
-export type Provider = "qwen" | "base44" | "nvidia" | "gemini" | "none";
+export type Provider = "base44" | "nvidia" | "gemini" | "none";
 
 const NVIDIA_DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_DEFAULT_MODEL = "minimaxai/minimax-m3";
@@ -52,7 +54,9 @@ export async function activeProviderFor(base44: any, task: AiTask): Promise<Prov
   const cfg = await getConfig(base44);
   if (!cfg) return "base44";
   const field: any = task === "seleccion" ? cfg.active_seleccion : cfg.active_ajustes;
-  if (field === "qwen" || field === "base44" || field === "nvidia" || field === "gemini" || field === "none") return field;
+  // Migracion: Qwen (Alibaba) eliminado → se redirige a Gemini (gratis, sin creditos).
+  if (field === "qwen") return "gemini";
+  if (field === "base44" || field === "nvidia" || field === "gemini" || field === "none") return field;
   return "base44";
 }
 
@@ -93,37 +97,6 @@ async function fetchWithTimeout(url: string, opts: any, ms: number = PROVIDER_TI
   } finally {
     clearTimeout(timer);
   }
-}
-
-async function callQwen(cfg: any, opts: InvokeOpts): Promise<any> {
-  const apiKey = secrets.get("QWEN_API_KEY");
-  if (!apiKey) {
-    throw new Error("QWEN_API_KEY no configurado (introúcelo en Base44 → Settings → Secrets)");
-  }
-  const base = String(cfg?.qwen_endpoint || "").trim().replace(/\/+$/, "");
-  if (!base) throw new Error("qwen_endpoint no configurado");
-  const endpoint = base + "/chat/completions";
-  const model = cfg?.qwen_model || "qwen3-vl-plus";
-  const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
-
-  const content: any[] = [{ type: "text", text: opts.prompt }];
-  for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
-
-  const body = { model, messages: [{ role: "user", content }], stream: false };
-  const t0 = Date.now();
-  const res = await fetchWithTimeout(endpoint, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const latency = Date.now() - t0;
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`Qwen HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
-  }
-  const data: any = await res.json();
-  const contentOut = data?.choices?.[0]?.message?.content;
-  return parseJsonContent(contentOut);
 }
 
 // NVIDIA NIM (OpenAI-compatible). Recibe file_urls que pueden ser data URLs
@@ -249,11 +222,6 @@ async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
 // Punto unico de ruteo. SIN FAILOVER.
 export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
   const provider = opts.forceProvider || (await activeProviderFor(base44, opts.task));
-  if (provider === "qwen") {
-    const cfg = await getConfig(base44);
-    console.log(`[aiProvider] task=${opts.task} provider=qwen model=${cfg?.qwen_model || "qwen3-vl-plus"}`);
-    return callQwen(cfg, opts);
-  }
   if (provider === "gemini") {
     const cfg = await getConfig(base44);
     console.log(`[aiProvider] task=${opts.task} provider=gemini model=${cfg?.gemini_model || GEMINI_DEFAULT_MODEL}`);
@@ -275,52 +243,6 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
     file_urls: opts.file_urls,
     response_json_schema: opts.response_json_schema,
   });
-}
-
-// Ping minimo a Qwen (sin fotos). Devuelve trazabilidad. NUNCA devuelve la API Key.
-export async function testConnection(base44: any): Promise<any> {
-  const cfg = await getConfig(base44);
-  const apiKey = secrets.get("QWEN_API_KEY");
-  const keyPresent = !!apiKey;
-  const base = String(cfg?.qwen_endpoint || "").trim().replace(/\/+$/, "");
-  const endpoint = base ? base + "/chat/completions" : "";
-  const model = cfg?.qwen_model || "qwen3-vl-plus";
-
-  if (!keyPresent) {
-    return { provider: "qwen", ok: false, reason: "QWEN_API_KEY no configurado", key_present: false, model, endpoint, via_invoke_llm: false };
-  }
-  if (!base) {
-    return { provider: "qwen", ok: false, reason: "qwen_endpoint no configurado", key_present: true, model, endpoint: "", via_invoke_llm: false };
-  }
-
-  const t0 = Date.now();
-  try {
-    const res = await fetchWithTimeout(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
-        stream: false,
-      }),
-    });
-    const latency = Date.now() - t0;
-    let bodyText = "";
-    try { bodyText = await res.text(); } catch {}
-    return {
-      provider: "qwen",
-      model,
-      endpoint,
-      http_status: res.status,
-      latency_ms: latency,
-      ok: res.ok,
-      key_present: true,
-      via_invoke_llm: false,
-      response_preview: bodyText.slice(0, 200),
-    };
-  } catch (e: any) {
-    return { provider: "qwen", model, endpoint, ok: false, reason: e.message, latency_ms: Date.now() - t0, key_present: true, via_invoke_llm: false };
-  }
 }
 
 // Ping minimo a NVIDIA (sin fotos). Devuelve trazabilidad. NUNCA devuelve la API Key.
@@ -427,14 +349,6 @@ export async function testNvidiaVision(base44: any, previewBase64: string): Prom
     };
   } catch (e: any) {
     return { provider: "nvidia", model, endpoint, ok: false, reason: e.message, latency_ms: Date.now() - t0, key_present: true, via_invoke_llm: false, via_upload_file: false };
-  }
-}
-
-export function isQwenKeyPresent(): boolean {
-  try {
-    return !!secrets.get("QWEN_API_KEY");
-  } catch {
-    return false;
   }
 }
 
