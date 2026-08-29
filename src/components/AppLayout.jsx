@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound, FolderHeart, Brain } from "lucide-react";
+import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound, FolderHeart, Brain, History } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const navItems = [
@@ -9,6 +9,7 @@ const navItems = [
   { to: "/cerebro", label: "Cerebro", icon: Brain },
   { to: "/preset-xmp", label: "Preset XMP", icon: FileImage },
   { to: "/lightroom", label: "Lightroom", icon: Plug },
+  { to: "/historial", label: "Historial", icon: History },
   { to: "/suscripcion", label: "Suscripción", icon: CreditCard },
   { to: "/admin", label: "Administración", icon: Users },
   { to: "/estilos", label: "Creador de estilos", icon: Wand2 },
