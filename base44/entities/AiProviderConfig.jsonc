@@ -2,6 +2,19 @@
   "name": "AiProviderConfig",
   "type": "object",
   "properties": {
+    "qwen_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "qwen_endpoint": {
+      "type": "string",
+      "description": "URL base OpenAI-compatible de DashScope (sin /chat/completions). Ej: https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    },
+    "qwen_model": {
+      "type": "string",
+      "default": "qwen3-vl-plus",
+      "description": "Modelo multimodal de Qwen que admite entrada de imagenes. Ej: qwen3-vl-plus, qwen-vl-max."
+    },
     "nvidia_enabled": {
       "type": "boolean",
       "default": false,
@@ -20,7 +33,7 @@
     "gemini_enabled": {
       "type": "boolean",
       "default": false,
-      "description": "Proveedor Google Gemini (generativelanguage). Enruta previews como data URLs directas, sin UploadFile ni InvokeLLM. Tier gratuito: no consume creditos de integracion Base44."
+      "description": "Proveedor Google Gemini (generativelanguage). Enruta previews como data URLs directas, sin UploadFile ni InvokeLLM."
     },
     "gemini_endpoint": {
       "type": "string",
@@ -39,6 +52,7 @@
     "active_seleccion": {
       "type": "string",
       "enum": [
+        "qwen",
         "base44",
         "nvidia",
         "gemini",
@@ -49,6 +63,7 @@
     "active_ajustes": {
       "type": "string",
       "enum": [
+        "qwen",
         "base44",
         "nvidia",
         "gemini",

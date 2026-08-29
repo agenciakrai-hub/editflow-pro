@@ -1,15 +1,17 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import {
+  testConnection,
   testNvidiaConnection,
   testNvidiaVision,
   testGeminiConnection,
+  isQwenKeyPresent,
   isNvidiaKeyPresent,
   isGeminiKeyPresent,
 } from '../../shared/aiProviderAdapter.ts';
 
 // Proveedores IA — admin-only. Acciones: get-config, save-config, test-connection,
 // test-nvidia-vision. NUNCA devuelve las API Keys (solo *_key_present boolean). Las
-// claves viven como secrets de Base44 (NVIDIA_API_KEY, GEMINI_API_KEY) y se leen solo
+// claves viven como secrets de Base44 (QWEN_API_KEY, NVIDIA_API_KEY) y se leen solo
 // en backend.
 
 const NVIDIA_DEFAULT_ENDPOINT = 'https://integrate.api.nvidia.com/v1';
@@ -32,6 +34,7 @@ export default async function(req: Request): Promise<Response> {
       const cfg = Array.isArray(list) && list.length ? list[0] : null;
       return Response.json({
         config: cfg,
+        qwen_key_present: isQwenKeyPresent(),
         nvidia_key_present: isNvidiaKeyPresent(),
         gemini_key_present: isGeminiKeyPresent(),
       });
@@ -39,6 +42,9 @@ export default async function(req: Request): Promise<Response> {
 
     if (action === 'save-config') {
       const patch = {
+        qwen_enabled: !!body.qwen_enabled,
+        qwen_endpoint: typeof body.qwen_endpoint === 'string' ? body.qwen_endpoint.trim() : '',
+        qwen_model: typeof body.qwen_model === 'string' && body.qwen_model.trim() ? body.qwen_model.trim() : 'qwen3-vl-plus',
         nvidia_enabled: body.nvidia_enabled !== false,
         nvidia_endpoint: typeof body.nvidia_endpoint === 'string' && body.nvidia_endpoint.trim() ? body.nvidia_endpoint.trim() : NVIDIA_DEFAULT_ENDPOINT,
         nvidia_model: typeof body.nvidia_model === 'string' && body.nvidia_model.trim() ? body.nvidia_model.trim() : NVIDIA_DEFAULT_MODEL,
@@ -46,8 +52,8 @@ export default async function(req: Request): Promise<Response> {
         gemini_endpoint: typeof body.gemini_endpoint === 'string' && body.gemini_endpoint.trim() ? body.gemini_endpoint.trim() : GEMINI_DEFAULT_ENDPOINT,
         gemini_model: typeof body.gemini_model === 'string' && body.gemini_model.trim() ? body.gemini_model.trim() : GEMINI_DEFAULT_MODEL,
         base44_enabled: body.base44_enabled !== false,
-        active_seleccion: ['base44', 'nvidia', 'gemini', 'none'].includes(body.active_seleccion) ? body.active_seleccion : 'base44',
-        active_ajustes: ['base44', 'nvidia', 'gemini', 'none'].includes(body.active_ajustes) ? body.active_ajustes : 'base44',
+        active_seleccion: ['qwen', 'base44', 'nvidia', 'gemini', 'none'].includes(body.active_seleccion) ? body.active_seleccion : 'base44',
+        active_ajustes: ['qwen', 'base44', 'nvidia', 'gemini', 'none'].includes(body.active_ajustes) ? body.active_ajustes : 'base44',
       };
       const list = await base44.asServiceRole.entities.AiProviderConfig.list();
       const existing = Array.isArray(list) && list.length ? list[0] : null;
@@ -59,6 +65,7 @@ export default async function(req: Request): Promise<Response> {
       }
       return Response.json({
         config: cfg,
+        qwen_key_present: isQwenKeyPresent(),
         nvidia_key_present: isNvidiaKeyPresent(),
         gemini_key_present: isGeminiKeyPresent(),
       });
@@ -68,7 +75,8 @@ export default async function(req: Request): Promise<Response> {
       const provider = body?.provider;
       let result;
       if (provider === 'nvidia') result = await testNvidiaConnection(base44);
-      else result = await testGeminiConnection(base44);
+      else if (provider === 'gemini') result = await testGeminiConnection(base44);
+      else result = await testConnection(base44);
       return Response.json(result);
     }
 

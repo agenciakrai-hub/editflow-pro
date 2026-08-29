@@ -63,7 +63,7 @@ export default function AjustesIA() {
   const [config, setConfig] = useState(defaultParameterConfig());
   const [precisionMode, setPrecisionMode] = useState("balanced");
   const [treatment, setTreatment] = useState("auto"); // "auto" | "color" | "monochrome"
-  const [mode, setMode] = useState("free"); // "free" (GRATIS, determinista) | "visual" (IA Gemini)
+  const [mode, setMode] = useState("free"); // "free" (GRATIS, determinista) | "qwen" (IA)
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [results, setResults] = useState([]);
@@ -282,7 +282,7 @@ export default function AjustesIA() {
           needsCorrection = !!pro?.needsCorrection;
           allZero = !!pro?.allZero;
         } else {
-          // Revelado IA Visual (Gemini): la IA analiza el CONTENIDO de cada foto (sujeto,
+          // Revelado IA Visual (Qwen): la IA analiza el CONTENIDO de cada foto (sujeto,
           // luz, color, mood) y decide los ajustes de revelado completos, no solo el
           // histograma. Se filtra a los parámetros activados.
           const data = await developPhotosVisual({
@@ -572,10 +572,10 @@ export default function AjustesIA() {
               </button>
               <button
                 type="button"
-                onClick={() => setMode("visual")}
-                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "visual" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+                onClick={() => setMode("qwen")}
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "qwen" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
               >
-                Revelado IA Visual — Gemini
+                Revelado IA Visual — Qwen
               </button>
               <button
                 type="button"
@@ -776,9 +776,9 @@ export default function AjustesIA() {
                 )}
               </>
             )}
-            {mode === "visual" && (
+            {mode === "qwen" && (
               <>
-                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado IA Visual — Gemini</p>
+                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado IA Visual — Qwen</p>
                 <p className="mt-1 text-xs text-zinc-500">
                   La IA analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado
                   completos, no solo el histograma. Selecciona qué parámetros aplicar; la preferencia es un

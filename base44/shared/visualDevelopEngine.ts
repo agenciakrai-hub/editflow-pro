@@ -2,9 +2,9 @@
 // Lightroom analizando el CONTENIDO de la foto (sujeto, luz, color, mood), no solo el
 // histograma. Sin baseline técnico acotado: la IA devuelve valores absolutos profesionales.
 //
-// Proveedor: Google Gemini (tier gratuito) vía invokeVision. Las previews se envían como
-// data URLs (data:image/jpeg;base64,...) directamente a la API de Gemini — SIN UploadFile
-// (no consume créditos de integración Base44) ni subida de red adicional.
+// Proveedor: Qwen (qwen3-vl-plus) vía invokeVision. Las previews se envían como data URLs
+// (data:image/jpeg;base64,...) directamente al endpoint OpenAI-compatible de DashScope —
+// SIN UploadFile (evita el bloqueo de créditos de integración Base44 y la subida de red).
 //
 // No toca balance de blancos con valores absolutos fuera de rango, curvas, HSL, calibración
 // de cámara ni máscaras — solo los sliders de revelado listados. La preferencia del
@@ -73,11 +73,11 @@ Devuelve un JSON con las claves exactas listadas mas confidence_score.`;
     required: [...VISUAL_PARAM_KEYS, "confidence_score"],
   };
 
-  // Proveedor externo segun active_ajustes (gemini/nvidia); si la config no tiene uno
-  // externo, se fuerza Gemini (gratis, sin creditos de integracion). Nunca cae a
-  // Base44/InvokeLLM: la preview va como data URL directa.
+  // Proveedor externo segun active_ajustes (qwen/gemini/nvidia); si la config no tiene uno
+  // externo, se fuerza Qwen. Nunca cae a Base44/InvokeLLM: la preview va como data URL
+  // directa y los creditos de integracion pueden estar agotados.
   let provider = await activeProviderFor(base44, "ajustes");
-  if (provider !== "gemini" && provider !== "nvidia") provider = "gemini";
+  if (provider !== "qwen" && provider !== "gemini" && provider !== "nvidia") provider = "qwen";
   const result = await invokeVision(base44, {
     task: "ajustes",
     prompt,
