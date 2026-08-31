@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Loader2, CheckCircle2, XCircle, Save, Upload, Cpu, Plus, Trash2, Power, RefreshCw } from "lucide-react";
+import { KeyRound, Loader2, CheckCircle2, XCircle, Save, Upload, Cpu, Plus, Trash2, Power, RefreshCw, Search } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 import { isRawFile, extractRawPreview } from "@/lib/rawaistudio/rawPreviewReader";
@@ -46,6 +46,7 @@ export default function AIProviders() {
   const [adding, setAdding] = useState(false);
   const [addResult, setAddResult] = useState(null);
   const [retestingId, setRetestingId] = useState(null);
+  const [detecting, setDetecting] = useState(false);
 
   const loadCustom = async () => {
     try {
@@ -163,8 +164,8 @@ export default function AIProviders() {
   // Añadir modelo personalizado: comprueba la conexion con las credenciales introducidas
   // y, si todo ok, lo guarda. Si falla, no se guarda y se muestra el motivo.
   const addCustom = async () => {
-    if (!newModel.name.trim() || !newModel.endpoint.trim() || !newModel.model.trim() || !newModel.api_key.trim()) {
-      setAddResult({ ok: false, reason: "Completa nombre, endpoint, modelo y API key" });
+    if (!newModel.name.trim() || !newModel.endpoint.trim() || !newModel.api_key.trim()) {
+      setAddResult({ ok: false, reason: "Completa nombre, endpoint y API key" });
       return;
     }
     setAdding(true); setAddResult(null);
@@ -223,6 +224,29 @@ export default function AIProviders() {
     }
   };
 
+  // Detecta el mejor modelo de vision del proveedor consultando su endpoint /models.
+  // Rellena el campo "Modelo" del formulario con el detectado.
+  const detectModel = async () => {
+    if (!newModel.endpoint.trim() || !newModel.api_key.trim()) {
+      setAddResult({ ok: false, reason: "Introduce endpoint y API key para detectar el modelo" });
+      return;
+    }
+    setDetecting(true); setAddResult(null);
+    try {
+      const res = await base44.functions.invoke("ai-providers", { action: "detect-model", endpoint: newModel.endpoint, api_key: newModel.api_key });
+      const data = res?.data ?? res;
+      if (data.ok) {
+        setNewModel((m) => ({ ...m, model: data.model }));
+        toast({ title: "Modelo detectado", description: `${data.model} (${data.total} modelos disponibles)` });
+      } else {
+        setAddResult({ ok: false, reason: data.reason || "No se pudo detectar" });
+      }
+    } catch (e) {
+      setAddResult({ ok: false, reason: e.message });
+    }
+    setDetecting(false);
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -264,9 +288,16 @@ export default function AIProviders() {
               placeholder="Mi proveedor" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Modelo</label>
-            <input value={newModel.model} onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
-              placeholder="gpt-4o, qwen-vl-max…" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+            <label className="text-sm font-medium">Modelo <span className="text-muted-foreground font-normal">(opcional)</span></label>
+            <div className="flex gap-2">
+              <input value={newModel.model} onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
+                placeholder="Auto — la app detecta el mejor" className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm" />
+              <button onClick={detectModel} disabled={detecting || !newModel.endpoint || !newModel.api_key}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-medium hover:bg-secondary disabled:opacity-40">
+                {detecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />} Detectar
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">Si lo dejas vacío, la app consulta el proveedor y elige el mejor modelo de visión disponible (proveedores con miles de modelos).</p>
           </div>
         </div>
         <div className="space-y-1.5">
@@ -459,7 +490,7 @@ export default function AIProviders() {
           </select>
         </div>
         <p className="text-xs text-muted-foreground">
-          Los modelos personalizados se usan como proveedores OpenAI-compatible de visión: reciben los mismos prompts y esquemas que Qwen tanto en Selección como en Ajustes, así saben qué hacer en cada herramienta. Sin failover.
+          Los modelos personalizados se usan como proveedores OpenAI-compatible de visión: reciben los mismos prompts y esquemas que Qwen tanto en Selección como en Ajustes, así saben qué hacer en cada herramienta. <span className="font-medium text-foreground">Failover activo:</span> si el proveedor seleccionado falla, la app reintenta automáticamente con el siguiente proveedor habilitado (no se detiene el proceso).
         </p>
       </div>
 

@@ -247,8 +247,8 @@ async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
 }
 
 // Punto unico de ruteo. SIN FAILOVER.
-export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
-  const provider = opts.forceProvider || (await activeProviderFor(base44, opts.task));
+// Despacha a un proveedor concreto. Sin failover (lo gestiona invokeVision).
+async function callProvider(base44: any, provider: string, opts: InvokeOpts): Promise<any> {
   if (typeof provider === "string" && provider.startsWith("custom:")) {
     const id = provider.slice("custom:".length);
     console.log(`[aiProvider] task=${opts.task} provider=custom:${id}`);
@@ -280,6 +280,50 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
     file_urls: opts.file_urls,
     response_json_schema: opts.response_json_schema,
   });
+}
+
+// Cadena de failover: el proveedor activo primero, luego el resto de proveedores
+// habilitados (personalizados + integrados), y base44 como ultimo recurso. Si el
+// proveedor activo falla, el proceso no se detiene: reintenta con el siguiente.
+async function buildFailoverChain(base44: any, active: string): Promise<string[]> {
+  const chain: string[] = [];
+  const push = (p: string) => { if (p && p !== "none" && !chain.includes(p)) chain.push(p); };
+  push(active);
+  try {
+    const customs = await base44.asServiceRole.entities.CustomAiProvider.list();
+    for (const c of (Array.isArray(customs) ? customs : [])) {
+      if (c.enabled !== false) push(`custom:${c.id}`);
+    }
+  } catch {}
+  const cfg = await getConfig(base44);
+  if (cfg) {
+    if (cfg.qwen_enabled) push("qwen");
+    if (cfg.gemini_enabled) push("gemini");
+    if (cfg.nvidia_enabled) push("nvidia");
+  }
+  push("base44"); // ultimo recurso: siempre disponible
+  return chain;
+}
+
+// Punto unico de ruteo. CON FAILOVER: si el proveedor activo falla, reintenta con el
+// siguiente proveedor habilitado de la cadena. Si se fuerza un proveedor
+// (forceProvider), no hay failover (comportamiento original garantizado).
+export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
+  if (opts.forceProvider) {
+    return callProvider(base44, opts.forceProvider, opts);
+  }
+  const active = await activeProviderFor(base44, opts.task);
+  const chain = await buildFailoverChain(base44, active);
+  let lastErr: any;
+  for (const provider of chain) {
+    try {
+      return await callProvider(base44, provider, opts);
+    } catch (e: any) {
+      console.log(`[aiProvider] failover: provider=${provider} fallo: ${e?.message || e}`);
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error(`Todos los proveedores fallaron para task=${opts.task}`);
 }
 
 // Proveedor personalizado (OpenAI-compatible). Lee el registro CustomAiProvider por id y
@@ -355,6 +399,59 @@ export async function testCustomConnection(base44: any, creds: { endpoint?: stri
     return { provider: "custom", name, model, endpoint, http_status: res.status, latency_ms: latency, ok: res.ok, key_present: true, via_invoke_llm: false, response_preview: bodyText.slice(0, 200) };
   } catch (e: any) {
     return { provider: "custom", name, model, endpoint, ok: false, reason: e.message, latency_ms: Date.now() - t0, key_present: true, via_invoke_llm: false };
+  }
+}
+
+// Heuristica para elegir el mejor modelo de vision de un proveedor OpenAI-compatible que
+// expone muchos modelos (OpenRouter, OpenAI, etc.). Prioriza modelos conocidos por su
+// calidad en vision; si ninguno coincide, devuelve el primero disponible.
+const VISION_MODEL_PRIORITY = [
+  "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4o-mini",
+  "claude-3-opus", "claude-3.5-sonnet", "claude-3-sonnet", "claude-3-haiku",
+  "qwen-vl-max", "qwen2.5-vl", "qwen3-vl", "qwen2-vl",
+  "gemini-2", "gemini-1.5",
+  "llava", "vision", "vl", "visual", "image",
+];
+export function pickBestVisionModel(models: string[]): string {
+  const lower = models.map((m) => String(m || "").toLowerCase());
+  for (const kw of VISION_MODEL_PRIORITY) {
+    const idx = lower.findIndex((m) => m.includes(kw));
+    if (idx >= 0) return models[idx];
+  }
+  return models[0] || "";
+}
+
+// Detecta el mejor modelo de vision de un proveedor consultando su endpoint /models.
+// Acepta credenciales sueltas (para probar antes de guardar) o el id de un proveedor
+// almacenado. NUNCA devuelve la API Key.
+export async function detectBestModel(base44: any, creds: { endpoint?: string; api_key?: string; id?: string }): Promise<any> {
+  let endpoint = "", apiKey = "";
+  if (creds.id) {
+    const rec = await base44.asServiceRole.entities.CustomAiProvider.get(creds.id).catch(() => null);
+    if (!rec) return { ok: false, reason: "Proveedor no encontrado" };
+    endpoint = String(rec.endpoint || "").trim().replace(/\/+$/, "");
+    apiKey = String(rec.api_key || "");
+  } else {
+    endpoint = String(creds.endpoint || "").trim().replace(/\/+$/, "");
+    apiKey = String(creds.api_key || "");
+  }
+  if (!endpoint) return { ok: false, reason: "Endpoint requerido" };
+  if (!apiKey) return { ok: false, reason: "API key requerida" };
+  const url = endpoint + "/models";
+  const t0 = Date.now();
+  try {
+    const res = await fetchWithTimeout(url, { method: "GET", headers: { Authorization: `Bearer ${apiKey}` } }, 30000);
+    const latency = Date.now() - t0;
+    let bodyText = "";
+    try { bodyText = await res.text(); } catch {}
+    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}: ${bodyText.slice(0, 200)}`, endpoint: url, latency_ms: latency };
+    const data = JSON.parse(bodyText);
+    const models = (data?.data || data?.models || []).map((m: any) => m.id || m.name || "").filter(Boolean);
+    if (!models.length) return { ok: false, reason: "El proveedor no devolvio modelos", endpoint: url, latency_ms: latency };
+    const best = pickBestVisionModel(models);
+    return { ok: true, model: best, total: models.length, endpoint: url, latency_ms: latency };
+  } catch (e: any) {
+    return { ok: false, reason: e.message, endpoint: url, latency_ms: Date.now() - t0 };
   }
 }
 

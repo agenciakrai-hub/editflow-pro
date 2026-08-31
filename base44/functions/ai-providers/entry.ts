@@ -5,6 +5,7 @@ import {
   testNvidiaVision,
   testGeminiConnection,
   testCustomConnection,
+  detectBestModel,
   isQwenKeyPresent,
   isNvidiaKeyPresent,
   isGeminiKeyPresent,
@@ -97,13 +98,27 @@ export default async function(req: Request): Promise<Response> {
       return Response.json({ providers: masked });
     }
 
+    if (action === 'detect-model') {
+      const res = await detectBestModel(base44, { endpoint: body.endpoint, api_key: body.api_key, id: body.id });
+      return Response.json(res);
+    }
+
     if (action === 'add-custom') {
       const name = typeof body.name === 'string' ? body.name.trim() : '';
       const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : '';
-      const model = typeof body.model === 'string' ? body.model.trim() : '';
+      let model = typeof body.model === 'string' ? body.model.trim() : '';
       const apiKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
-      if (!name || !endpoint || !model || !apiKey) {
-        return Response.json({ ok: false, reason: 'Faltan datos (nombre, endpoint, modelo o API key)' }, { status: 400 });
+      if (!name || !endpoint || !apiKey) {
+        return Response.json({ ok: false, reason: 'Faltan datos (nombre, endpoint o API key)' }, { status: 400 });
+      }
+      // Si no se especifica modelo (o "auto"), detectar el mejor modelo de vision del
+      // proveedor consultando su endpoint /models (proveedores con miles de modelos).
+      if (!model || model.toLowerCase() === 'auto') {
+        const det = await detectBestModel(base44, { endpoint, api_key: apiKey });
+        if (!det.ok) {
+          return Response.json({ ok: false, reason: `No se pudo detectar un modelo: ${det.reason}` });
+        }
+        model = det.model;
       }
       const test = await testCustomConnection(base44, { endpoint, model, api_key: apiKey });
       if (!test.ok) {
@@ -113,7 +128,7 @@ export default async function(req: Request): Promise<Response> {
         name, endpoint, model, api_key: apiKey, enabled: true,
         last_ok: true, last_reason: "", last_checked: new Date().toISOString(),
       });
-      return Response.json({ ok: true, id: rec.id, name: rec.name, http_status: test.http_status, latency_ms: test.latency_ms });
+      return Response.json({ ok: true, id: rec.id, name: rec.name, model: rec.model, http_status: test.http_status, latency_ms: test.latency_ms });
     }
 
     if (action === 'retest-custom') {
