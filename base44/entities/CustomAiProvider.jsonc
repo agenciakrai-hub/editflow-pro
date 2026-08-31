@@ -1,0 +1,64 @@
+{
+  "name": "CustomAiProvider",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nombre del proveedor personalizado."
+    },
+    "endpoint": {
+      "type": "string",
+      "description": "URL base OpenAI-compatible (sin /chat/completions)."
+    },
+    "model": {
+      "type": "string",
+      "description": "Identificador del modelo de vision (OpenAI-compatible)."
+    },
+    "api_key": {
+      "type": "string",
+      "description": "API key del proveedor. Se almacena en la base de datos (acceso admin-only via RLS)."
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true
+    },
+    "last_ok": {
+      "type": "boolean",
+      "default": false
+    },
+    "last_reason": {
+      "type": "string"
+    },
+    "last_checked": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "name",
+    "endpoint",
+    "model"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

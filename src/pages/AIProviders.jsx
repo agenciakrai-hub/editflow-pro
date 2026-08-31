@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Loader2, CheckCircle2, XCircle, Save, Upload, Cpu } from "lucide-react";
+import { KeyRound, Loader2, CheckCircle2, XCircle, Save, Upload, Cpu, Plus, Trash2, Power, RefreshCw } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 import { isRawFile, extractRawPreview } from "@/lib/rawaistudio/rawPreviewReader";
 
-// Proveedores IA — admin. Configura proveedor/endpoint/modelo y el activo por herramienta.
-// Las API Keys NO se introducen aqui: viven como secrets de Base44 (QWEN_API_KEY,
-// NVIDIA_API_KEY). Esta pagina solo muestra si estan presentes (badge) y permite probar
-// la conexion (ping + prueba de vision con 1 preview base64 para NVIDIA).
+// Proveedores IA — admin. Los proveedores integrados (Qwen, NVIDIA, Gemini) usan API Keys
+// gestionadas como secrets de Base44. Los modelos personalizados se añaden AQUI con su
+// URL + API key + modelo y se almacenan en la entidad CustomAiProvider (admin-only). Al
+// comprobarse correctamente, aparecen como opcion en "Proveedor activo" para Seleccion y
+// Ajustes, y se enrutan como proveedores OpenAI-compatible (mismo contrato que Qwen).
 export default function AIProviders() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,23 @@ export default function AIProviders() {
   const [testingVision, setTestingVision] = useState(false);
   const [visionResult, setVisionResult] = useState(null);
 
+  // Modelos personalizados
+  const [customProviders, setCustomProviders] = useState([]);
+  const [newModel, setNewModel] = useState({ name: "", endpoint: "", model: "", api_key: "" });
+  const [adding, setAdding] = useState(false);
+  const [addResult, setAddResult] = useState(null);
+  const [retestingId, setRetestingId] = useState(null);
+
+  const loadCustom = async () => {
+    try {
+      const res = await base44.functions.invoke("ai-providers", { action: "list-custom" });
+      const data = res?.data ?? res;
+      setCustomProviders(Array.isArray(data?.providers) ? data.providers : []);
+    } catch {
+      setCustomProviders([]);
+    }
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -62,6 +80,7 @@ export default function AIProviders() {
           active_ajustes: data.config.active_ajustes || "base44",
         });
       }
+      await loadCustom();
     } catch (e) {
       toast({ title: "Error al cargar", description: e.message, variant: "destructive" });
     }
@@ -86,42 +105,32 @@ export default function AIProviders() {
   };
 
   const testQwen = async () => {
-    setTestingQwen(true);
-    setQwenResult(null);
+    setTestingQwen(true); setQwenResult(null);
     try {
       const res = await base44.functions.invoke("ai-providers", { action: "test-connection", provider: "qwen" });
       setQwenResult(res?.data ?? res);
-    } catch (e) {
-      setQwenResult({ ok: false, reason: e.message });
-    }
+    } catch (e) { setQwenResult({ ok: false, reason: e.message }); }
     setTestingQwen(false);
   };
 
   const testNvidia = async () => {
-    setTestingNvidia(true);
-    setNvidiaResult(null);
+    setTestingNvidia(true); setNvidiaResult(null);
     try {
       const res = await base44.functions.invoke("ai-providers", { action: "test-connection", provider: "nvidia" });
       setNvidiaResult(res?.data ?? res);
-    } catch (e) {
-      setNvidiaResult({ ok: false, reason: e.message });
-    }
+    } catch (e) { setNvidiaResult({ ok: false, reason: e.message }); }
     setTestingNvidia(false);
   };
 
   const testGemini = async () => {
-    setTestingGemini(true);
-    setGeminiResult(null);
+    setTestingGemini(true); setGeminiResult(null);
     try {
       const res = await base44.functions.invoke("ai-providers", { action: "test-connection", provider: "gemini" });
       setGeminiResult(res?.data ?? res);
-    } catch (e) {
-      setGeminiResult({ ok: false, reason: e.message });
-    }
+    } catch (e) { setGeminiResult({ ok: false, reason: e.message }); }
     setTestingGemini(false);
   };
 
-  // Lee un File como base64 puro (sin prefijo data:) para enviarlo a test-nvidia-vision.
   const fileToBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -135,11 +144,8 @@ export default function AIProviders() {
 
   const testVision = async () => {
     if (!visionFile) return;
-    setTestingVision(true);
-    setVisionResult(null);
+    setTestingVision(true); setVisionResult(null);
     try {
-      // Si es RAW, extrae su preview JPEG embebida (un .CR3/.DNG en bruto no lo
-      // decodifica el VLM de NVIDIA). Si ya es JPEG/PNG, se envia tal cual.
       let previewBase64;
       if (isRawFile(visionFile.name)) {
         const prev = await extractRawPreview(visionFile, 800);
@@ -150,10 +156,71 @@ export default function AIProviders() {
       }
       const res = await base44.functions.invoke("ai-providers", { action: "test-nvidia-vision", preview_base64: previewBase64 });
       setVisionResult(res?.data ?? res);
-    } catch (e) {
-      setVisionResult({ ok: false, reason: e.message });
-    }
+    } catch (e) { setVisionResult({ ok: false, reason: e.message }); }
     setTestingVision(false);
+  };
+
+  // Añadir modelo personalizado: comprueba la conexion con las credenciales introducidas
+  // y, si todo ok, lo guarda. Si falla, no se guarda y se muestra el motivo.
+  const addCustom = async () => {
+    if (!newModel.name.trim() || !newModel.endpoint.trim() || !newModel.model.trim() || !newModel.api_key.trim()) {
+      setAddResult({ ok: false, reason: "Completa nombre, endpoint, modelo y API key" });
+      return;
+    }
+    setAdding(true); setAddResult(null);
+    try {
+      const res = await base44.functions.invoke("ai-providers", { action: "add-custom", ...newModel });
+      const data = res?.data ?? res;
+      if (data.ok) {
+        toast({ title: "Modelo añadido", description: `${newModel.name} verificado y guardado` });
+        setNewModel({ name: "", endpoint: "", model: "", api_key: "" });
+        await loadCustom();
+      } else {
+        setAddResult({ ok: false, reason: data.reason || "No se pudo verificar" });
+      }
+    } catch (e) {
+      setAddResult({ ok: false, reason: e.message });
+    }
+    setAdding(false);
+  };
+
+  const retestCustom = async (id) => {
+    setRetestingId(id);
+    try {
+      const res = await base44.functions.invoke("ai-providers", { action: "retest-custom", id });
+      const data = res?.data ?? res;
+      await loadCustom();
+      toast({ title: data.ok ? "Conexión correcta" : "Falló la conexión", description: data.ok ? undefined : data.reason, variant: data.ok ? "default" : "destructive" });
+    } catch (e) {
+      toast({ title: "Falló la conexión", description: e.message, variant: "destructive" });
+    }
+    setRetestingId(null);
+  };
+
+  const toggleCustom = async (id, enabled) => {
+    try {
+      await base44.functions.invoke("ai-providers", { action: "toggle-custom", id, enabled });
+      await loadCustom();
+    } catch (e) {
+      toast({ title: "No se pudo cambiar", description: e.message, variant: "destructive" });
+    }
+  };
+
+  const deleteCustom = async (id, name) => {
+    if (!window.confirm(`¿Eliminar el modelo "${name}"? Si está activo en Selección o Ajustes, vuelve a Base44.`)) return;
+    try {
+      await base44.functions.invoke("ai-providers", { action: "delete-custom", id });
+      // Si estaba seleccionado, revertir a base44
+      setForm((f) => ({
+        ...f,
+        active_seleccion: f.active_seleccion === `custom:${id}` ? "base44" : f.active_seleccion,
+        active_ajustes: f.active_ajustes === `custom:${id}` ? "base44" : f.active_ajustes,
+      }));
+      await loadCustom();
+      toast({ title: "Modelo eliminado" });
+    } catch (e) {
+      toast({ title: "No se pudo eliminar", description: e.message, variant: "destructive" });
+    }
   };
 
   if (loading) {
@@ -164,6 +231,8 @@ export default function AIProviders() {
     );
   }
 
+  const customOptions = customProviders.map((p) => ({ value: `custom:${p.id}`, label: p.name }));
+
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
@@ -171,7 +240,7 @@ export default function AIProviders() {
           <KeyRound className="h-6 w-6 text-accent" /> Proveedores IA
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Configura el proveedor de IA para Selección y Ajustes IA. Las API Keys se gestionan como secrets de Base44, nunca en esta página.
+          Configura los proveedores de IA para Selección y Ajustes. Los proveedores integrados (Qwen, NVIDIA, Gemini) usan API Keys como secrets de Base44. Los modelos personalizados se añaden aquí con su URL y API key.
         </p>
       </div>
 
@@ -179,27 +248,95 @@ export default function AIProviders() {
       <KeyBadge present={nvidiaKeyPresent} name="NVIDIA (NVIDIA_API_KEY)" />
       <KeyBadge present={geminiKeyPresent} name="Gemini (GEMINI_API_KEY)" />
 
+      {/* Añadir modelo personalizado */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <div className="flex items-center gap-2">
+          <Plus className="h-4 w-4 text-accent" />
+          <p className="text-sm font-semibold">Añadir modelo IA</p>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Introduce la URL base (OpenAI-compatible, sin /chat/completions), el modelo de visión, la API key y pulsa Comprobar. Si la conexión es correcta, se guarda y aparece como proveedor activo seleccionable.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Nombre</label>
+            <input value={newModel.name} onChange={(e) => setNewModel({ ...newModel, name: e.target.value })}
+              placeholder="Mi proveedor" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Modelo</label>
+            <input value={newModel.model} onChange={(e) => setNewModel({ ...newModel, model: e.target.value })}
+              placeholder="gpt-4o, qwen-vl-max…" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">Endpoint base</label>
+          <input value={newModel.endpoint} onChange={(e) => setNewModel({ ...newModel, endpoint: e.target.value })}
+            placeholder="https://api.openai.com/v1" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">API key</label>
+          <input type="password" value={newModel.api_key} onChange={(e) => setNewModel({ ...newModel, api_key: e.target.value })}
+            placeholder="sk-…" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+        </div>
+        <button onClick={addCustom} disabled={adding}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40">
+          {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Comprobar y guardar
+        </button>
+        {addResult && (
+          <div className={`rounded-lg border p-3 text-xs ${addResult.ok ? "border-emerald-300 bg-emerald-50 text-emerald-700" : "border-red-300 bg-red-50 text-red-700"}`}>
+            {addResult.ok ? "Conexión correcta. Modelo guardado." : `No se pudo verificar: ${addResult.reason}`}
+          </div>
+        )}
+
+        {/* Lista de modelos personalizados */}
+        {customProviders.length > 0 && (
+          <div className="space-y-2 pt-2">
+            <p className="text-sm font-medium">Modelos añadidos</p>
+            {customProviders.map((p) => (
+              <div key={p.id} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium">{p.name}</p>
+                    {p.last_ok
+                      ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700"><CheckCircle2 className="h-3 w-3" /> OK</span>
+                      : <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700"><XCircle className="h-3 w-3" /> Error</span>}
+                    {!p.enabled && <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">Deshabilitado</span>}
+                  </div>
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">{p.model} · {p.endpoint}</p>
+                  {p.last_reason && <p className="mt-0.5 truncate text-xs text-red-500">{p.last_reason}</p>}
+                </div>
+                <button onClick={() => retestCustom(p.id)} disabled={retestingId === p.id}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40">
+                  {retestingId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Comprobar
+                </button>
+                <button onClick={() => toggleCustom(p.id, !p.enabled)} title={p.enabled ? "Deshabilitar" : "Habilitar"}
+                  className="inline-flex items-center justify-center rounded-md border border-border p-1.5 hover:bg-secondary">
+                  <Power className={`h-3.5 w-3.5 ${p.enabled ? "text-emerald-600" : "text-muted-foreground"}`} />
+                </button>
+                <button onClick={() => deleteCustom(p.id, p.name)} title="Eliminar"
+                  className="inline-flex items-center justify-center rounded-md border border-border p-1.5 text-destructive hover:bg-destructive/5">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Qwen */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         <p className="text-sm font-semibold">Qwen — DashScope (OpenAI-compatible)</p>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Endpoint base</label>
-          <input
-            value={form.qwen_endpoint}
-            onChange={(e) => setForm({ ...form, qwen_endpoint: e.target.value })}
-            placeholder="https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
+          <input value={form.qwen_endpoint} onChange={(e) => setForm({ ...form, qwen_endpoint: e.target.value })}
+            placeholder="https://dashscope-intl.aliyuncs.com/compatible-mode/v1" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
           <p className="text-xs text-muted-foreground">URL base OpenAI-compatible de DashScope (sin /chat/completions).</p>
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Modelo de visión</label>
-          <input
-            value={form.qwen_model}
-            onChange={(e) => setForm({ ...form, qwen_model: e.target.value })}
-            placeholder="qwen3-vl-plus"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
+          <input value={form.qwen_model} onChange={(e) => setForm({ ...form, qwen_model: e.target.value })}
+            placeholder="qwen3-vl-plus" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
           <p className="text-xs text-muted-foreground">Debe admitir entrada multimodal de imágenes (ej. qwen3-vl-plus, qwen-vl-max).</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
@@ -223,22 +360,14 @@ export default function AIProviders() {
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Endpoint base</label>
-          <input
-            value={form.nvidia_endpoint}
-            onChange={(e) => setForm({ ...form, nvidia_endpoint: e.target.value })}
-            placeholder="https://integrate.api.nvidia.com/v1"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
+          <input value={form.nvidia_endpoint} onChange={(e) => setForm({ ...form, nvidia_endpoint: e.target.value })}
+            placeholder="https://integrate.api.nvidia.com/v1" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
           <p className="text-xs text-muted-foreground">URL base OpenAI-compatible de NVIDIA NIM (sin /chat/completions).</p>
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Modelo de visión</label>
-          <input
-            value={form.nvidia_model}
-            onChange={(e) => setForm({ ...form, nvidia_model: e.target.value })}
-            placeholder="minimaxai/minimax-m3"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
+          <input value={form.nvidia_model} onChange={(e) => setForm({ ...form, nvidia_model: e.target.value })}
+            placeholder="minimaxai/minimax-m3" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
           <p className="text-xs text-muted-foreground">VLM multimodal de NVIDIA NIM (ej. minimaxai/minimax-m3).</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
@@ -276,22 +405,14 @@ export default function AIProviders() {
         <p className="text-sm font-semibold">Google Gemini (generativelanguage)</p>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Endpoint base</label>
-          <input
-            value={form.gemini_endpoint}
-            onChange={(e) => setForm({ ...form, gemini_endpoint: e.target.value })}
-            placeholder="https://generativelanguage.googleapis.com/v1beta"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
+          <input value={form.gemini_endpoint} onChange={(e) => setForm({ ...form, gemini_endpoint: e.target.value })}
+            placeholder="https://generativelanguage.googleapis.com/v1beta" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
           <p className="text-xs text-muted-foreground">URL base de la API Gemini (sin /models/...).</p>
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Modelo de visión</label>
-          <input
-            value={form.gemini_model}
-            onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
-            placeholder="gemini-3.6-flash"
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
+          <input value={form.gemini_model} onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
+            placeholder="gemini-3.6-flash" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
           <p className="text-xs text-muted-foreground">Modelo multimodal de Gemini (ej. gemini-3.6-flash, gemini-2.5-flash).</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
@@ -321,6 +442,7 @@ export default function AIProviders() {
             <option value="qwen">Qwen</option>
             <option value="gemini">Gemini</option>
             <option value="nvidia">NVIDIA MiniMax M3</option>
+            {customOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             <option value="none">Ninguno</option>
           </select>
         </div>
@@ -332,11 +454,12 @@ export default function AIProviders() {
             <option value="qwen">Qwen</option>
             <option value="gemini">Gemini</option>
             <option value="nvidia">NVIDIA MiniMax M3</option>
+            {customOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             <option value="none">Ninguno</option>
           </select>
         </div>
         <p className="text-xs text-muted-foreground">
-          Sin failover: si el proveedor activo falla, se devuelve error (no se consume InvokeLLM ni se cambia de proveedor). El proveedor por defecto sigue siendo Base44.
+          Los modelos personalizados se usan como proveedores OpenAI-compatible de visión: reciben los mismos prompts y esquemas que Qwen tanto en Selección como en Ajustes, así saben qué hacer en cada herramienta. Sin failover.
         </p>
       </div>
 

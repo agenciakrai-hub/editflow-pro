@@ -48,11 +48,11 @@ async function getConfig(base44: any): Promise<any> {
   }
 }
 
-export async function activeProviderFor(base44: any, task: AiTask): Promise<Provider> {
+export async function activeProviderFor(base44: any, task: AiTask): Promise<string> {
   const cfg = await getConfig(base44);
   if (!cfg) return "base44";
   const field: any = task === "seleccion" ? cfg.active_seleccion : cfg.active_ajustes;
-  if (field === "qwen" || field === "base44" || field === "nvidia" || field === "gemini" || field === "none") return field;
+  if (typeof field === "string" && field.trim()) return field.trim();
   return "base44";
 }
 
@@ -249,6 +249,11 @@ async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
 // Punto unico de ruteo. SIN FAILOVER.
 export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
   const provider = opts.forceProvider || (await activeProviderFor(base44, opts.task));
+  if (typeof provider === "string" && provider.startsWith("custom:")) {
+    const id = provider.slice("custom:".length);
+    console.log(`[aiProvider] task=${opts.task} provider=custom:${id}`);
+    return callCustom(base44, id, opts);
+  }
   if (provider === "qwen") {
     const cfg = await getConfig(base44);
     console.log(`[aiProvider] task=${opts.task} provider=qwen model=${cfg?.qwen_model || "qwen3-vl-plus"}`);
@@ -275,6 +280,82 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
     file_urls: opts.file_urls,
     response_json_schema: opts.response_json_schema,
   });
+}
+
+// Proveedor personalizado (OpenAI-compatible). Lee el registro CustomAiProvider por id y
+// lo llama como endpoint /chat/completions con image_url — mismo contrato que Qwen.
+// Sirve para seleccion y para ajustes: el motor correspondiente construye el prompt y el
+// schema segun la task; el proveedor solo responde. SIN FAILOVER.
+async function callCustom(base44: any, customId: string, opts: InvokeOpts): Promise<any> {
+  let rec: any = null;
+  try {
+    rec = await base44.asServiceRole.entities.CustomAiProvider.get(customId);
+  } catch {
+    throw new Error(`Proveedor personalizado no encontrado: ${customId}`);
+  }
+  if (!rec) throw new Error(`Proveedor personalizado no encontrado: ${customId}`);
+  if (rec.enabled === false) throw new Error(`Proveedor personalizado deshabilitado: ${rec.name}`);
+  const apiKey = String(rec.api_key || "");
+  if (!apiKey) throw new Error(`El proveedor "${rec.name}" no tiene API key configurada`);
+  const base = String(rec.endpoint || "").trim().replace(/\/+$/, "");
+  if (!base) throw new Error(`El proveedor "${rec.name}" no tiene endpoint configurado`);
+  const endpoint = base + "/chat/completions";
+  const model = String(rec.model || "").trim();
+  if (!model) throw new Error(`El proveedor "${rec.name}" no tiene modelo configurado`);
+  const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
+  const content: any[] = [{ type: "text", text: opts.prompt }];
+  for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
+  const body = { model, messages: [{ role: "user", content }], stream: false };
+  const t0 = Date.now();
+  const res = await fetchWithTimeout(endpoint, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const latency = Date.now() - t0;
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    throw new Error(`[${rec.name}] HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
+  }
+  const data: any = await res.json();
+  const contentOut = data?.choices?.[0]?.message?.content;
+  return parseJsonContent(contentOut);
+}
+
+// Ping minimo a un proveedor personalizado (OpenAI-compatible). Acepta credenciales sueltas
+// (para probar antes de guardar) o el id de un proveedor ya almacenado. NUNCA devuelve la API Key.
+export async function testCustomConnection(base44: any, creds: { endpoint?: string; model?: string; api_key?: string; id?: string }): Promise<any> {
+  let endpoint = "", model = "", apiKey = "", name = "custom";
+  if (creds.id) {
+    const rec = await base44.asServiceRole.entities.CustomAiProvider.get(creds.id).catch(() => null);
+    if (!rec) return { provider: "custom", ok: false, reason: "Proveedor no encontrado", key_present: false, via_invoke_llm: false };
+    endpoint = String(rec.endpoint || "").trim().replace(/\/+$/, "") + "/chat/completions";
+    model = String(rec.model || "").trim();
+    apiKey = String(rec.api_key || "");
+    name = rec.name || "custom";
+  } else {
+    const base = String(creds.endpoint || "").trim().replace(/\/+$/, "");
+    endpoint = base ? base + "/chat/completions" : "";
+    model = String(creds.model || "").trim();
+    apiKey = String(creds.api_key || "");
+  }
+  if (!apiKey) return { provider: "custom", ok: false, reason: "API key requerida", key_present: false, model, endpoint, via_invoke_llm: false };
+  if (!endpoint) return { provider: "custom", ok: false, reason: "Endpoint requerido", key_present: true, model, endpoint: "", via_invoke_llm: false };
+  if (!model) return { provider: "custom", ok: false, reason: "Modelo requerido", key_present: true, model: "", endpoint, via_invoke_llm: false };
+  const t0 = Date.now();
+  try {
+    const res = await fetchWithTimeout(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: [{ role: "user", content: [{ type: "text", text: "ping" }] }], stream: false, max_tokens: 8 }),
+    });
+    const latency = Date.now() - t0;
+    let bodyText = "";
+    try { bodyText = await res.text(); } catch {}
+    return { provider: "custom", name, model, endpoint, http_status: res.status, latency_ms: latency, ok: res.ok, key_present: true, via_invoke_llm: false, response_preview: bodyText.slice(0, 200) };
+  } catch (e: any) {
+    return { provider: "custom", name, model, endpoint, ok: false, reason: e.message, latency_ms: Date.now() - t0, key_present: true, via_invoke_llm: false };
+  }
 }
 
 // Ping minimo a Qwen (sin fotos). Devuelve trazabilidad. NUNCA devuelve la API Key.

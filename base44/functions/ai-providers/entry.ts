@@ -4,6 +4,7 @@ import {
   testNvidiaConnection,
   testNvidiaVision,
   testGeminiConnection,
+  testCustomConnection,
   isQwenKeyPresent,
   isNvidiaKeyPresent,
   isGeminiKeyPresent,
@@ -52,8 +53,8 @@ export default async function(req: Request): Promise<Response> {
         gemini_endpoint: typeof body.gemini_endpoint === 'string' && body.gemini_endpoint.trim() ? body.gemini_endpoint.trim() : GEMINI_DEFAULT_ENDPOINT,
         gemini_model: typeof body.gemini_model === 'string' && body.gemini_model.trim() ? body.gemini_model.trim() : GEMINI_DEFAULT_MODEL,
         base44_enabled: body.base44_enabled !== false,
-        active_seleccion: ['qwen', 'base44', 'nvidia', 'gemini', 'none'].includes(body.active_seleccion) ? body.active_seleccion : 'base44',
-        active_ajustes: ['qwen', 'base44', 'nvidia', 'gemini', 'none'].includes(body.active_ajustes) ? body.active_ajustes : 'base44',
+        active_seleccion: typeof body.active_seleccion === 'string' && body.active_seleccion.trim() ? body.active_seleccion.trim() : 'base44',
+        active_ajustes: typeof body.active_ajustes === 'string' && body.active_ajustes.trim() ? body.active_ajustes.trim() : 'base44',
       };
       const list = await base44.asServiceRole.entities.AiProviderConfig.list();
       const existing = Array.isArray(list) && list.length ? list[0] : null;
@@ -84,6 +85,60 @@ export default async function(req: Request): Promise<Response> {
       const previewBase64 = typeof body?.preview_base64 === 'string' ? body.preview_base64.trim() : '';
       const result = await testNvidiaVision(base44, previewBase64);
       return Response.json(result);
+    }
+
+    if (action === 'list-custom') {
+      const list = await base44.asServiceRole.entities.CustomAiProvider.list('-updated_date', 100);
+      const masked = (Array.isArray(list) ? list : []).map((r: any) => ({
+        id: r.id, name: r.name, endpoint: r.endpoint, model: r.model,
+        enabled: r.enabled !== false, last_ok: !!r.last_ok, last_reason: r.last_reason || "",
+        last_checked: r.last_checked || "", has_key: !!r.api_key, updated_date: r.updated_date,
+      }));
+      return Response.json({ providers: masked });
+    }
+
+    if (action === 'add-custom') {
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : '';
+      const model = typeof body.model === 'string' ? body.model.trim() : '';
+      const apiKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
+      if (!name || !endpoint || !model || !apiKey) {
+        return Response.json({ ok: false, reason: 'Faltan datos (nombre, endpoint, modelo o API key)' }, { status: 400 });
+      }
+      const test = await testCustomConnection(base44, { endpoint, model, api_key: apiKey });
+      if (!test.ok) {
+        return Response.json({ ok: false, reason: test.reason || `HTTP ${test.http_status}`, http_status: test.http_status, latency_ms: test.latency_ms });
+      }
+      const rec = await base44.asServiceRole.entities.CustomAiProvider.create({
+        name, endpoint, model, api_key: apiKey, enabled: true,
+        last_ok: true, last_reason: "", last_checked: new Date().toISOString(),
+      });
+      return Response.json({ ok: true, id: rec.id, name: rec.name, http_status: test.http_status, latency_ms: test.latency_ms });
+    }
+
+    if (action === 'retest-custom') {
+      const id = typeof body.id === 'string' ? body.id : '';
+      const test = await testCustomConnection(base44, { id });
+      try {
+        await base44.asServiceRole.entities.CustomAiProvider.update(id, {
+          last_ok: !!test.ok, last_reason: test.ok ? "" : (test.reason || `HTTP ${test.http_status}`),
+          last_checked: new Date().toISOString(),
+        });
+      } catch {}
+      return Response.json(test);
+    }
+
+    if (action === 'toggle-custom') {
+      const id = typeof body.id === 'string' ? body.id : '';
+      const enabled = !!body.enabled;
+      await base44.asServiceRole.entities.CustomAiProvider.update(id, { enabled });
+      return Response.json({ ok: true });
+    }
+
+    if (action === 'delete-custom') {
+      const id = typeof body.id === 'string' ? body.id : '';
+      await base44.asServiceRole.entities.CustomAiProvider.delete(id);
+      return Response.json({ ok: true });
     }
 
     return Response.json({ error: 'Unknown action' }, { status: 400 });

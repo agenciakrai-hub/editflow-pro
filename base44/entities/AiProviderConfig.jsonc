@@ -51,25 +51,13 @@
     },
     "active_seleccion": {
       "type": "string",
-      "enum": [
-        "qwen",
-        "base44",
-        "nvidia",
-        "gemini",
-        "none"
-      ],
-      "default": "base44"
+      "default": "base44",
+      "description": "Proveedor activo para Seleccion IA. Uno de: base44, qwen, nvidia, gemini, none, o custom:<id> para un proveedor personalizado."
     },
     "active_ajustes": {
       "type": "string",
-      "enum": [
-        "qwen",
-        "base44",
-        "nvidia",
-        "gemini",
-        "none"
-      ],
-      "default": "base44"
+      "default": "base44",
+      "description": "Proveedor activo para Ajustes IA. Uno de: base44, qwen, nvidia, gemini, none, o custom:<id> para un proveedor personalizado."
     }
   },
   "required": [
