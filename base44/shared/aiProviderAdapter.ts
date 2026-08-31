@@ -437,6 +437,9 @@ export async function detectBestModel(base44: any, creds: { endpoint?: string; a
   }
   if (!endpoint) return { ok: false, reason: "Endpoint requerido" };
   if (!apiKey) return { ok: false, reason: "API key requerida" };
+  if (!/^https?:\/\/.+/.test(endpoint)) {
+    return { ok: false, reason: "El endpoint no es una URL valida (debe empezar por http:// o https://). No es un email ni un nombre." };
+  }
   const url = endpoint + "/models";
   const t0 = Date.now();
   try {

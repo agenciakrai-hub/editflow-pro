@@ -168,6 +168,10 @@ export default function AIProviders() {
       setAddResult({ ok: false, reason: "Completa nombre, endpoint y API key" });
       return;
     }
+    if (!/^https?:\/\/.+/.test(newModel.endpoint.trim())) {
+      setAddResult({ ok: false, reason: "El endpoint debe ser una URL válida que empiece por http:// o https:// (ej. https://api.openai.com/v1). No es un email ni un nombre." });
+      return;
+    }
     setAdding(true); setAddResult(null);
     try {
       const res = await base44.functions.invoke("ai-providers", { action: "add-custom", ...newModel });
@@ -229,6 +233,10 @@ export default function AIProviders() {
   const detectModel = async () => {
     if (!newModel.endpoint.trim() || !newModel.api_key.trim()) {
       setAddResult({ ok: false, reason: "Introduce endpoint y API key para detectar el modelo" });
+      return;
+    }
+    if (!/^https?:\/\/.+/.test(newModel.endpoint.trim())) {
+      setAddResult({ ok: false, reason: "El endpoint debe ser una URL válida que empiece por http:// o https:// (ej. https://api.openai.com/v1)" });
       return;
     }
     setDetecting(true); setAddResult(null);
