@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { FolderOpen, Loader2, ArrowRight, Sparkles, RotateCcw, Download, Save } from "lucide-react";
+import { FolderOpen, Loader2, ArrowRight, Sparkles, RotateCcw, Download, Save, CheckSquare, Square, Trash2 } from "lucide-react";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews, buildPhotoFromSelection } from "@/lib/rawaistudio/smartSelectionEngine";
 import { selectBursts } from "@/lib/ai/aiGateway";
@@ -69,6 +69,9 @@ export default function Seleccion() {
   const [quickFilter, setQuickFilter] = useState(projectId ? "all" : "select");
   const [colorFilter, setColorFilter] = useState(new Set(COLOR_LABELS.map((c) => c.key)));
   const [minStars, setMinStars] = useState(0);
+  // Densidad del grid + selección múltiple para eliminar.
+  const [gridCols, setGridCols] = useState(6);
+  const [bulkIds, setBulkIds] = useState(new Set());
 
   const onPick = (list) => {
     const raws = Array.from(list || []).filter((f) => isRawFile(f.name) && !isHiddenOrSystemFile(f.name));
@@ -470,6 +473,19 @@ export default function Seleccion() {
   const reviewCount = photos.filter((p) => p.status === "REVIEW").length;
   const rejectCount = photos.filter((p) => p.status === "REJECT").length;
 
+  const allBulk = visible.length > 0 && bulkIds.size === visible.length;
+  const toggleBulk = (id) => setBulkIds((prev) => {
+    const n = new Set(prev);
+    if (n.has(id)) n.delete(id); else n.add(id);
+    return n;
+  });
+  const toggleBulkAll = () => setBulkIds(() => (allBulk ? new Set() : new Set(visible.map((p) => p.id))));
+  const deleteSelected = () => {
+    if (!bulkIds.size) return;
+    setPhotos((prev) => prev.filter((p) => !bulkIds.has(p.id)));
+    setBulkIds(new Set());
+  };
+
   const [downloadingSel, setDownloadingSel] = useState(false);
 
   // Guarda SOLO metadatos del proyecto en la base de datos (sin previews ni RAW).
@@ -587,84 +603,118 @@ export default function Seleccion() {
       {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
 
       {stage === "review" && !(projectId && showProjectSummary) && (
-        <section className="mt-6 rounded-xl border border-zinc-800 bg-[#141414] p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-medium">
-                {projectId
-                  ? `Revisión — ${photos.length} fotos del proyecto · ${editCount} en cola de edición`
-                  : `Revisión — ${selectedCount} / ${photos.length} seleccionadas por la IA`}
-              </p>
-              <p className="mt-1 text-xs text-zinc-400">
-                <span className="text-amber-400">{topCount} top picks</span> ·{" "}
-                <span className="text-emerald-400">{selectedCount} seleccionadas</span> ·{" "}
-                <span className="text-yellow-500">{reviewCount} a revisar</span> ·{" "}
-                <span className="text-red-400">{rejectCount} descartadas</span> ·{" "}
-                <span className="text-emerald-400">{editCount} en cola de edición</span>
-              </p>
-              {projectId && sync && (
-                <p className="mt-1 text-xs text-zinc-500">
-                  {sync.folderOk ? "🟢 Carpeta RAW sincronizada" : "🔴 Carpeta RAW no accesible"}
-                  {binding?.catalog_handle_ref && (sync.catalogOk ? " · 🟢 Catálogo sincronizado" : " · 🔴 Catálogo no accesible")}
+        <section className="mt-6 flex flex-col gap-4 lg:flex-row">
+          <div className="min-w-0 flex-1 rounded-xl border border-zinc-800 bg-[#141414] p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">
+                  {projectId
+                    ? `Revisión — ${photos.length} fotos del proyecto · ${editCount} en cola de edición`
+                    : `Revisión — ${selectedCount} / ${photos.length} seleccionadas por la IA`}
                 </p>
-              )}
-              {!projectId && selectionCoverage?.active && (
-                <p className="mt-2 text-xs text-amber-300">
-                  selection_coverage_fallback=true · {selectionCoverage.promotions.length} grupo(s) sin representante: {selectionCoverage.promotions.map((p) => `coverage_fallback_group=${p.group} coverage_fallback_photo=${p.photo} (${p.reason})`).join(" · ")}
+                <p className="mt-1 text-xs text-zinc-400">
+                  <span className="text-amber-400">{topCount} top picks</span> ·{" "}
+                  <span className="text-emerald-400">{selectedCount} seleccionadas</span> ·{" "}
+                  <span className="text-yellow-500">{reviewCount} a revisar</span> ·{" "}
+                  <span className="text-red-400">{rejectCount} descartadas</span> ·{" "}
+                  <span className="text-emerald-400">{editCount} en cola de edición</span>
                 </p>
-              )}
-              {!projectId && selectionFallback?.active && (
-                <p className="mt-2 text-xs text-amber-300">
-                  selection_fallback=true · fallback_reason={selectionFallback.reason} — la IA no devolvió TOP_PICK; se promocionó deterministamente la mejor candidata (sin nueva llamada IA, sin créditos).
-                </p>
+                {projectId && sync && (
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {sync.folderOk ? "🟢 Carpeta RAW sincronizada" : "🔴 Carpeta RAW no accesible"}
+                    {binding?.catalog_handle_ref && (sync.catalogOk ? " · 🟢 Catálogo sincronizado" : " · 🔴 Catálogo no accesible")}
+                  </p>
+                )}
+                {!projectId && selectionCoverage?.active && (
+                  <p className="mt-2 text-xs text-amber-300">
+                    selection_coverage_fallback=true · {selectionCoverage.promotions.length} grupo(s) sin representante: {selectionCoverage.promotions.map((p) => `coverage_fallback_group=${p.group} coverage_fallback_photo=${p.photo} (${p.reason})`).join(" · ")}
+                  </p>
+                )}
+                {!projectId && selectionFallback?.active && (
+                  <p className="mt-2 text-xs text-amber-300">
+                    selection_fallback=true · fallback_reason={selectionFallback.reason} — la IA no devolvió TOP_PICK; se promocionó deterministamente la mejor candidata (sin nueva llamada IA, sin créditos).
+                  </p>
+                )}
+              </div>
+              <button onClick={() => (projectId ? navigate("/proyectos") : reset())}
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">
+                <RotateCcw className="h-3.5 w-3.5" /> {projectId ? "Mis proyectos" : "Otra carpeta"}
+              </button>
+            </div>
+
+            {/* Toolbar: selección múltiple + eliminar + slider de tamaño */}
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button type="button" onClick={toggleBulkAll}
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800">
+                {allBulk ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+                {allBulk ? "Quitar selección" : "Seleccionar todas"}
+              </button>
+              <span className="text-xs text-zinc-500">{bulkIds.size} marcadas</span>
+              <button type="button" onClick={deleteSelected} disabled={!bulkIds.size}
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-zinc-800 disabled:opacity-40">
+                <Trash2 className="h-3.5 w-3.5" /> Eliminar
+              </button>
+              <div className="ml-auto flex items-center gap-2">
+                <span className="text-xs text-zinc-500">Tamaño</span>
+                <input type="range" min={2} max={12} value={gridCols} onChange={(e) => setGridCols(Number(e.target.value))} className="w-32 accent-white" />
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <ReviewFilters quickFilter={quickFilter} onQuickFilter={setQuickFilter} colorFilter={colorFilter}
+                onToggleColor={toggleColor} minStars={minStars} onMinStars={setMinStars} />
+            </div>
+
+            <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}>
+              {visible.map((p) => (
+                <PhotoCard key={p.id} photo={p} onUpdate={(patch) => update(p.id, patch)}
+                  bulkSelected={bulkIds.has(p.id)} onToggleBulk={() => toggleBulk(p.id)} />
+              ))}
+            </div>
+            {!visible.length && <p className="mt-6 text-sm text-zinc-500">No hay fotos con estos filtros.</p>}
+          </div>
+
+          {/* Barra lateral derecha: Guardar / Selección / Editar con sus rutas */}
+          <aside className="w-full shrink-0 lg:w-60">
+            <div className="space-y-3 rounded-xl border border-zinc-800 bg-[#141414] p-4">
+              <p className="text-xs font-semibold text-zinc-400">Acciones</p>
+              {projectId ? (
+                <>
+                  <button onClick={runProjectSelection} disabled={!photos.length || stage === "selecting"}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+                    {stage === "selecting" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    Selección
+                  </button>
+                  <button onClick={() => persistSelection({ showSummary: true })} disabled={!photos.length || savingSelection}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-white px-4 py-2.5 text-sm font-medium text-black disabled:opacity-40">
+                    {savingSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Guardar
+                  </button>
+                  <button onClick={goToEditFromProject} disabled={!editCount}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+                    Editar ({editCount}) <ArrowRight className="h-4 w-4" />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button onClick={downloadSelectionXmp} disabled={!photos.length || downloadingSel}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+                    {downloadingSel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                    Descargar XMP
+                  </button>
+                  <button onClick={guardarProyecto} disabled={!photos.length || guardando}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-white px-4 py-2.5 text-sm font-medium text-black disabled:opacity-40">
+                    {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Guardar
+                  </button>
+                  <button onClick={confirmEdit} disabled={!editCount}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-700 px-4 py-2.5 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
+                    Editar ({editCount}) <ArrowRight className="h-4 w-4" />
+                  </button>
+                </>
               )}
             </div>
-            <button onClick={() => (projectId ? navigate("/proyectos") : reset())}
-              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800">
-              <RotateCcw className="h-3.5 w-3.5" /> {projectId ? "Mis proyectos" : "Otra carpeta"}
-            </button>
-          </div>
-          <div className="mt-4">
-            <ReviewFilters quickFilter={quickFilter} onQuickFilter={setQuickFilter} colorFilter={colorFilter}
-              onToggleColor={toggleColor} minStars={minStars} onMinStars={setMinStars} />
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8">
-            {visible.map((p) => (<PhotoCard key={p.id} photo={p} onUpdate={(patch) => update(p.id, patch)} />))}
-          </div>
-          {!visible.length && <p className="mt-6 text-sm text-zinc-500">No hay fotos con estos filtros.</p>}
-          <div className="mt-6 flex flex-wrap items-center gap-3">
-            {projectId ? (
-              <>
-                <button onClick={runProjectSelection} disabled={!photos.length || stage === "selecting"}
-                  className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
-                  {stage === "selecting" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                  Seleccionar
-                </button>
-                <button onClick={() => persistSelection({ showSummary: true })} disabled={!photos.length || savingSelection}
-                  className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40">
-                  {savingSelection ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Guardar selección
-                </button>
-              </>
-            ) : (
-              <>
-                <button onClick={downloadSelectionXmp} disabled={!photos.length || downloadingSel}
-                  className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
-                  {downloadingSel ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-                  Descargar XMP de selección
-                </button>
-                <button onClick={guardarProyecto} disabled={!photos.length || guardando}
-                  className="inline-flex items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800 disabled:opacity-40">
-                  {guardando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  Guardar proyecto
-                </button>
-                <button onClick={confirmEdit} disabled={!editCount}
-                  className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-40">
-                  Confirmar cola de edición ({editCount}) <ArrowRight className="h-4 w-4" />
-                </button>
-              </>
-            )}
-          </div>
+          </aside>
         </section>
       )}
 
