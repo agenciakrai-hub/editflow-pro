@@ -87,32 +87,33 @@ function findOrientationInSegments(segments) {
   return 1;
 }
 
-// Escanea el buffer buscando la firma "Exif\0\0" (presente en el box Exif de CR3 y en
-// JPEG sueltos) y lee el tag Orientation (0x0112) de su IFD0. Más fiable para CR3 (y
-// otros contenedores ISO-BMFF) que buscar solo dentro de los APP1 del JPEG embebido,
-// que a veces no llevan su propio bloque de orientación.
+// Orientación EXIF robusta para cualquier RAW. En CR3/HEIF (contenedor ISO-BMFF) la
+// orientación NO va en una marca "Exif\0\0" como en los JPEG, sino en un box "Exif" cuyo
+// payload es una cabecera TIFF ("II*\0" little-endian o "MM\0*" big-endian) seguida del
+// IFD0. Escaneamos el inicio del buffer buscando esa cabecera TIFF y leemos el tag
+// Orientation (0x0112) de su IFD0. Esto cubre CR3, DNG, CR2, NEF, ARW y JPEG sueltos.
 function readExifOrientationFromSignature(bytes) {
-  const SIG = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00]; // "Exif\0\0"
-  const len = bytes.length;
+  const len = Math.min(bytes.length, 4 * 1024 * 1024); // el box Exif va al inicio
   for (let i = 0; i < len - 8; i++) {
-    if (
-      bytes[i] === SIG[0] && bytes[i + 1] === SIG[1] && bytes[i + 2] === SIG[2] &&
-      bytes[i + 3] === SIG[3] && bytes[i + 4] === SIG[4] && bytes[i + 5] === SIG[5]
-    ) {
-      const tiffStart = i + 6;
-      if (tiffStart + 8 > len) continue;
-      const little = bytes[tiffStart] === 0x49;
-      if (readU16(bytes, tiffStart + 2, little) !== 0x2a) continue;
-      const ifd0Offset = readU32(bytes, tiffStart + 4, little);
-      if (tiffStart + ifd0Offset + 2 > len) continue;
-      const numEntries = readU16(bytes, tiffStart + ifd0Offset, little);
-      for (let k = 0; k < numEntries; k++) {
-        const entryOffset = tiffStart + ifd0Offset + 2 + k * 12;
-        if (entryOffset + 12 > len) break;
-        if (readU16(bytes, entryOffset, little) === 0x0112) return readU16(bytes, entryOffset + 8, little);
+    const b0 = bytes[i], b1 = bytes[i + 1];
+    const little = b0 === 0x49 && b1 === 0x49; // "II" little-endian
+    const big = b0 === 0x4d && b1 === 0x4d;     // "MM" big-endian
+    if (!little && !big) continue;
+    if (readU16(bytes, i + 2, little) !== 0x2a) continue; // magic 42
+    const tiffStart = i;
+    const ifd0Offset = readU32(bytes, tiffStart + 4, little);
+    if (ifd0Offset <= 0 || ifd0Offset > 0xffff || tiffStart + ifd0Offset + 2 > len) continue;
+    const numEntries = readU16(bytes, tiffStart + ifd0Offset, little);
+    if (numEntries <= 0 || numEntries > 256) continue;
+    for (let k = 0; k < numEntries; k++) {
+      const entryOffset = tiffStart + ifd0Offset + 2 + k * 12;
+      if (entryOffset + 12 > len) break;
+      if (readU16(bytes, entryOffset, little) === 0x0112) {
+        const val = readU16(bytes, entryOffset + 8, little);
+        if (val >= 1 && val <= 8) return val;
       }
-      // Sin tag Orientation en este bloque EXIF: sigue buscando otros "Exif\0\0".
     }
+    // Este bloque TIFF no tenía Orientation: sigue buscando la siguiente cabecera TIFF.
   }
   return null;
 }
