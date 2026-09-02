@@ -28,6 +28,7 @@ import AIProviders from '@/pages/AIProviders';
 import Estilos from '@/pages/Estilos';
 import Cerebro from '@/pages/Cerebro';
 import HistorialTrabajos from '@/pages/HistorialTrabajos';
+import AlbumApp from '@/modules/album/pages/AlbumApp';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -72,6 +73,7 @@ const AuthenticatedApp = () => {
           <Route path="/estilos" element={<Estilos />} />
           <Route path="/cerebro" element={<Cerebro />} />
           <Route path="/historial" element={<HistorialTrabajos />} />
+          <Route path="/album" element={<AlbumApp />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
