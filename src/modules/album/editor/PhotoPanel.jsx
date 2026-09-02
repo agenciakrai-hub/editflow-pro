@@ -1,9 +1,11 @@
 import React, { useRef, useState } from "react";
-import { FolderOpen, ImageOff, Loader2, Search } from "lucide-react";
+import { FolderOpen, ImageOff, Link2, Loader2, Search } from "lucide-react";
 
 // Panel izquierdo del editor (wireframe E): catálogo COMPLETO de fotos importadas.
-// Las previews son copias reducidas locales; los originales nunca se tocan.
-export default function PhotoPanel({ photos, previews, importing, progress, onImportFolder, onImportFiles, onPhotoDoubleClick }) {
+// `previews` contiene los THUMBS de nivel 1 (256 px, Bloque 4); los originales nunca
+// se tocan. Sin thumb local la foto está missing/unlinked (Bloque 3) y puede
+// re-localizarse (Bloque 5).
+export default function PhotoPanel({ photos, previews, importing, progress, onImportFolder, onImportFiles, onPhotoDoubleClick, onRelocate, relocateCount }) {
   const [q, setQ] = useState("");
   const inputRef = useRef(null);
   const list = q ? photos.filter((p) => p.filename.toLowerCase().includes(q.toLowerCase())) : photos;
@@ -30,18 +32,25 @@ export default function PhotoPanel({ photos, previews, importing, progress, onIm
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre…"
             className="w-full rounded-lg border border-border bg-background py-1.5 pl-7 pr-2 text-xs" />
         </div>
+        {relocateCount > 0 && onRelocate && (
+          <button onClick={onRelocate} disabled={importing}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-amber-500/60 bg-amber-500/10 px-2.5 py-1.5 text-[11px] font-medium text-amber-600 hover:bg-amber-500/20 disabled:opacity-40">
+            <Link2 className="h-3.5 w-3.5" /> Relocalizar {relocateCount} foto{relocateCount === 1 ? "" : "s"}…
+          </button>
+        )}
       </div>
       <div className="grid flex-1 grid-cols-2 content-start gap-2 overflow-y-auto p-3">
         {list.map((p) => (
-          <div key={p.id} title={p.filename} draggable
+          <div key={p.id} title={p.filename + (previews.get(p.id) ? "" : " · sin preview local")} draggable
             onDragStart={(e) => { e.dataTransfer.setData("text/album-photo", p.id); e.dataTransfer.effectAllowed = "copy"; }}
             onDoubleClick={() => onPhotoDoubleClick(p.id)}
             className="aspect-square cursor-grab overflow-hidden rounded-lg border border-border bg-secondary">
             {previews.get(p.id) ? (
               <img src={previews.get(p.id)} draggable={false} alt={p.filename} className="h-full w-full object-cover" />
             ) : (
-              <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+              <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground">
                 <ImageOff className="h-4 w-4" />
+                {p.preview_status === "unlinked" && <span className="text-[9px] font-medium">desvinculada</span>}
               </div>
             )}
           </div>

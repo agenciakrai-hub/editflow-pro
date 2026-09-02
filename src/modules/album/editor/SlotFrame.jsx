@@ -1,10 +1,15 @@
 import React, { useEffect, useRef } from "react";
 import { Grip, ImageOff, Lock, Move } from "lucide-react";
+import usePhotoPreview from "@/modules/album/hooks/usePhotoPreview";
 
 // Un hueco del spread con transformaciones VIRTUALES (no destructivas): pan (crop),
 // zoom, movimiento y redimensionado del marco. Todo se guarda en mm; el archivo
 // original jamás se modifica. handlers llega vacío si el spread está bloqueado.
-export default function SlotFrame({ slot, photo, previewUrl, ppm, selected, locked, onSelect, handlers }) {
+// Fase 3.1 Bloque 4: la preview de nivel 2 (1000 px) se carga BAJO DEMANDA con LRU
+// compartido — nunca todas las fotos en memoria. Si la foto está missing/unlinked el
+// hueco conserva íntegra su geometría (Bloque 3).
+export default function SlotFrame({ slot, photo, projectId, ppm, selected, locked, onSelect, handlers }) {
+  const previewUrl = usePhotoPreview(projectId, slot.photo_id, photo?.filename);
   const t = slot.transform || {};
   const scale = t.scale ?? 1;
   const fit = slot.fit_mode || "fill";
@@ -100,7 +105,7 @@ export default function SlotFrame({ slot, photo, previewUrl, ppm, selected, lock
             <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-neutral-400">
               <ImageOff className="h-5 w-5" />
               <span className="max-w-full truncate px-1 text-[10px]">{photo?.filename || "Foto"}</span>
-              <span className="text-[9px]">preview no disponible</span>
+              <span className="text-[9px]">{photo?.preview_status === "unlinked" ? "foto desvinculada" : "preview no disponible"}</span>
             </div>
           )
         ) : (

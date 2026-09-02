@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Download, Loader2, Redo2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
-import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, markPhotosPreviewOk } from "@/modules/album/hooks/useAlbumProject";
+import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, bulkUpdatePhotos } from "@/modules/album/hooks/useAlbumProject";
 import { useAlbumStore } from "@/modules/album/manager/albumStore";
-import { getPreview, previewKey } from "@/modules/album/lib/previewStore";
-import { ingestFiles, filesFromFileList, importFromPickedFolder } from "@/modules/album/import/folderImport";
+import { getPreview, getTierPreview, previewKey } from "@/modules/album/lib/previewStore";
+import { ingestFiles, filesFromFileList, importFromPickedFolder, cachePhotoPreviews } from "@/modules/album/import/folderImport";
 import { downloadAlbumFile } from "@/modules/album/format/albumFile";
 import { freshTransform } from "@/modules/album/layout/layoutEngine";
 import { albumSizeLabel, STATUS_LABEL } from "@/modules/album/lib/albumUnits";
@@ -13,10 +13,12 @@ import SpreadCanvas from "@/modules/album/editor/SpreadCanvas";
 import SpreadToolbar from "@/modules/album/editor/SpreadToolbar";
 import AlbumOverview from "@/modules/album/editor/AlbumOverview";
 import LayoutPanel from "@/modules/album/editor/LayoutPanel";
+import RelocateDialog from "@/modules/album/relocate/RelocateDialog";
 import { useToast } from "@/components/ui/use-toast";
 
+// Fase 3.1 Bloque 4 — en memoria solo viven los THUMBS (256 px, nivel 1) del catálogo;
+// la preview de edición (1000 px, nivel 2) se carga bajo demanda por hueco con LRU.
 export default function AlbumEditorPage({ projectId }) {
-  const { toast } = useToast();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -27,12 +29,13 @@ export default function AlbumEditorPage({ projectId }) {
         const project = await getAlbum(projectId);
         const photos = await listPhotos(projectId);
         const spreads = [...(await listSpreads(projectId))].sort((a, b) => a.order_index - b.order_index);
-        const previews = new Map();
-        for (const p of photos) {
-          const url = await getPreview(previewKey(projectId, p.filename));
-          if (url) previews.set(p.id, url);
-        }
-        if (alive) setData({ project, photos, spreads, previews });
+        const thumbs = new Map();
+        await Promise.all(photos.map(async (p) => {
+          let t = await getTierPreview(projectId, p.id, "thumb");
+          if (!t) t = await getPreview(previewKey(projectId, p.filename)); // legado Fase 2
+          if (t) thumbs.set(p.id, t);
+        }));
+        if (alive) setData({ project, photos, spreads, thumbs });
       } catch (e) {
         if (alive) setError(e?.message || "No se pudo cargar el álbum");
       }
@@ -56,15 +59,16 @@ export default function AlbumEditorPage({ projectId }) {
   return <AlbumEditorInner key={projectId} {...data} />;
 }
 
-function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spreads, previews: initialPreviews }) {
+function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spreads, thumbs: initialThumbs }) {
   const { toast } = useToast();
   const [project, setProject] = useState(initialProject);
   const [photos, setPhotos] = useState(initialPhotos);
-  const [previews, setPreviews] = useState(initialPreviews);
+  const [thumbs, setThumbs] = useState(initialThumbs);
   const [zoomPct, setZoomPct] = useState(100);
   const [guides, setGuides] = useState({ bleed: true, margins: true, safe: false, gutter: true });
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(null);
+  const [relocating, setRelocating] = useState(false);
   const store = useAlbumStore(project, spreads);
 
   const spread = store.selectedSpread;
@@ -74,36 +78,73 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     ? { ...selectedSlot, photo: selectedSlot.photo_id ? photosById.get(selectedSlot.photo_id) : null }
     : null;
 
-  // P1 — tras cada importación se refrescan las previews de TODO el catálogo (no solo
-  // de las fotos nuevas): re-importar la misma carpeta restaura previews perdidas en
-  // otro dispositivo sin duplicar fotos y sin tocar spreads/transformaciones.
-  const applyImportedMetas = async (metas) => {
-    const created = metas.length ? await addPhotos(metas) : [];
-    const catalog = [...photos, ...created];
-    const next = new Map(previews);
-    const restored = [];
-    await Promise.all(catalog.map(async (p) => {
-      const url = await getPreview(previewKey(project.id, p.filename));
-      if (url) next.set(p.id, url);
-      else next.delete(p.id);
-      if (url && p.preview_status === "missing") restored.push(p.id);
+  // Bloque 3 — estado local de foto: thumb presente → ok; sin thumb y marcada unlinked
+  // → desvinculada; sin thumb → missing (en ESTE dispositivo; el registro no se altera).
+  const missingPhotos = photos.filter((p) => !thumbs.has(p.id));
+
+  const refreshThumbs = async (ids) => {
+    const next = new Map(thumbs);
+    await Promise.all(ids.map(async (id) => {
+      const t = await getTierPreview(project.id, id, "thumb");
+      if (t) next.set(id, t);
+      else next.delete(id);
     }));
-    setPreviews(next);
-    if (created.length) setPhotos((prev) => [...prev, ...created]);
-    if (restored.length) {
-      try {
-        await markPhotosPreviewOk(restored.map((id) => ({ id, preview_status: "ok" })));
-        setPhotos((prev) => prev.map((p) => (restored.includes(p.id) ? { ...p, preview_status: "ok" } : p)));
-      } catch {}
-    }
+    setThumbs(next);
+  };
+
+  // Bloque 6 + P1 — ingestión con identidad: crea SOLO fotos nuevas (dedup por nombre
+  // Y por content_hash), restaura previews de las existentes, re-enlaza renombradas y
+  // rellena la identidad de fotos v1. Los spreads/transformaciones jamás se tocan.
+  const applyImport = async ({ newFiles, refreshed }) => {
+    const metas = newFiles.map((n) => ({
+      project_id: project.id,
+      filename: n.file.name,
+      relative_path: n.file.webkitRelativePath || n.file.name,
+      orientation: n.previews?.orientation || "landscape",
+      capture_time: n.file.lastModified || null,
+      preview_status: n.previews ? "ok" : "missing",
+      ai_state: "unreviewed",
+      ...(n.identity?.file_size != null ? { file_size: n.identity.file_size } : {}),
+      ...(n.identity?.content_hash ? { content_hash: n.identity.content_hash } : {}),
+      ...(n.identity?.phash ? { phash: n.identity.phash } : {}),
+      ...(n.identity?.width_px != null ? { width_px: n.identity.width_px } : {}),
+      ...(n.identity?.height_px != null ? { height_px: n.identity.height_px } : {}),
+    }));
+    const created = metas.length ? await addPhotos(metas) : [];
+    await Promise.all(created.map((c, i) => cachePhotoPreviews(project.id, c.id, newFiles[i].previews)));
+
+    const updates = [];
+    await Promise.all(refreshed.map(async (r) => {
+      await cachePhotoPreviews(project.id, r.photo.id, r.previews);
+      const patch = {};
+      if (r.previews) patch.preview_status = "ok";
+      ["file_size", "content_hash", "phash", "width_px", "height_px"].forEach((k) => {
+        if (r.identity?.[k] != null) patch[k] = r.identity[k];
+      });
+      if (r.matchType === "hash" && r.file.name !== r.photo.filename) {
+        patch.filename = r.file.name;
+        patch.relative_path = r.file.webkitRelativePath || r.file.name;
+      }
+      if (Object.keys(patch).length) { patch.id = r.photo.id; updates.push(patch); }
+    }));
+    if (updates.length) { try { await bulkUpdatePhotos(updates); } catch {} }
+
+    const patchById = new Map(updates.map((u) => [u.id, u]));
+    setPhotos((prev) => [
+      ...prev.map((p) => (patchById.has(p.id) ? { ...p, ...patchById.get(p.id) } : p)),
+      ...created,
+    ]);
+    await refreshThumbs([...created.map((c) => c.id), ...refreshed.map((r) => r.photo.id)]);
+
     if (created.length && store.spreads.length === 0) {
       setProject((p) => ({ ...p, status: "imported" }));
       updateAlbum(project.id, { status: "imported" }).catch(() => {});
     }
-    if (!created.length && !restored.length) {
+    const restoredCount = updates.filter((u) => u.preview_status === "ok").length;
+    if (!created.length && !restoredCount) {
       toast({ title: "Sin cambios", description: "No había fotos nuevas ni previews que restaurar." });
     } else {
-      toast({ title: "Importación completa", description: `${created.length} nueva(s) · ${restored.length} preview(s) restaurada(s).` });
+      toast({ title: "Importación completa", description: `${created.length} nueva(s) · ${restoredCount} preview(s) restaurada(s).` });
     }
   };
 
@@ -111,13 +152,12 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     setImporting(true);
     setProgress(null);
     try {
-      const existing = new Set(photos.map((p) => p.filename));
-      const res = await importFromPickedFolder(project.id, existing, (d, t) => setProgress({ d, t }));
+      const res = await importFromPickedFolder(project.id, photos, (d, t) => setProgress({ d, t }));
       if (res.folderName) {
         setProject((p) => ({ ...p, source_folder_name: res.folderName }));
         updateAlbum(project.id, { source_folder_name: res.folderName }).catch(() => {});
       }
-      await applyImportedMetas(res.metas);
+      await applyImport(res);
     } catch (e) {
       if (e?.name !== "AbortError") {
         toast({ title: "No se pudo importar la carpeta", description: e?.message || "Usa el selector de archivos sueltos.", variant: "destructive" });
@@ -134,15 +174,25 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     setImporting(true);
     setProgress(null);
     try {
-      const existing = new Set(photos.map((p) => p.filename));
-      const metas = await ingestFiles(project.id, files, existing, (d, t) => setProgress({ d, t }));
-      await applyImportedMetas(metas);
+      const res = await ingestFiles(project.id, files, photos, (d, t) => setProgress({ d, t }));
+      await applyImport(res);
     } catch (e) {
       toast({ title: "No se pudo importar", description: e?.message, variant: "destructive" });
     } finally {
       setImporting(false);
       setProgress(null);
     }
+  };
+
+  // Bloque 5 — tras la re-localización se refrescan metadatos y thumbs de las fotos
+  // afectadas; los spreads no necesitan ningún cambio (referencian photo_id estable).
+  const handleRelocated = async (applied) => {
+    if (applied?.length) {
+      const byId = new Map(applied.map((a) => [a.id, a.patch]));
+      setPhotos((prev) => prev.map((p) => (byId.has(p.id) ? { ...p, ...byId.get(p.id) } : p)));
+      await refreshThumbs(applied.map((a) => a.id));
+    }
+    setRelocating(false);
   };
 
   const addPhotoFirstEmpty = (photoId) => {
@@ -237,12 +287,14 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       <div className="flex min-h-0 flex-1 gap-4">
         <PhotoPanel
           photos={photos}
-          previews={previews}
+          previews={thumbs}
           importing={importing}
           progress={progress}
           onImportFolder={importFolder}
           onImportFiles={importFiles}
           onPhotoDoubleClick={addPhotoFirstEmpty}
+          onRelocate={() => setRelocating(true)}
+          relocateCount={missingPhotos.length}
         />
         <div className="flex min-w-0 flex-1 flex-col gap-3">
           <SpreadToolbar
@@ -270,7 +322,6 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
               album={project}
               spread={spread}
               photosById={photosById}
-              previews={previews}
               zoomPct={zoomPct}
               guides={guides}
               selectedSlotId={store.selectedSlotId}
@@ -296,6 +347,15 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
           onRemoveSlot={() => store.removeSlot(spreadId, selectedSlot.slot_id)}
         />
       </div>
+
+      {relocating && (
+        <RelocateDialog
+          projectId={project.id}
+          photos={missingPhotos}
+          onClose={() => setRelocating(false)}
+          onApplied={handleRelocated}
+        />
+      )}
     </div>
   );
 }

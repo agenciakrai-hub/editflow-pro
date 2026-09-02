@@ -2,7 +2,10 @@
 // importación. Las secciones ai/export_targets quedan RESERVADAS (null).
 import { createAlbum, addPhotos, createSpread } from "@/modules/album/hooks/useAlbumProject";
 
-export const ALBUM_FORMAT_VERSION = 1;
+// v2 (Fase 3.1, Bloque 2) — aditivo y retrocompatible: añade identidad multicapa por
+// foto (file_size, content_hash, phash, width_px, height_px). Los archivos v1 se
+// siguen importando igual (los campos nuevos son opcionales); ninguna migración.
+export const ALBUM_FORMAT_VERSION = 2;
 const freshT = () => ({ scale: 1, offset_x_mm: 0, offset_y_mm: 0, rotation: 0, crop: null });
 
 export function buildAlbumDocument(project, photos, spreads) {
@@ -39,6 +42,13 @@ export function buildAlbumDocument(project, photos, spreads) {
       ai_rank: p.ai_rank ?? null,
       ai_scores: p.ai_scores ?? null,
       ai_category: p.ai_category ?? null,
+      // v2 — identidad multicapa (Fase 3 §2). Ausentes en documentos v1: el importador
+      // los trata como opcionales y nunca fallan por su falta.
+      file_size: p.file_size ?? null,
+      content_hash: p.content_hash ?? null,
+      phash: p.phash ?? null,
+      width_px: p.width_px ?? null,
+      height_px: p.height_px ?? null,
     })),
     spreads: (spreads || []).map((s) => ({
       spread_id: s.id,
@@ -107,9 +117,10 @@ export async function importAlbumDocument(doc) {
     max_photos_per_spread: a.max_photos_per_spread ?? 6,
     style_hint: a.style_hint || "minimal",
     source_folder_name: "importado",
-    doc_version: "v1",
+    doc_version: doc.format_version >= 2 ? "v2" : "v1",
   });
   const idMap = new Map();
+  // v1 y v2 comparten el flujo: los campos de identidad del v2 se propagan si existen.
   const photoMetas = (doc.photos || []).map((p) => ({
     project_id: proj.id,
     filename: p.filename,
@@ -118,6 +129,11 @@ export async function importAlbumDocument(doc) {
     capture_time: p.capture_time ?? null,
     preview_status: "missing",
     ai_state: "unreviewed",
+    ...(p.file_size != null ? { file_size: p.file_size } : {}),
+    ...(p.content_hash ? { content_hash: p.content_hash } : {}),
+    ...(p.phash ? { phash: p.phash } : {}),
+    ...(p.width_px != null ? { width_px: p.width_px } : {}),
+    ...(p.height_px != null ? { height_px: p.height_px } : {}),
   }));
   if (photoMetas.length) {
     const created = await addPhotos(photoMetas);

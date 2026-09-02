@@ -48,7 +48,12 @@ export async function deleteSpread(id) {
   return base44.entities.AlbumSpread.delete(id);
 }
 
-// P1 — marca como "ok" fotos cuya preview se restauró al re-importar la carpeta.
-export async function markPhotosPreviewOk(list) {
+// Fase 3.1 — actualización del catálogo: re-localización, identidad y estados
+// (ok/missing/unlinked) de AlbumPhoto. Solo metadatos; jamás imágenes.
+export async function updatePhoto(id, patch) {
+  return base44.entities.AlbumPhoto.update(id, patch);
+}
+
+export async function bulkUpdatePhotos(list) {
   return base44.entities.AlbumPhoto.bulkUpdate(list);
 }

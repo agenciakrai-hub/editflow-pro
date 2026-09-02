@@ -31,10 +31,31 @@
       "type": "string",
       "enum": [
         "ok",
-        "missing"
+        "missing",
+        "unlinked"
       ],
       "default": "ok",
-      "description": "ok si se pudo generar preview local; missing si no."
+      "description": "ok = preview disponible / \u00faltimo enlace correcto; missing = preview no disponible en este dispositivo; unlinked = se confirm\u00f3 que el archivo original no est\u00e1 (el spread conserva su geometr\u00eda)."
+    },
+    "file_size": {
+      "type": "number",
+      "description": "Fase 3.1 \u2014 identidad L1: tama\u00f1o del archivo original en bytes. Opcional (fotos v1 no lo tienen)."
+    },
+    "content_hash": {
+      "type": "string",
+      "description": "Fase 3.1 \u2014 identidad L2: SHA-256 exacto del archivo, calculado en el navegador. Opcional."
+    },
+    "phash": {
+      "type": "string",
+      "description": "Fase 3.1 \u2014 identidad L3: hash perceptual de 64 bits de la preview (para re-localizaci\u00f3n difusa con confirmaci\u00f3n manual). Opcional."
+    },
+    "width_px": {
+      "type": "number",
+      "description": "Fase 3.1 \u2014 identidad L4: anchura real de la imagen en p\u00edxeles. Opcional."
+    },
+    "height_px": {
+      "type": "number",
+      "description": "Fase 3.1 \u2014 identidad L4: altura real de la imagen en p\u00edxeles. Opcional."
     },
     "ai_state": {
       "type": "string",

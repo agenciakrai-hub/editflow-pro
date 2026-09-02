@@ -3,7 +3,7 @@ import SlotFrame from "@/modules/album/editor/SlotFrame";
 
 // Lienzo del spread (wireframe E, Fase 1 §9): mm → px según zoom, guías de sangrado,
 // márgenes, zona segura y gutter. Soltar una foto sobre el lienzo crea un hueco libre.
-export default function SpreadCanvas({ album, spread, photosById, previews, zoomPct, guides, selectedSlotId, locked, onSelectSlot, onDropPhotoOnCanvas, handlers }) {
+export default function SpreadCanvas({ album, spread, photosById, zoomPct, guides, selectedSlotId, locked, onSelectSlot, onDropPhotoOnCanvas, handlers }) {
   const wrapRef = useRef(null);
   const [avail, setAvail] = useState(900);
 
@@ -51,10 +51,9 @@ export default function SpreadCanvas({ album, spread, photosById, previews, zoom
             style={{ left: px((W - gutter) / 2 + gutter / 2), top: 0, bottom: 0 }} />
         )}
         {(spread?.slots || []).map((sl) => (
-          <SlotFrame key={sl.slot_id} slot={sl} locked={locked} ppm={ppm}
+          <SlotFrame key={sl.slot_id} slot={sl} locked={locked} ppm={ppm} projectId={album.id}
             selected={selectedSlotId === sl.slot_id}
             photo={sl.photo_id ? photosById.get(sl.photo_id) : null}
-            previewUrl={sl.photo_id ? previews.get(sl.photo_id) : null}
             onSelect={() => onSelectSlot(sl.slot_id)}
             handlers={handlers} />
         ))}

@@ -41,6 +41,22 @@ export async function getPreview(key) {
   try { return await tx("previews", "readonly", (s) => s.get(key)); } catch { return null; }
 }
 
+// Fase 3.1 Bloque 4 — previews de dos niveles bajo la clave ESTABLE de la foto
+// (photo_id). Mantienen el prefijo projectId:: para que la limpieza por álbum
+// existente los cubra. Las claves legadas (projectId::filename) siguen legibles
+// como fallback de proyectos creados en Fase 2.
+export const photoThumbKey = (projectId, photoId) => `${projectId}::${photoId}::thumb`;
+export const photoPreviewKey = (projectId, photoId) => `${projectId}::${photoId}::preview`;
+
+export function putTierPreview(projectId, photoId, tier, dataUrl) {
+  if (!dataUrl) return Promise.resolve(null);
+  return putPreview(tier === "thumb" ? photoThumbKey(projectId, photoId) : photoPreviewKey(projectId, photoId), dataUrl);
+}
+
+export async function getTierPreview(projectId, photoId, tier) {
+  return getPreview(tier === "thumb" ? photoThumbKey(projectId, photoId) : photoPreviewKey(projectId, photoId));
+}
+
 export async function putFolderHandle(projectId, handle) {
   try { return await tx("handles", "readwrite", (s) => s.put(handle, projectId)); } catch { return null; }
 }
