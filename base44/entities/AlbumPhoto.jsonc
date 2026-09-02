@@ -1,0 +1,82 @@
+{
+  "name": "AlbumPhoto",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al AlbumProject."
+    },
+    "filename": {
+      "type": "string"
+    },
+    "relative_path": {
+      "type": "string",
+      "description": "Ruta relativa dentro de la carpeta importada."
+    },
+    "orientation": {
+      "type": "string",
+      "enum": [
+        "landscape",
+        "portrait",
+        "square"
+      ],
+      "default": "landscape",
+      "description": "Derivada de las dimensiones reales del archivo."
+    },
+    "capture_time": {
+      "type": "number",
+      "description": "Epoch ms (para orden temporal y futura narrativa IA)."
+    },
+    "preview_status": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "missing"
+      ],
+      "default": "ok",
+      "description": "ok si se pudo generar preview local; missing si no."
+    },
+    "ai_state": {
+      "type": "string",
+      "enum": [
+        "recommended",
+        "considered",
+        "discarded",
+        "unreviewed"
+      ],
+      "default": "unreviewed",
+      "description": "Nivel IA (fase futura). El fot\u00f3grafo puede usar cualquier foto siempre."
+    },
+    "ai_rank": {
+      "type": "number",
+      "description": "Reserva fase IA."
+    },
+    "ai_scores": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Reserva fase IA (nitidez, expresi\u00f3n, etc.)."
+    },
+    "ai_category": {
+      "type": "string",
+      "description": "Reserva fase IA (categor\u00eda narrativa)."
+    }
+  },
+  "required": [
+    "project_id",
+    "filename"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "name": "AlbumSpread",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al AlbumProject."
+    },
+    "order_index": {
+      "type": "number",
+      "default": 0,
+      "description": "Posici\u00f3n del spread en el \u00e1lbum."
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "spread",
+        "page_left",
+        "page_right"
+      ],
+      "default": "spread"
+    },
+    "layout_id": {
+      "type": "string",
+      "default": "custom",
+      "description": "Layout aplicado por \u00faltima vez ('L001'... o 'custom'). La geometr\u00eda est\u00e1 resuelta en slots, por lo que el \u00e1lbum no depende del cat\u00e1logo."
+    },
+    "locked": {
+      "type": "boolean",
+      "default": false,
+      "description": "Bloqueado frente a cambios (protege frente a la futura IA)."
+    },
+    "ai_generated": {
+      "type": "boolean",
+      "default": false,
+      "description": "Reserva fase IA: true si el spread naci\u00f3 de una propuesta IA."
+    },
+    "slots": {
+      "type": "array",
+      "description": "Huecos del spread con geometr\u00eda resuelta en mm y transformaciones virtuales (no destructivas).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "slot_id": {
+            "type": "string"
+          },
+          "photo_id": {
+            "type": "string",
+            "description": "Referencia a AlbumPhoto (o null si el hueco est\u00e1 vac\u00edo)."
+          },
+          "x_mm": {
+            "type": "number"
+          },
+          "y_mm": {
+            "type": "number"
+          },
+          "w_mm": {
+            "type": "number"
+          },
+          "h_mm": {
+            "type": "number"
+          },
+          "fit_mode": {
+            "type": "string",
+            "enum": [
+              "fill",
+              "fit"
+            ],
+            "default": "fill"
+          },
+          "z_index": {
+            "type": "number",
+            "default": 0
+          },
+          "transform": {
+            "type": "object",
+            "properties": {
+              "scale": {
+                "type": "number",
+                "default": 1,
+                "description": "1 = ajuste base al hueco; >1 = zoom (crop virtual)."
+              },
+              "offset_x_mm": {
+                "type": "number",
+                "default": 0,
+                "description": "Desplazamiento horizontal de la foto dentro del hueco (crop virtual)."
+              },
+              "offset_y_mm": {
+                "type": "number",
+                "default": 0
+              },
+              "rotation": {
+                "type": "number",
+                "default": 0,
+                "description": "Grados (reserva)."
+              },
+              "crop": {
+                "type": "object",
+                "additionalProperties": true,
+                "description": "Crop normalizado 0..1 (reserva)."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

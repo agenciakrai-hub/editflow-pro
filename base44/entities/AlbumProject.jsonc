@@ -1,0 +1,121 @@
+{
+  "name": "AlbumProject",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nombre del \u00e1lbum."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "wedding",
+        "communion",
+        "baptism",
+        "family",
+        "event",
+        "other"
+      ],
+      "default": "other",
+      "description": "Tipo de reportaje (para futura narrativa IA)."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "imported",
+        "designing",
+        "reviewed",
+        "final"
+      ],
+      "default": "draft",
+      "description": "Estado del \u00e1lbum."
+    },
+    "width_mm": {
+      "type": "number",
+      "description": "Ancho del spread completo en mm (can\u00f3nico)."
+    },
+    "height_mm": {
+      "type": "number",
+      "description": "Alto en mm (can\u00f3nico)."
+    },
+    "dpi": {
+      "type": "number",
+      "default": 300,
+      "description": "DPI de renderizado del \u00e1lbum."
+    },
+    "bleed_mm": {
+      "type": "number",
+      "default": 3
+    },
+    "margin_mm": {
+      "type": "number",
+      "default": 10
+    },
+    "gutter_mm": {
+      "type": "number",
+      "default": 6
+    },
+    "size_preset": {
+      "type": "string",
+      "default": "custom",
+      "description": "Id del preset de tama\u00f1o ('30x30', ... o 'custom')."
+    },
+    "display_unit": {
+      "type": "string",
+      "enum": [
+        "cm",
+        "mm"
+      ],
+      "default": "cm",
+      "description": "Unidad de muestra preferida por el fot\u00f3grafo (almacenamiento siempre en mm)."
+    },
+    "spread_count_target": {
+      "type": "number",
+      "default": 20,
+      "description": "N\u00famero aproximado de spreads (gu\u00eda para futura IA, no l\u00edmite)."
+    },
+    "max_photos_per_spread": {
+      "type": "number",
+      "default": 6
+    },
+    "style_hint": {
+      "type": "string",
+      "enum": [
+        "minimal",
+        "editorial",
+        "classic",
+        "modern"
+      ],
+      "default": "minimal"
+    },
+    "source_folder_name": {
+      "type": "string",
+      "description": "Nombre de la carpeta importada (informativo)."
+    },
+    "doc_version": {
+      "type": "string",
+      "default": "v1",
+      "description": "Versi\u00f3n del esquema .editflowalbum."
+    }
+  },
+  "required": [
+    "name",
+    "width_mm",
+    "height_mm"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}
