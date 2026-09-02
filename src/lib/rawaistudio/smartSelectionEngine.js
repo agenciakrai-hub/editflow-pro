@@ -23,7 +23,7 @@ import { analyzeSkinTone } from "./skinToneAnalysis";
 import { decodePreviewImage } from "./previewDecodeCache";
 
 const PREVIEW_CONCURRENCY = 6;
-const BATCH_CONCURRENCY = 3;
+const BATCH_CONCURRENCY = 5;
 
 // Umbral MUY estricto para considerar dos seleccionados de grupos distintos como
 // casi-duplicados (mu más bajo que el de agrupación). Solo se fusionan los
@@ -140,19 +140,37 @@ export async function runAiBurstSelection(withPreview, onProgress) {
     });
   });
 
-  // Una invocación por ráfaga (en lugar de un lote único) para que el progreso avance de
-  // 1 en 1 y una llamada lenta o caída no bloquee todo el proceso. Misma concurrencia (3)
-  // y mismo nº total de llamadas IA — solo cambia la granularidad del progreso.
-  const bursts = groups.map((g) => ({ id: g.id, files: g.files }));
+  // Ráfagas reales (misma escena, >1 foto) se analizan comparativamente (1 llamada IA
+  // cada una). Las fotos sueltas (singleton — escenas de 1 foto, muy comunes en sesiones
+  // con tomas espaciadas >3s) se AGRUPAN en lotes independientes: la IA juzga cada foto
+  // por su mérito propio en una sola llamada, reduciendo el nº de llamadas de N (una por
+  // foto) a N/INDEPENDENT_BATCH. Se preserva el groupId original de cada singleton para
+  // que la cobertura/dedup sigan funcionando por escena.
+  const INDEPENDENT_BATCH = 6;
+  const realGroups = groups.filter((g) => g.files.length > 1);
+  const singletonGroups = groups.filter((g) => g.files.length === 1);
+  const bursts = realGroups.map((g) => ({ id: g.id, files: g.files, independent: false, sceneOf: null }));
+  for (let i = 0; i < singletonGroups.length; i += INDEPENDENT_BATCH) {
+    const batch = singletonGroups.slice(i, i + INDEPENDENT_BATCH);
+    bursts.push({
+      id: `ind-${i / INDEPENDENT_BATCH}`,
+      files: batch.map((g) => g.files[0]),
+      independent: true,
+      sceneOf: new Map(batch.map((g) => [g.files[0].id, g.id])),
+    });
+  }
   const totalBursts = bursts.length;
   let resolved = 0;
   onProgress?.(resolved, totalBursts);
 
   await runPool(bursts, BATCH_CONCURRENCY, async (burst) => {
+    const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
+    const groupSizeFor = () => (burst.independent ? 1 : burst.files.length);
     try {
       const { data } = await base44.functions.invoke("rawAiSmartSelect", {
         bursts: [{
           burst_id: burst.id,
+          independent: burst.independent,
           photos: burst.files.map((f) => ({
             id: f.id,
             preview_base64: f.preview?.base64,
@@ -173,12 +191,12 @@ export async function runAiBurstSelection(withPreview, onProgress) {
       burst.files.forEach((f, i) => {
         const r = byId.get(f.id);
         const status = r?.status || "REVIEW";
-        const groupRank = typeof r?.rank === "number" ? r.rank : i + 1;
+        const groupRank = burst.independent ? 1 : (typeof r?.rank === "number" ? r.rank : i + 1);
         const selectable = status === "SELECT" || status === "TOP_PICK";
         if (selectable) keep.add(f.id);
         meta.set(f.id, {
-          groupId: burst.id,
-          groupSize: burst.files.length,
+          groupId: groupIdFor(f),
+          groupSize: groupSizeFor(),
           status,
           scores: r?.scores || null,
           rejectReasons: r?.reject_reasons || [],
@@ -186,7 +204,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
           confidence: r?.scores?.confidence ?? null,
           category,
           groupRank,
-          complementary: keepIds.size > 1 && keepIds.has(f.id) && status !== "TOP_PICK",
+          complementary: !burst.independent && keepIds.size > 1 && keepIds.has(f.id) && status !== "TOP_PICK",
           category_note: r?.note || "",
           analysisComplete: r?.analysis_complete ?? false,
           missingDimensions: r?.missing_dimensions || [],
@@ -196,12 +214,13 @@ export async function runAiBurstSelection(withPreview, onProgress) {
     } catch {
       // Fallo de IA: fallback técnico conservador POR RÁFAGA.
       const fb = technicalFallbackForGroup(burst);
-      fb.forEach((m) => {
-        if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(m.id);
-        meta.set(m.id, {
-          groupId: burst.id, groupSize: burst.files.length, status: m.status,
+      fb.forEach((m, i) => {
+        const f = burst.files[i];
+        if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(f.id);
+        meta.set(f.id, {
+          groupId: groupIdFor(f), groupSize: groupSizeFor(), status: m.status,
           scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
-          confidence: m.confidence, category: m.category, groupRank: m.groupRank,
+          confidence: m.confidence, category: m.category, groupRank: burst.independent ? 1 : m.groupRank,
           complementary: m.complementary, category_note: m.category_note,
           analysisComplete: m.analysis_complete, missingDimensions: m.missing_dimensions,
           previewWarning: false,

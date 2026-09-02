@@ -373,6 +373,79 @@ async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: 
   };
 }
 
+// Lote de fotos sueltas (singletons de escenas distintas). La IA juzga CADA foto por su
+// mérito propio, sin compararlas ni ranking entre ellas. Reduce N llamadas (una por
+// foto) a N/INDEPENDENT_MAX. category=null: género mixto → guard conservador (el modelo
+// devuelve null en dimensiones faciales no aplicables).
+const INDEPENDENT_MAX = 6;
+
+function buildIndependentPrompt(ids: string[]): string {
+  return `You are an elite professional photo editor assessing ${ids.length} photos INDIVIDUALLY. These photos come from DIFFERENT moments and scenes — do NOT compare or rank them against each other. Judge each one on its own merits.
+
+STEP 1 — For each photo, classify its genre (portrait, wedding, event, group, architecture, interior, landscape, product, lifestyle, documentary).
+
+STEP 2 — For each photo, analyze independently across ALL dimensions. Each score is 0-100, or null when NOT APPLICABLE (no people → face_quality, eye_quality, expression = null). NEVER return 0 to mean "not applicable" — return null. Return 0 only for a genuinely evaluated, critically bad dimension:
+- technical: file integrity, noise, artifacts, capture problems
+- sharpness: global sharpness
+- focus: is the SUBJECT in sharp focus? Distinguish artistic background blur from accidental subject blur.
+- face_quality: if people present, face visibility/quality. No people → null.
+- eye_quality: eyes open vs closed for every visible face. No people → null.
+- expression: natural/emotive vs awkward. No people → null.
+- composition: balance, framing, lines, distracting elements, awkward crops
+- exposure: tonal distribution, clipping, severe over/underexposure
+- color_quality: white balance, color cast, skin tones
+- subject_quality: clarity/presence of the main subject
+- moment_quality: decisive moment, emotion, interaction (people/events); stillness/cleanliness for architecture/landscape
+- distraction_penalty: HIGHER = cleaner (100 = no distractions, 0 = very distracting). Inverted scale.
+- overall: your composite judgment WEIGHTED BY GENRE
+- confidence: 0-100 how sure you are of THIS photo's assessment
+
+STEP 3 — Decide INDEPENDENTLY for each photo (no comparison, no single-TOP_PICK limit):
+- TOP_PICK: an exceptional, clearly deliverable frame.
+- SELECT: technically valid and visually strong enough to deliver.
+- REVIEW: doubtful (low confidence, borderline faces/exposure).
+- REJECT: ONLY for a CLEAR, COMBINED defect — never a single metric alone. Use reject_reasons from: CRITICAL_BLUR, FOCUS_FAILURE, EYES_CLOSED, POOR_EXPRESSION, POOR_COMPOSITION, SEVERE_EXPOSURE_FAILURE, OBSTRUCTED_SUBJECT, CORRUPT.
+Multiple photos can be TOP_PICK or SELECT; none need to be. Set rank to 1 for every photo.
+
+Candidate photo ids: ${ids.join(', ')}. The images are attached in the same order.
+
+Return JSON: keep_ids (all SELECT+TOP_PICK ids), category (dominant genre or null), reason (short), and rankings (one object per candidate with id, rank (always 1), status, reject_reasons, note, analysis_complete, and the ${SCORE_KEYS.join(', ')} scores).`;
+}
+
+async function analyzeIndependent(base44: any, key: string, ids: string[], uploaded: Record<string, string>): Promise<any> {
+  const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
+  const prompt = buildIndependentPrompt(ids);
+  const result: any = await invokeVision(base44, {
+    task: 'seleccion',
+    prompt,
+    model: MODEL,
+    file_urls: fileUrls,
+    response_json_schema: {
+      type: 'object',
+      properties: { [key]: groupSchemaFor() },
+      required: [key],
+    },
+  });
+  const g = result[key] || {};
+  const rankings = Array.isArray(g.rankings) ? g.rankings : [];
+  const byId: Record<string, any> = {};
+  for (const r of rankings) {
+    const rid = String(r.id);
+    if (!ids.includes(rid)) continue;
+    byId[rid] = buildRankingEntry(rid, r, null);
+    byId[rid].rank = 1; // independent: sin ranking comparativo
+  }
+  for (const id of ids) {
+    if (!byId[id]) byId[id] = buildRankingEntry(id, {}, null);
+  }
+  return {
+    byId,
+    keep_ids: Array.isArray(g.keep_ids) ? g.keep_ids.map(String).filter((id: string) => ids.includes(id)) : [],
+    category: null,
+    reason: typeof g.reason === 'string' ? g.reason : null,
+  };
+}
+
 // Consolida dos sub-llamadas (mitades) en un único ranking global del grupo.
 function consolidateHalves(candidateIds: string[], h1: any, h2: any): any {
   const byId: Record<string, any> = { ...h1.byId, ...h2.byId };
@@ -447,7 +520,18 @@ export default async function(req: Request): Promise<Response> {
         );
 
         let result: any;
-        if (candidateIds.length <= MAX_IMAGES_PER_CALL) {
+        if (burst.independent) {
+          // Lote de singletons: cada foto juzgada por mérito propio, sin límite de un
+          // único TOP_PICK (varias pueden ser TOP_PICK/SELECT independientemente).
+          iaCalls = 1;
+          const sub = await analyzeIndependent(base44, `group_0`, candidateIds, uploaded);
+          result = {
+            keep_ids: sub.keep_ids,
+            category: sub.category,
+            reason: sub.reason,
+            rankings: candidateIds.map((id) => ({ id, ...sub.byId[id] })),
+          };
+        } else if (candidateIds.length <= MAX_IMAGES_PER_CALL) {
           iaCalls = 1;
           const isSingleton = candidateIds.length === 1;
           const sub = await analyzeSubset(base44, `group_0`, candidateIds, uploaded, isSingleton);
@@ -495,19 +579,24 @@ export default async function(req: Request): Promise<Response> {
             return st === 'SELECT' || st === 'TOP_PICK';
           });
         }
-        // A lo sumo un TOP_PICK (seguridad ante respuestas que marcan varios).
-        let topId: string | null = null;
-        let topOverall = -1;
-        for (const r of result.rankings) {
-          if (r.status === 'TOP_PICK') {
-            const ov = r.scores?.overall ?? 0;
-            if (ov > topOverall) { topOverall = ov; topId = r.id; }
+        // A lo sumo un TOP_PICK (seguridad ante respuestas que marcan varios). En modo
+        // independent cada foto se juzga por mérito propio: NO se aplica el límite de un
+        // único TOP_PICK (varias fotos pueden ser TOP_PICK/SELECT independientemente).
+        let rankings = result.rankings;
+        if (!burst.independent) {
+          let topId: string | null = null;
+          let topOverall = -1;
+          for (const r of result.rankings) {
+            if (r.status === 'TOP_PICK') {
+              const ov = r.scores?.overall ?? 0;
+              if (ov > topOverall) { topOverall = ov; topId = r.id; }
+            }
           }
+          rankings = result.rankings.map((r: any) => {
+            if (r.status === 'TOP_PICK' && topId && r.id !== topId) return { ...r, status: 'SELECT' };
+            return r;
+          });
         }
-        const rankings = result.rankings.map((r: any) => {
-          if (r.status === 'TOP_PICK' && topId && r.id !== topId) return { ...r, status: 'SELECT' };
-          return r;
-        });
 
         groups[burstId] = {
           keep_ids: keepIds,
