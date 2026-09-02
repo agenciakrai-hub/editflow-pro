@@ -142,14 +142,14 @@ export default function Seleccion() {
         if (cached.size) {
           const built = fps.map((f) => {
             const dataUrl = cached.get(f.fingerprint_hash);
-            const status = f.selection_status || "REVIEW";
-            const selected = status === "SELECT" || status === "TOP_PICK";
+            // Estado NEUTRO al entrar: la selección se produce solo al pulsar "Seleccionar".
+            // No se traen estados/etiquetas/ratings de una selección anterior.
             return {
               id: f.id, file: { name: f.filename },
               preview: dataUrl ? { dataUrl, base64: (dataUrl.split(",")[1] || dataUrl), isPlaceholder: false } : null,
-              manualRotation: 0, aiSelected: selected, selectedForEdit: selected,
-              colorLabel: f.color_label || (selected ? "green" : "none"),
-              rating: f.rating || (selected ? 5 : 0), status, groupId: null, groupSize: 1,
+              manualRotation: 0, aiSelected: false, selectedForEdit: false,
+              colorLabel: "none",
+              rating: 0, status: "REVIEW", groupId: null, groupSize: 1,
               complementary: false, reason: null, overallScore: 0, scores: null, rejectReasons: [],
               confidence: null, category: null, groupRank: null, captureTime: f.capture_time,
               // phash restaurado desde el fingerprint guardado (fingerprint_hash = pHash en
@@ -274,21 +274,20 @@ export default function Seleccion() {
     const built = results
       .filter((r) => r.matched && r.candidate)
       .map((r) => {
-        const saved = r.saved;
-        const status = saved.selection_status || "REVIEW";
-        const selected = status === "SELECT" || status === "TOP_PICK";
+        // Estado NEUTRO al recuperar de la carpeta: la selección se produce solo al
+        // pulsar "Seleccionar". No se traen estados/etiquetas/ratings anteriores.
         return {
           id: r.candidate.id, file: r.candidate.file, preview: r.candidate.preview, manualRotation: 0,
-          aiSelected: selected, selectedForEdit: selected,
-          colorLabel: saved.color_label || (selected ? "green" : "none"),
-          rating: saved.rating || (selected ? 5 : 0),
-          status, groupId: null, groupSize: 1, complementary: false, reason: null,
+          aiSelected: false, selectedForEdit: false,
+          colorLabel: "none",
+          rating: 0,
+          status: "REVIEW", groupId: null, groupSize: 1, complementary: false, reason: null,
           overallScore: 0, scores: null, rejectReasons: [], confidence: null,
           category: null, groupRank: null, captureTime: r.candidate.captureTime,
           cameraInfo: r.candidate.cameraInfo, asShotWB: r.candidate.asShotWB,
           skinStats: r.candidate.skinStats, analysisComplete: false, missingDimensions: [],
           previewWarning: !r.candidate.preview || r.candidate.preview.isPlaceholder,
-          selectionFallback: false, fallbackReason: null, fingerprintId: saved.id,
+          selectionFallback: false, fallbackReason: null, fingerprintId: r.saved.id,
         };
       });
     setPhotos(built);
@@ -376,6 +375,10 @@ export default function Seleccion() {
     const items = projectRawItems.length ? projectRawItems : photos.map((p) => ({
       id: p.id, file: p.file, preview: p.preview, cameraInfo: p.cameraInfo,
       asShotWB: p.asShotWB, skinStats: p.skinStats, captureTime: p.captureTime,
+      // Sin phash, groupIntoScenes degrada a agrupación solo temporal y fusiona todas
+      // las fotos en una sola ráfaga → la IA solo analiza un grupo. Sin technical, el
+      // fallback pierde métricas. Ambos vienen en las photos cargadas desde caché.
+      phash: p.phash, technical: p.technical,
     }));
     if (!items.length) return;
     const fpMap = projectRawItems.length
