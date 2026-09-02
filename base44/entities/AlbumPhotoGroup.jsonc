@@ -1,0 +1,67 @@
+{
+  "name": "AlbumPhotoGroup",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al AlbumProject."
+    },
+    "selection_id": {
+      "type": "string",
+      "description": "Referencia al AlbumAISelection (trazabilidad)."
+    },
+    "group_index": {
+      "type": "number",
+      "default": 0,
+      "description": "Posici\u00f3n del grupo en orden temporal."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "single",
+        "burst",
+        "sequence"
+      ],
+      "default": "single",
+      "description": "Tipo de grupo: single (foto aislada), burst (r\u00e1faga cerrada), sequence (secuencia temporal con similitud)."
+    },
+    "photo_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "AlbumPhoto ids del grupo, en orden temporal."
+    },
+    "promoted_photo_id": {
+      "type": "string",
+      "description": "Foto promovida por E5 (o representante local si E5 a\u00fan no corri\u00f3)."
+    },
+    "e5": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Decisi\u00f3n de grupo E5: promoted alias, per_photo (ranks, dims, reasons), group_summary, reasons."
+    },
+    "provider": {
+      "type": "string",
+      "description": "Proveedor IA que sirvi\u00f3 E5."
+    }
+  },
+  "required": [
+    "project_id",
+    "group_index"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

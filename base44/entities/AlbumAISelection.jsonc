@@ -1,0 +1,105 @@
+{
+  "name": "AlbumAISelection",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al AlbumProject."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "running",
+        "completed",
+        "failed",
+        "canceled"
+      ],
+      "default": "running",
+      "description": "Estado del trabajo de selecci\u00f3n IA (job orquestado por el cliente, persistido para reanudaci\u00f3n)."
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "e2",
+        "e3",
+        "e4",
+        "e5",
+        "e6",
+        "e7",
+        "done"
+      ],
+      "default": "e2",
+      "description": "Etapa actual del pipeline."
+    },
+    "stage_progress": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Progreso por etapa: { e4: {done, total}, e5: {done, total}, ... }. Se actualiza tras cada lote persistido."
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Estad\u00edsticas de la ejecuci\u00f3n: photo_count, group_count, batch_count, calls, provider_used, resumed."
+    },
+    "consent": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Snapshot de consentimiento: { text_version, mode, at, providers }."
+    },
+    "funnel_report": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Informe del embudo E7: por qu\u00e9 entr\u00f3/sali\u00f3 cada foto, cobertura, momento de cada seleccionada."
+    },
+    "selection": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "photo_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "description": "hero | key | support | detail"
+          },
+          "moment": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "reasons": {
+            "type": "string"
+          },
+          "tech_exception": {
+            "type": "boolean",
+            "description": "true = seleccionada pese a m\u00e9trica t\u00e9cnica inferior (singularidad/emoci\u00f3n)."
+          }
+        }
+      },
+      "description": "Selecci\u00f3n final con alias YA resueltos a photo_id por el cliente."
+    },
+    "error": {
+      "type": "string",
+      "description": "\u00daltimo error (si status=failed), con etapa para reanudar."
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

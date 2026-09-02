@@ -1,0 +1,62 @@
+{
+  "name": "AlbumAIConfig",
+  "type": "object",
+  "properties": {
+    "consent_mode": {
+      "type": "string",
+      "enum": [
+        "per_run",
+        "saved"
+      ],
+      "default": "per_run",
+      "description": "Modo de consentimiento IA de Album AI. per_run = se pide confirmaci\u00f3n en cada ejecuci\u00f3n; saved = el fot\u00f3grafo guard\u00f3 el consentimiento (revocable)."
+    },
+    "consent_saved_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Fecha del \u00faltimo consentimiento guardado."
+    },
+    "consent_text_version": {
+      "type": "string",
+      "description": "Versi\u00f3n del texto de privacidad aceptado (trazabilidad)."
+    },
+    "allowed_providers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "gemini_paid",
+          "qwen",
+          "nvidia"
+        ]
+      },
+      "default": [],
+      "description": "Cadena permitida por el fot\u00f3grafo (subconjunto de gemini_paid -> qwen -> nvidia). Vac\u00edo = cadena por defecto completa. Base44 InvokeLLM y Gemini FREE nunca forman parte de Album AI."
+    },
+    "send_preview_1000": {
+      "type": "boolean",
+      "default": false,
+      "description": "Confirmaci\u00f3n en alta (1000 px) para E5 en grupos de retrato. OFF por defecto (Fase 4.0.1)."
+    },
+    "revoked": {
+      "type": "boolean",
+      "default": false,
+      "description": "true tras revocar el consentimiento: no se inicia ning\u00fan an\u00e1lisis remoto sin consentimiento puntual nuevo y se cancelan trabajos pendientes."
+    }
+  },
+  "required": [],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

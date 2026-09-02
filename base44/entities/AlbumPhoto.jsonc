@@ -68,6 +68,16 @@
       "default": "unreviewed",
       "description": "Nivel IA (fase futura). El fot\u00f3grafo puede usar cualquier foto siempre."
     },
+    "ai_override": {
+      "type": "string",
+      "enum": [
+        "none",
+        "forced",
+        "blocked"
+      ],
+      "default": "none",
+      "description": "Fase 4.1 Bloque 10 \u2014 override del fot\u00f3grafo con JERARQU\u00cdA sobre la IA: forced = incluir siempre (viaja a E7 como restricci\u00f3n); blocked = excluir siempre. La IA jam\u00e1s sobrescribe estos valores."
+    },
     "ai_rank": {
       "type": "number",
       "description": "Reserva fase IA."

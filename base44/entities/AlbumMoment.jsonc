@@ -1,0 +1,60 @@
+{
+  "name": "AlbumMoment",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al AlbumProject."
+    },
+    "selection_id": {
+      "type": "string",
+      "description": "Referencia al AlbumAISelection (trazabilidad)."
+    },
+    "order_index": {
+      "type": "number",
+      "default": 0,
+      "description": "Orden narrativo del momento en el \u00e1lbum."
+    },
+    "name": {
+      "type": "string",
+      "description": "Nombre del momento (p. ej. 'La entrada de la novia')."
+    },
+    "archetype": {
+      "type": "string",
+      "description": "Arquetipo narrativo (preparaci\u00f3n, ceremonia, retrato, detalle, fiesta...)."
+    },
+    "photo_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "AlbumPhoto ids asociadas al momento."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Resumen narrativo del momento."
+    },
+    "provider": {
+      "type": "string",
+      "description": "Proveedor IA que sirvi\u00f3 E6."
+    }
+  },
+  "required": [
+    "project_id",
+    "name"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

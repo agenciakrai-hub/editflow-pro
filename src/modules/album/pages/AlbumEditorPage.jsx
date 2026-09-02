@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Download, Loader2, Redo2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Download, Loader2, Redo2, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, bulkUpdatePhotos } from "@/modules/album/hooks/useAlbumProject";
 import { useAlbumStore } from "@/modules/album/manager/albumStore";
 import { getPreview, getTierPreview, previewKey } from "@/modules/album/lib/previewStore";
@@ -250,6 +250,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
           <button className={iconBtn} onClick={() => downloadAlbumFile(project, photos, store.spreads)}>
             <Download className="h-3.5 w-3.5" /> .editflowalbum
           </button>
+          <Link to={`/album?project=${project.id}&view=seleccion`} className={iconBtn}>
+            <Sparkles className="h-3.5 w-3.5" /> Selección IA
+          </Link>
         </div>
       </div>
 

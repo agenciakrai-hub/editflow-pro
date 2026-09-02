@@ -1,0 +1,60 @@
+{
+  "name": "AlbumAIFeedback",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al AlbumProject."
+    },
+    "selection_id": {
+      "type": "string",
+      "description": "Referencia al AlbumAISelection sobre el que se aplic\u00f3 el override."
+    },
+    "photo_id": {
+      "type": "string",
+      "description": "AlbumPhoto afectada."
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "reject",
+        "recover",
+        "force_include",
+        "block"
+      ],
+      "description": "Acci\u00f3n del fot\u00f3grafo. force_include/block imponen jerarqu\u00eda sobre la IA (overrides protegidos)."
+    },
+    "previous_value": {
+      "type": "string",
+      "description": "Valor previo de ai_state."
+    },
+    "new_value": {
+      "type": "string",
+      "description": "Nuevo valor de ai_state."
+    },
+    "note": {
+      "type": "string",
+      "description": "Nota opcional del fot\u00f3grafo."
+    }
+  },
+  "required": [
+    "project_id",
+    "photo_id",
+    "action"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

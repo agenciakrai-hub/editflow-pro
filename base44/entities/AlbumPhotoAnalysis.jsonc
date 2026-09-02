@@ -1,0 +1,71 @@
+{
+  "name": "AlbumPhotoAnalysis",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al AlbumProject."
+    },
+    "photo_id": {
+      "type": "string",
+      "description": "Referencia a AlbumPhoto analizada."
+    },
+    "selection_id": {
+      "type": "string",
+      "description": "Referencia al AlbumAISelection que produjo el an\u00e1lisis (trazabilidad)."
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "e4"
+      ],
+      "default": "e4",
+      "description": "Etapa que produjo este an\u00e1lisis individual."
+    },
+    "dims": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Scoring multidimensional IA: technical, aesthetic, people (0-100 o null)."
+    },
+    "confidence": {
+      "type": "number",
+      "default": 0,
+      "description": "Confianza del an\u00e1lisis (0-100)."
+    },
+    "reasons": {
+      "type": "string",
+      "description": "Explicaci\u00f3n breve en espa\u00f1ol (embudo del fot\u00f3grafo)."
+    },
+    "local_tech": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "M\u00e9tricas t\u00e9cnicas calculadas LOCALMENTE en el navegador (E2): sharpness, exposure, contrast, wb_cast."
+    },
+    "provider": {
+      "type": "string",
+      "description": "Proveedor IA que sirvi\u00f3 el an\u00e1lisis (gemini_paid | qwen | nvidia)."
+    },
+    "model": {
+      "type": "string",
+      "description": "Modelo usado."
+    }
+  },
+  "required": [
+    "project_id",
+    "photo_id"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}
