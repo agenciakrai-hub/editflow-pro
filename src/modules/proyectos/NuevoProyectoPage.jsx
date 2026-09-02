@@ -158,7 +158,10 @@ export default function NuevoProyectoPage() {
         }))
       );
       toast({ title: "Proyecto guardado", description: `${items.length} fotos · ${selCount} seleccionadas` });
-      navigate(`/proyectos/${project.id}`);
+      // Al guardar, va directamente a la herramienta de Selección (que lee las fotos del
+      // proyecto y muestra el botón "Seleccionar" para analizar con IA + la revisión),
+      // no a la página de resumen del detalle.
+      navigate(`/dashboard?project=${project.id}`);
     } catch (e) {
       toast({ title: "No se pudo guardar", description: e?.message, variant: "destructive" });
     }
