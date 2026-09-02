@@ -27,7 +27,7 @@ export default function AIProviders() {
     gemini_endpoint: "https://generativelanguage.googleapis.com/v1beta",
     gemini_model: "gemini-3.6-flash",
     active_seleccion: "base44",
-    active_ajustes: "base44",
+    active_ajustes: "qwen",
   });
 
   const [testingQwen, setTestingQwen] = useState(false);
@@ -67,6 +67,14 @@ export default function AIProviders() {
       setNvidiaKeyPresent(!!data.nvidia_key_present);
       setGeminiKeyPresent(!!data.gemini_key_present);
       if (data.config) {
+        const kp = !!data.qwen_key_present;
+        const np = !!data.nvidia_key_present;
+        const gp = !!data.gemini_key_present;
+        // Para Ajustes IA solo sirven Qwen/NVIDIA/Gemini. Si el valor guardado no es
+        // usable (Base44, personalizado o sin key), cae al primero disponible.
+        const usableAjustes = (v) => (v === "qwen" && kp) || (v === "nvidia" && np) || (v === "gemini" && gp);
+        const ajustesRaw = data.config.active_ajustes || "base44";
+        const active_ajustes = usableAjustes(ajustesRaw) ? ajustesRaw : (kp ? "qwen" : np ? "nvidia" : gp ? "gemini" : "qwen");
         setForm({
           qwen_enabled: !!data.config.qwen_enabled,
           qwen_endpoint: data.config.qwen_endpoint || "",
@@ -78,7 +86,7 @@ export default function AIProviders() {
           gemini_endpoint: data.config.gemini_endpoint || "https://generativelanguage.googleapis.com/v1beta",
           gemini_model: data.config.gemini_model || "gemini-3.6-flash",
           active_seleccion: data.config.active_seleccion || "base44",
-          active_ajustes: data.config.active_ajustes || "base44",
+          active_ajustes,
         });
       }
       await loadCustom();
@@ -265,6 +273,31 @@ export default function AIProviders() {
 
   const customOptions = customProviders.map((p) => ({ value: `custom:${p.id}`, label: p.name }));
 
+  // Usabilidad de cada proveedor según key presente + último resultado de test (si hay).
+  // Para Ajustes IA (Revelado Visual / Híbrido) SOLO sirven Qwen, NVIDIA o Gemini: el
+  // motor los fuerza y nunca usa Base44 ni los personalizados.
+  const qwenUsable = qwenKeyPresent && (qwenResult ? !!qwenResult.ok : true);
+  const nvidiaUsable = nvidiaKeyPresent && (nvidiaResult ? !!nvidiaResult.ok : true);
+  const geminiUsable = geminiKeyPresent && (geminiResult ? !!geminiResult.ok : true);
+  const customUsable = (p) => !!p.enabled && p.last_ok !== false;
+  const usableForAjustes = (val) => {
+    if (val === "qwen") return qwenUsable;
+    if (val === "gemini") return geminiUsable;
+    if (val === "nvidia") return nvidiaUsable;
+    return false; // base44, personalizados y "none" no se usan en Ajustes
+  };
+  const usableForSeleccion = (val) => {
+    if (val === "base44" || val === "none") return true;
+    if (val === "qwen") return qwenUsable;
+    if (val === "gemini") return geminiUsable;
+    if (val === "nvidia") return nvidiaUsable;
+    if (val.startsWith("custom:")) {
+      const p = customProviders.find((c) => `custom:${c.id}` === val);
+      return p ? customUsable(p) : false;
+    }
+    return false;
+  };
+
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
@@ -333,13 +366,13 @@ export default function AIProviders() {
           <div className="space-y-2 pt-2">
             <p className="text-sm font-medium">Modelos añadidos</p>
             {customProviders.map((p) => (
-              <div key={p.id} className="flex items-center gap-3 rounded-lg border border-border bg-background p-3">
+              <div key={p.id} className={`flex items-center gap-3 rounded-lg border border-border bg-background p-3 ${customUsable(p) ? "" : "opacity-60"}`}>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-medium">{p.name}</p>
-                    {p.last_ok
+                    <p className={`truncate text-sm font-medium ${customUsable(p) ? "" : "text-muted-foreground"}`}>{p.name}</p>
+                    {customUsable(p)
                       ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700"><CheckCircle2 className="h-3 w-3" /> OK</span>
-                      : <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700"><XCircle className="h-3 w-3" /> Error</span>}
+                      : <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground"><Power className="h-3 w-3" /> Apagado</span>}
                     {!p.enabled && <span className="rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground">Deshabilitado</span>}
                   </div>
                   <p className="mt-0.5 truncate text-xs text-muted-foreground">{p.model} · {p.endpoint}</p>
@@ -364,8 +397,11 @@ export default function AIProviders() {
       </div>
 
       {/* Qwen */}
-      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-        <p className="text-sm font-semibold">Qwen — DashScope (OpenAI-compatible)</p>
+      <div className={`rounded-xl border border-border bg-card p-5 space-y-4 ${qwenKeyPresent ? "" : "opacity-70"}`}>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-semibold">Qwen — DashScope (OpenAI-compatible)</p>
+          <AvailabilityPill usable={qwenUsable} />
+        </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Endpoint base</label>
           <input value={form.qwen_endpoint} onChange={(e) => setForm({ ...form, qwen_endpoint: e.target.value })}
@@ -392,10 +428,11 @@ export default function AIProviders() {
       </div>
 
       {/* NVIDIA */}
-      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+      <div className={`rounded-xl border border-border bg-card p-5 space-y-4 ${nvidiaKeyPresent ? "" : "opacity-70"}`}>
         <div className="flex items-center gap-2">
           <Cpu className="h-4 w-4 text-accent" />
           <p className="text-sm font-semibold">NVIDIA NIM — MiniMax M3 (experimental)</p>
+          <AvailabilityPill usable={nvidiaUsable} />
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Endpoint base</label>
@@ -440,8 +477,11 @@ export default function AIProviders() {
       </div>
 
       {/* Gemini */}
-      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-        <p className="text-sm font-semibold">Google Gemini (generativelanguage)</p>
+      <div className={`rounded-xl border border-border bg-card p-5 space-y-4 ${geminiKeyPresent ? "" : "opacity-70"}`}>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-semibold">Google Gemini (generativelanguage)</p>
+          <AvailabilityPill usable={geminiUsable} />
+        </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Endpoint base</label>
           <input value={form.gemini_endpoint} onChange={(e) => setForm({ ...form, gemini_endpoint: e.target.value })}
@@ -478,10 +518,10 @@ export default function AIProviders() {
           <select value={form.active_seleccion} onChange={(e) => setForm({ ...form, active_seleccion: e.target.value })}
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
             <option value="base44">Base44 (InvokeLLM)</option>
-            <option value="qwen">Qwen</option>
-            <option value="gemini">Gemini</option>
-            <option value="nvidia">NVIDIA MiniMax M3</option>
-            {customOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            <option value="qwen" disabled={!usableForSeleccion("qwen")}>Qwen{!usableForSeleccion("qwen") ? " — apagado" : ""}</option>
+            <option value="gemini" disabled={!usableForSeleccion("gemini")}>Gemini{!usableForSeleccion("gemini") ? " — apagado" : ""}</option>
+            <option value="nvidia" disabled={!usableForSeleccion("nvidia")}>NVIDIA MiniMax M3{!usableForSeleccion("nvidia") ? " — apagado" : ""}</option>
+            {customOptions.map((o) => <option key={o.value} value={o.value} disabled={!usableForSeleccion(o.value)}>{o.label}{!usableForSeleccion(o.value) ? " — apagado" : ""}</option>)}
             <option value="none">Ninguno</option>
           </select>
         </div>
@@ -489,16 +529,19 @@ export default function AIProviders() {
           <label className="text-sm font-medium">Ajustes IA</label>
           <select value={form.active_ajustes} onChange={(e) => setForm({ ...form, active_ajustes: e.target.value })}
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
-            <option value="base44">Base44 (InvokeLLM)</option>
-            <option value="qwen">Qwen</option>
-            <option value="gemini">Gemini</option>
-            <option value="nvidia">NVIDIA MiniMax M3</option>
-            {customOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            <option value="none">Ninguno</option>
+            <option value="base44" disabled>Base44 (InvokeLLM) — no disponible para Ajustes</option>
+            <option value="qwen" disabled={!usableForAjustes("qwen")}>Qwen{!usableForAjustes("qwen") ? " — apagado" : ""}</option>
+            <option value="gemini" disabled={!usableForAjustes("gemini")}>Gemini{!usableForAjustes("gemini") ? " — apagado" : ""}</option>
+            <option value="nvidia" disabled={!usableForAjustes("nvidia")}>NVIDIA MiniMax M3{!usableForAjustes("nvidia") ? " — apagado" : ""}</option>
+            {customOptions.map((o) => <option key={o.value} value={o.value} disabled>{o.label} — no disponible para Ajustes</option>)}
+            <option value="none" disabled>Ninguno</option>
           </select>
+          <p className="text-xs text-muted-foreground">
+            Para Ajustes IA (Revelado Visual e Híbrido) solo sirven Qwen, NVIDIA o Gemini: el motor los fuerza y nunca usa Base44 ni los personalizados. Las opciones en gris están apagadas.
+          </p>
         </div>
         <p className="text-xs text-muted-foreground">
-          Los modelos personalizados se usan como proveedores OpenAI-compatible de visión: reciben los mismos prompts y esquemas que Qwen tanto en Selección como en Ajustes, así saben qué hacer en cada herramienta. <span className="font-medium text-foreground">Failover activo:</span> si el proveedor seleccionado falla, la app reintenta automáticamente con el siguiente proveedor habilitado (no se detiene el proceso).
+          Los modelos personalizados se usan como proveedores OpenAI-compatible de visión en Selección: reciben los mismos prompts y esquemas que Qwen. <span className="font-medium text-foreground">Failover activo en Selección:</span> si el proveedor seleccionado falla, la app reintenta automáticamente con el siguiente proveedor habilitado (no se detiene el proceso).
         </p>
       </div>
 
@@ -512,14 +555,20 @@ export default function AIProviders() {
   );
 }
 
+function AvailabilityPill({ usable }) {
+  return usable
+    ? <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700"><CheckCircle2 className="h-3 w-3" /> Disponible</span>
+    : <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2 py-0.5 text-xs text-muted-foreground"><Power className="h-3 w-3" /> Apagado</span>;
+}
+
 function KeyBadge({ present, name }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-4 flex items-center gap-3">
-      {present ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> : <XCircle className="h-5 w-5 text-red-500" />}
+    <div className={`rounded-xl border border-border bg-card p-4 flex items-center gap-3 ${present ? "" : "opacity-60"}`}>
+      {present ? <CheckCircle2 className="h-5 w-5 text-emerald-500" /> : <Power className="h-5 w-5 text-muted-foreground" />}
       <div>
-        <p className="text-sm font-medium">Clave {name}</p>
+        <p className={`text-sm font-medium ${present ? "" : "text-muted-foreground"}`}>Clave {name}</p>
         <p className="text-xs text-muted-foreground">
-          {present ? "Configurada en Base44 → Secrets." : "No configurada. Introdúcela en Base44 → Settings → Secrets."}
+          {present ? "Configurada en Base44 → Secrets." : "No configurada — proveedor apagado."}
         </p>
       </div>
     </div>
