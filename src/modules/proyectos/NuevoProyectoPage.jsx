@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, FileText, Loader2, Save, ArrowLeft } from "lucide-react";
+import { FolderOpen, FileText, Loader2, ArrowLeft } from "lucide-react";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { computeFingerprint, statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { saveHandle } from "./lib/idbHandles";
 import { createProject, createCatalogBinding, bulkCreateFingerprints } from "./hooks/useProjectStore";
-import PhotoFingerprintGrid from "./components/PhotoFingerprintGrid";
+import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
 import { useToast } from "@/components/ui/use-toast";
 import { setPendingProjectPreviews } from "@/lib/rawaistudio/localSession";
 import { cachePreviews } from "./lib/previewCache";
@@ -28,6 +28,9 @@ export default function NuevoProyectoPage() {
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [phase, setPhase] = useState("extracting");
+  // Selección múltiple para eliminar + densidad del grid.
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [gridCols, setGridCols] = useState(5);
 
   const pickCatalog = async () => {
     try {
@@ -90,6 +93,22 @@ export default function NuevoProyectoPage() {
 
   const cycleStatus = (id) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: SELECTION_CYCLE[it.status] || "REVIEW" } : it)));
+  };
+
+  const toggleSelect = (id) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  const toggleSelectAll = () =>
+    setSelectedIds((prev) => (prev.size === items.length ? new Set() : new Set(items.map((it) => it.id))));
+
+  const deleteSelected = () => {
+    if (selectedIds.size === 0) return;
+    setItems((prev) => prev.filter((it) => !selectedIds.has(it.id)));
+    setSelectedIds(new Set());
   };
 
   const save = async () => {
@@ -158,14 +177,22 @@ export default function NuevoProyectoPage() {
         }))
       );
       toast({ title: "Proyecto guardado", description: `${items.length} fotos · ${selCount} seleccionadas` });
-      // Al guardar, va directamente a la herramienta de Selección (que lee las fotos del
-      // proyecto y muestra el botón "Seleccionar" para analizar con IA + la revisión),
-      // no a la página de resumen del detalle.
-      navigate(`/dashboard?project=${project.id}`);
+      return project.id;
     } catch (e) {
       toast({ title: "No se pudo guardar", description: e?.message, variant: "destructive" });
+      return null;
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
+  };
+
+  const goSeleccion = async () => {
+    const id = await save();
+    if (id) navigate(`/dashboard?project=${id}`);
+  };
+  const goEditar = async () => {
+    const id = await save();
+    if (id) navigate("/ajustes-ia");
   };
 
   return (
@@ -235,23 +262,20 @@ export default function NuevoProyectoPage() {
       )}
 
       {!extracting && items.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            {items.length} fotos · toca cada tarjeta para cambiar su estado (A revisar → Seleccionada → Top pick → Descartada).
-          </p>
-          <PhotoFingerprintGrid
-            items={items.map((it) => ({ id: it.id, filename: it.file.name, status: it.status, previewUrl: it.preview?.dataUrl }))}
-            onCycleStatus={cycleStatus}
-          />
-          <button
-            onClick={save}
-            disabled={saving}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground disabled:opacity-40"
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Guardar proyecto
-          </button>
-        </div>
+        <ProjectPhotoWorkspace
+          items={items.map((it) => ({ id: it.id, filename: it.file.name, status: it.status, previewUrl: it.preview?.dataUrl }))}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+          onToggleSelectAll={toggleSelectAll}
+          onDeleteSelected={deleteSelected}
+          onCycleStatus={cycleStatus}
+          gridCols={gridCols}
+          onGridCols={setGridCols}
+          saving={saving}
+          onSave={save}
+          onGoSeleccion={goSeleccion}
+          onGoEditar={goEditar}
+        />
       )}
     </div>
   );
