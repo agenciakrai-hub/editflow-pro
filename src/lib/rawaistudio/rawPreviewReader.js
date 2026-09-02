@@ -87,6 +87,36 @@ function findOrientationInSegments(segments) {
   return 1;
 }
 
+// Escanea el buffer buscando la firma "Exif\0\0" (presente en el box Exif de CR3 y en
+// JPEG sueltos) y lee el tag Orientation (0x0112) de su IFD0. Más fiable para CR3 (y
+// otros contenedores ISO-BMFF) que buscar solo dentro de los APP1 del JPEG embebido,
+// que a veces no llevan su propio bloque de orientación.
+function readExifOrientationFromSignature(bytes) {
+  const SIG = [0x45, 0x78, 0x69, 0x66, 0x00, 0x00]; // "Exif\0\0"
+  const len = bytes.length;
+  for (let i = 0; i < len - 8; i++) {
+    if (
+      bytes[i] === SIG[0] && bytes[i + 1] === SIG[1] && bytes[i + 2] === SIG[2] &&
+      bytes[i + 3] === SIG[3] && bytes[i + 4] === SIG[4] && bytes[i + 5] === SIG[5]
+    ) {
+      const tiffStart = i + 6;
+      if (tiffStart + 8 > len) continue;
+      const little = bytes[tiffStart] === 0x49;
+      if (readU16(bytes, tiffStart + 2, little) !== 0x2a) continue;
+      const ifd0Offset = readU32(bytes, tiffStart + 4, little);
+      if (tiffStart + ifd0Offset + 2 > len) continue;
+      const numEntries = readU16(bytes, tiffStart + ifd0Offset, little);
+      for (let k = 0; k < numEntries; k++) {
+        const entryOffset = tiffStart + ifd0Offset + 2 + k * 12;
+        if (entryOffset + 12 > len) break;
+        if (readU16(bytes, entryOffset, little) === 0x0112) return readU16(bytes, entryOffset + 8, little);
+      }
+      // Sin tag Orientation en este bloque EXIF: sigue buscando otros "Exif\0\0".
+    }
+  }
+  return null;
+}
+
 // Lee el tag Orientation (0x0112) directamente del IFD0 del propio contenedor TIFF/DNG —
 // la fuente más fiable para RAW basados en TIFF (DNG y varios otros), ya que no depende de
 // que exista o no un JPEG embebido con su propio bloque Exif.
@@ -226,16 +256,17 @@ export async function extractRawPreview(file, maxEdge = 800, { autoRotate = true
   // propio archivo (la fuente más fiable). Para CR3 y similares (contenedor ISO-BMFF, sin
   // TIFF) se busca en cualquiera de los JPEG embebidos, no solo en el elegido como preview.
   const tiffOrientation = readTiffOrientation(bytes);
+  const sigOrientation = readExifOrientationFromSignature(bytes);
 
   const segments = findEmbeddedJpegSegments(bytes);
   if (segments.length) {
     const jpegBytes = segments.reduce((best, seg) => (seg.length > best.length ? seg : best));
-    const orientation = tiffOrientation || findOrientationInSegments(segments);
+    const orientation = tiffOrientation || sigOrientation || findOrientationInSegments(segments);
     const rotationDeg = autoRotate ? orientationToDegrees(orientation) : 0;
     return analyzeJpegBytes(jpegBytes, maxEdge, rotationDeg);
   }
 
-  const rotationDeg = autoRotate ? orientationToDegrees(tiffOrientation || 1) : 0;
+  const rotationDeg = autoRotate ? orientationToDegrees(tiffOrientation || sigOrientation || 1) : 0;
   const dngPreview = extractDngPreview(bytes);
   if (dngPreview?.type === "jpeg") return analyzeJpegBytes(dngPreview.bytes, maxEdge, rotationDeg);
   if (dngPreview?.type === "rgb") return analyzeRgbThumb(dngPreview, maxEdge, rotationDeg);
