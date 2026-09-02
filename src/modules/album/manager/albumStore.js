@@ -14,6 +14,7 @@ export function useAlbumStore(project, initialSpreads) {
   const [selectedSpreadId, setSelectedSpreadId] = useState(initialSpreads.length ? initialSpreads[0].id : null);
   const [selectedSlotId, setSelectedSlotId] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [hist, setHist] = useState({ canUndo: false, canRedo: false });
   const spreadsRef = useRef(spreads);
   useEffect(() => { spreadsRef.current = spreads; }, [spreads]);
@@ -47,17 +48,22 @@ export function useAlbumStore(project, initialSpreads) {
     scheduleSave();
   }, [pushHistory, scheduleSave]);
 
+  // P3 — el autosave nunca falla en silencio: los cambios pendientes SOLO se quitan de
+  // la cola si su escritura tuvo éxito; si algo falla, se avisará al usuario (banner con
+  // reintentar) y el estado local permanece intacto.
   const flush = useCallback(async () => {
     if (!dirtyRef.current.size && !deletedRef.current.size) return;
     setSaving(true);
+    let failed = false;
     try {
       for (const id of Array.from(deletedRef.current)) {
-        dirtyRef.current.delete(id);
-        try { await deleteSpread(id); } catch {}
+        try {
+          await deleteSpread(id);
+          deletedRef.current.delete(id);
+          dirtyRef.current.delete(id);
+        } catch { failed = true; }
       }
-      deletedRef.current.clear();
       for (const [id, data] of Array.from(dirtyRef.current.entries())) {
-        dirtyRef.current.delete(id);
         const payload = {
           project_id: project.id,
           order_index: data.order_index,
@@ -71,23 +77,30 @@ export function useAlbumStore(project, initialSpreads) {
           try {
             const rec = await createSpread(payload);
             remapRef.current.set(id, rec.id);
+            dirtyRef.current.delete(id);
             setSpreads((prev) => prev.map((s) => (s.id === id ? { ...s, id: rec.id } : s)));
             setSelectedSpreadId((cur) => (cur === id ? rec.id : cur));
-          } catch {}
+          } catch { failed = true; }
         } else {
-          try { await updateSpread(id, payload); } catch {}
+          try {
+            await updateSpread(id, payload);
+            dirtyRef.current.delete(id);
+          } catch { failed = true; }
         }
       }
       const target = spreadsRef.current.length ? "designing" : null;
       if (target && target !== project.status) {
-        try { await updateAlbum(project.id, { status: target }); } catch {}
+        try { await updateAlbum(project.id, { status: target }); } catch { failed = true; }
       }
+      setSaveError(failed ? "No se pudo guardar parte del álbum. Tus cambios siguen en pantalla y se reintentarán." : null);
     } finally {
       setSaving(false);
     }
   }, [project]);
 
   useEffect(() => { flushRef.current = flush; }, [flush]);
+  // P4 — el timer de autosave nunca sobrevive al desmontaje del editor.
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   // ---- Spreads ----
   const addSpread = useCallback((layoutId = null) => {
@@ -264,6 +277,6 @@ export function useAlbumStore(project, initialSpreads) {
     setSpreadLayoutById, setLocked,
     updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
-    undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, flush,
+    undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,
   };
 }

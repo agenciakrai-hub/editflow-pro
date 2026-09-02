@@ -47,3 +47,8 @@ export async function updateSpread(id, patch) {
 export async function deleteSpread(id) {
   return base44.entities.AlbumSpread.delete(id);
 }
+
+// P1 — marca como "ok" fotos cuya preview se restauró al re-importar la carpeta.
+export async function markPhotosPreviewOk(list) {
+  return base44.entities.AlbumPhoto.bulkUpdate(list);
+}

@@ -11,6 +11,8 @@ export default function SlotFrame({ slot, photo, previewUrl, ppm, selected, lock
   const wheelTs = useRef(0);
   const elRef = useRef(null);
 
+  // P5 — un solo gesto activo; los listeners se limpian en mouseup Y al desmontar.
+  const gestureCleanupRef = useRef(null);
   const dragWindow = (e, onMove) => {
     const sx = e.clientX;
     const sy = e.clientY;
@@ -18,10 +20,13 @@ export default function SlotFrame({ slot, photo, previewUrl, ppm, selected, lock
     const up = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
+      gestureCleanupRef.current = null;
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
+    gestureCleanupRef.current = up;
   };
+  useEffect(() => () => { if (gestureCleanupRef.current) gestureCleanupRef.current(); }, []);
 
   const panStart = (e) => {
     if (!slot.photo_id || locked) return;

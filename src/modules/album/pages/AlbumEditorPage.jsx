@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Download, Loader2, Redo2, Undo2, ZoomIn, ZoomOut } from "lucide-react";
-import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum } from "@/modules/album/hooks/useAlbumProject";
+import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, markPhotosPreviewOk } from "@/modules/album/hooks/useAlbumProject";
 import { useAlbumStore } from "@/modules/album/manager/albumStore";
 import { getPreview, previewKey } from "@/modules/album/lib/previewStore";
 import { ingestFiles, filesFromFileList, importFromPickedFolder } from "@/modules/album/import/folderImport";
@@ -74,25 +74,37 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     ? { ...selectedSlot, photo: selectedSlot.photo_id ? photosById.get(selectedSlot.photo_id) : null }
     : null;
 
+  // P1 — tras cada importación se refrescan las previews de TODO el catálogo (no solo
+  // de las fotos nuevas): re-importar la misma carpeta restaura previews perdidas en
+  // otro dispositivo sin duplicar fotos y sin tocar spreads/transformaciones.
   const applyImportedMetas = async (metas) => {
-    if (!metas.length) {
-      toast({ title: "Sin fotos nuevas", description: "Ya estaban todas en el catálogo de este álbum." });
-      return;
-    }
-    const created = await addPhotos(metas);
-    setPhotos((prev) => [...prev, ...created]);
+    const created = metas.length ? await addPhotos(metas) : [];
+    const catalog = [...photos, ...created];
     const next = new Map(previews);
-    for (const m of metas) {
-      const url = await getPreview(previewKey(project.id, m.filename));
-      const rec = created.find((c) => c.filename === m.filename);
-      if (url && rec) next.set(rec.id, url);
-    }
+    const restored = [];
+    await Promise.all(catalog.map(async (p) => {
+      const url = await getPreview(previewKey(project.id, p.filename));
+      if (url) next.set(p.id, url);
+      else next.delete(p.id);
+      if (url && p.preview_status === "missing") restored.push(p.id);
+    }));
     setPreviews(next);
-    if (store.spreads.length === 0) {
+    if (created.length) setPhotos((prev) => [...prev, ...created]);
+    if (restored.length) {
+      try {
+        await markPhotosPreviewOk(restored.map((id) => ({ id, preview_status: "ok" })));
+        setPhotos((prev) => prev.map((p) => (restored.includes(p.id) ? { ...p, preview_status: "ok" } : p)));
+      } catch {}
+    }
+    if (created.length && store.spreads.length === 0) {
       setProject((p) => ({ ...p, status: "imported" }));
       updateAlbum(project.id, { status: "imported" }).catch(() => {});
     }
-    toast({ title: "Fotos importadas", description: `${metas.length} nuevas en el catálogo.` });
+    if (!created.length && !restored.length) {
+      toast({ title: "Sin cambios", description: "No había fotos nuevas ni previews que restaurar." });
+    } else {
+      toast({ title: "Importación completa", description: `${created.length} nueva(s) · ${restored.length} preview(s) restaurada(s).` });
+    }
   };
 
   const importFolder = async () => {
@@ -202,6 +214,15 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         <span className="ml-auto text-muted-foreground">Arrastra una foto del panel a un hueco · rueda sobre la foto = zoom · arrastra la foto = recorte virtual</span>
       </div>
 
+      {store.saveError && (
+        <div className="flex items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <span>{store.saveError}</span>
+          <button onClick={() => store.retrySave()} className="ml-auto shrink-0 rounded-lg border border-destructive/50 px-2.5 py-1 font-semibold hover:bg-destructive/20">
+            Reintentar guardado
+          </button>
+        </div>
+      )}
+
       <AlbumOverview
         album={project}
         spreads={store.spreads}
@@ -229,8 +250,14 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
             total={store.spreads.length}
             hasSpread={!!spread}
             locked={locked}
-            onPrev={() => store.moveSpread(spreadId, -1)}
-            onNext={() => store.moveSpread(spreadId, 1)}
+            onPrev={() => {
+              const i = store.spreads.findIndex((s) => s.id === spreadId);
+              if (i > 0) { store.selectSpread(store.spreads[i - 1].id); store.selectSlot(null); }
+            }}
+            onNext={() => {
+              const i = store.spreads.findIndex((s) => s.id === spreadId);
+              if (i >= 0 && i < store.spreads.length - 1) { store.selectSpread(store.spreads[i + 1].id); store.selectSlot(null); }
+            }}
             onAdd={() => store.addSpread()}
             onDuplicate={() => store.duplicateSpreadById(spreadId)}
             onDelete={() => store.deleteSpreadById(spreadId)}

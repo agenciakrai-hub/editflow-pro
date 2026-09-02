@@ -30,6 +30,20 @@ export default function AlbumCreateForm({ creating, onCreate, onCancel }) {
     }
   };
 
+  // P6 — al cambiar de unidad se CONVIERTEN los valores escritos (30 cm pasa a 300 mm),
+  // nunca se reinterpretedan. La geometría interna siempre termina en mm canónicos.
+  const convertValue = (v, from, to) => {
+    const n = Number(v);
+    if (v === "" || !isFinite(n)) return v;
+    const mm = from === "cm" ? n * 10 : n;
+    return String(Math.round((to === "cm" ? mm / 10 : mm) * 100) / 100);
+  };
+  const changeUnit = (to) => {
+    setWidth((w) => convertValue(w, unit, to));
+    setHeight((h) => convertValue(h, unit, to));
+    setUnit(to);
+  };
+
   const orientation = useMemo(() => {
     const w = unitToMm(width, unit);
     const h = unitToMm(height, unit);
@@ -84,7 +98,7 @@ export default function AlbumCreateForm({ creating, onCreate, onCancel }) {
         </div>
         <div className="col-span-2 flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Unidad:</span>
-          <select className="rounded-lg border border-border bg-background px-2 py-1 text-sm" value={unit} onChange={(e) => setUnit(e.target.value)}>
+          <select className="rounded-lg border border-border bg-background px-2 py-1 text-sm" value={unit} onChange={(e) => changeUnit(e.target.value)}>
             <option value="cm">cm</option>
             <option value="mm">mm</option>
           </select>

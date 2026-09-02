@@ -54,16 +54,20 @@ export async function makePreview(file, maxEdge = 640) {
   }
 }
 
-// Convierte archivos en metadatos AlbumPhoto + previews locales. Ignora duplicados por
-// nombre dentro del mismo proyecto ("añadir más fotos después" es seguro).
+// P1 — Convierte archivos en previews locales + metadatos AlbumPhoto. SIEMPRE genera y
+// cachea la preview de cada archivo (aunque la foto ya exista en el catálogo): así
+// re-importar la misma carpeta restaura las previews en cualquier dispositivo sin
+// duplicar AlbumPhoto y sin tocar spreads ni transformaciones. Solo se crean registros
+// para fotos nuevas (duplicados por nombre ignorados).
 export async function ingestFiles(projectId, files, existingNames, onProgress) {
   const metas = [];
   let done = 0;
   for (const f of files) {
-    if (!existingNames.has(f.name)) {
-      let p = null;
-      try { p = await makePreview(f); } catch { p = null; }
-      if (p?.dataUrl) await putPreview(previewKey(projectId, f.name), p.dataUrl);
+    const exists = existingNames.has(f.name);
+    let p = null;
+    try { p = await makePreview(f); } catch { p = null; }
+    if (p?.dataUrl) await putPreview(previewKey(projectId, f.name), p.dataUrl);
+    if (!exists) {
       metas.push({
         project_id: projectId,
         filename: f.name,
