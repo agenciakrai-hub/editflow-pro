@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2 } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
+import Lightbox from "@/components/Lightbox";
 
 // Espacio de trabajo a pantalla completa para las fotos subidas al proyecto.
 // Reemplaza al PhotoFingerprintGrid + botón Guardar sueltos. Incluye:
@@ -12,8 +14,14 @@ export default function ProjectPhotoWorkspace({
   items, selectedIds, onToggleSelect, onToggleSelectAll, onDeleteSelected,
   onCycleStatus, gridCols, onGridCols, saving, onSave, onGoSeleccion, onGoEditar,
 }) {
+  const [lightboxIndex, setLightboxIndex] = useState(null);
   const allSelected = items.length > 0 && selectedIds.size === items.length;
   const cols = Math.max(2, Math.min(12, gridCols));
+  // Slider invertido: separar el control de "Tamaño" (izquierda) aumenta el tamaño
+  // de las fotos → menos columnas. valor alto del slider = menos columnas = más grande.
+  const MIN = 2, MAX = 12;
+  const sliderValue = MIN + MAX - cols;
+  const images = items.map((it) => ({ url: it.previewUrl, filename: it.filename }));
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
@@ -42,8 +50,8 @@ export default function ProjectPhotoWorkspace({
           <div className="ml-auto flex items-center gap-2">
             <span className="text-xs text-muted-foreground">Tamaño</span>
             <input
-              type="range" min={2} max={12} value={cols}
-              onChange={(e) => onGridCols(Number(e.target.value))}
+              type="range" min={MIN} max={MAX} value={sliderValue}
+              onChange={(e) => onGridCols(MIN + MAX - Number(e.target.value))}
               className="w-32 accent-accent"
             />
           </div>
@@ -53,7 +61,7 @@ export default function ProjectPhotoWorkspace({
           className="mt-3 grid gap-2"
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
         >
-          {items.map((item) => {
+          {items.map((item, i) => {
             const checked = selectedIds.has(item.id);
             return (
               <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${checked ? "border-accent ring-1 ring-accent" : "border-border"}`}>
@@ -67,7 +75,10 @@ export default function ProjectPhotoWorkspace({
                   </button>
                 </div>
                 {item.previewUrl ? (
-                  <div className="aspect-square w-full bg-black/5">
+                  <div
+                    className="aspect-square w-full cursor-zoom-in bg-black/5"
+                    onClick={() => setLightboxIndex(i)}
+                  >
                     <img src={item.previewUrl} alt={item.filename} className="h-full w-full object-contain" />
                   </div>
                 ) : (
@@ -122,6 +133,16 @@ export default function ProjectPhotoWorkspace({
           </p>
         </div>
       </aside>
+
+      {lightboxIndex != null && (
+        <Lightbox
+          images={images}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onPrev={() => setLightboxIndex((i) => (i > 0 ? i - 1 : i))}
+          onNext={() => setLightboxIndex((i) => (i < images.length - 1 ? i + 1 : i))}
+        />
+      )}
     </div>
   );
 }

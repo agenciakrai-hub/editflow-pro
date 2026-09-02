@@ -17,6 +17,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { getCachedPreviews, cachePreviews } from "@/modules/proyectos/lib/previewCache";
 import PhotoCard from "@/components/rawaistudio/PhotoCard";
 import ReviewFilters from "@/components/rawaistudio/ReviewFilters";
+import Lightbox from "@/components/Lightbox";
 
 // Pantalla de SELECCIÓN (local, mismo diseño que RAW AI Studio). Importa una carpeta de
 // RAW, agrupa ráfagas, la IA marca en verde las mejores tomas, el fotógrafo revisa y
@@ -72,6 +73,7 @@ export default function Seleccion() {
   // Densidad del grid + selección múltiple para eliminar.
   const [gridCols, setGridCols] = useState(6);
   const [bulkIds, setBulkIds] = useState(new Set());
+  const [lightboxIndex, setLightboxIndex] = useState(null);
 
   const onPick = (list) => {
     const raws = Array.from(list || []).filter((f) => isRawFile(f.name) && !isHiddenOrSystemFile(f.name));
@@ -656,7 +658,7 @@ export default function Seleccion() {
               </button>
               <div className="ml-auto flex items-center gap-2">
                 <span className="text-xs text-zinc-500">Tamaño</span>
-                <input type="range" min={2} max={12} value={gridCols} onChange={(e) => setGridCols(Number(e.target.value))} className="w-32 accent-white" />
+                <input type="range" min={2} max={12} value={14 - gridCols} onChange={(e) => setGridCols(14 - Number(e.target.value))} className="w-32 accent-white" />
               </div>
             </div>
 
@@ -666,9 +668,10 @@ export default function Seleccion() {
             </div>
 
             <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}>
-              {visible.map((p) => (
+              {visible.map((p, vi) => (
                 <PhotoCard key={p.id} photo={p} onUpdate={(patch) => update(p.id, patch)}
-                  bulkSelected={bulkIds.has(p.id)} onToggleBulk={() => toggleBulk(p.id)} />
+                  bulkSelected={bulkIds.has(p.id)} onToggleBulk={() => toggleBulk(p.id)}
+                  onOpen={() => setLightboxIndex(vi)} />
               ))}
             </div>
             {!visible.length && <p className="mt-6 text-sm text-zinc-500">No hay fotos con estos filtros.</p>}
@@ -788,6 +791,16 @@ export default function Seleccion() {
         onRelocateCatalog={doResyncCatalog}
         loading={resyncing}
       />
+
+      {lightboxIndex != null && (
+        <Lightbox
+          images={visible.map((p) => ({ url: p.preview?.dataUrl, filename: p.file.name }))}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onPrev={() => setLightboxIndex((i) => (i > 0 ? i - 1 : i))}
+          onNext={() => setLightboxIndex((i) => (i < visible.length - 1 ? i + 1 : i))}
+        />
+      )}
     </div>
   );
 }

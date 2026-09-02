@@ -30,7 +30,7 @@ function ScoreBar({ label, value }) {
   );
 }
 
-export default function PhotoCard({ photo, onUpdate, bulkSelected, onToggleBulk }) {
+export default function PhotoCard({ photo, onUpdate, bulkSelected, onToggleBulk, onOpen }) {
   const [expanded, setExpanded] = useState(false);
   const isSelected = photo.aiSelected || photo.selectedForEdit;
   // Solo rotación manual: las verticales se muestran en vertical (sin auto-rotación ni recorte).
@@ -40,13 +40,13 @@ export default function PhotoCard({ photo, onUpdate, bulkSelected, onToggleBulk 
 
   return (
     <div className={`rounded-md border bg-zinc-900 p-2 ${bulkSelected ? "border-accent ring-1 ring-accent" : "border-zinc-800"}`}>
-      <div className="relative aspect-square w-full overflow-hidden rounded bg-black/40" style={{ transform: `rotate(${rotation}deg)` }}>
+      <div className="relative aspect-square w-full cursor-zoom-in overflow-hidden rounded bg-black/40" style={{ transform: `rotate(${rotation}deg)` }} onClick={() => onOpen?.()}>
         <Image src={photo.preview?.dataUrl} className="h-full w-full" fittingType="fit" />
         <span className={`absolute left-1 top-1 rounded px-1 py-0.5 text-[9px] font-bold ${meta.className}`}>
           {meta.label}
         </span>
         {onToggleBulk && (
-          <button type="button" onClick={onToggleBulk}
+          <button type="button" onClick={(e) => { e.stopPropagation(); onToggleBulk(); }}
             className={`absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded border ${bulkSelected ? "border-accent bg-accent text-accent-foreground" : "border-white/70 bg-black/50 text-transparent hover:bg-black/70"}`}>
             {bulkSelected ? <span className="text-[11px] font-bold leading-none">✓</span> : null}
           </button>
