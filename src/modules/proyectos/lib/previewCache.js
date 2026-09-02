@@ -8,9 +8,15 @@ const STORE = "previews";
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
+    // v2: las previews cacheadas en v1 se generaron sin aplicar la orientación EXIF
+    // correcta (las fotos verticales aparecían tumbadas). Se borra la caché vieja para
+    // forzar la re-extracción con la orientación corregida al reabrir el proyecto.
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = (e) => {
       const db = req.result;
+      if (db.objectStoreNames.contains(STORE)) {
+        try { db.deleteObjectStore(STORE); } catch {}
+      }
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
     };
     req.onsuccess = () => resolve(req.result);
