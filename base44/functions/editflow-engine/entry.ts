@@ -39,6 +39,7 @@ export default async function (req) {
     if (action === "lr-stats") return await doLrStats(base44, user);
     if (action === "lr-catalog-ids") return await doLrCatalogIds(base44, user);
     if (action === "style-corrections") return await doStyleCorrections(base44, user, body);
+    if (action === "seguridad-backup") return await doSeguridadBackup(base44, user);
 
     return Response.json({ error: "Acción no soportada: " + action }, { status: 400 });
   } catch (error) {
@@ -1046,3 +1047,39 @@ correcciones"):
    Classic. Cierra y vuelve a abrir Lightroom para que aparezcan.
 4. Verifica la version en el Administrador de plugins (debe ser 1.1 o superior).
 `;
+
+// action=seguridad-backup — vuelca TODAS las entidades del usuario a un JSON y lo sube
+// a almacenamiento, devolviendo una URL de descarga. Punto de control "SEGURIDAD 1":
+// captura el estado completo de datos guardados hasta la fecha de ejecucion.
+async function doSeguridadBackup(base44, user) {
+  const entities = [
+    "Project", "ProjectPhotoFingerprint", "PresetRegistry", "PhotographerStyle",
+    "Preset", "ExportJob", "CatalogBinding", "PhotographerStyleProfile",
+    "StyleCorrectionRecord", "ProjectProcessingJob", "Base44Purchase",
+    "AiProviderConfig", "CustomAiProvider", "LrJob", "LrToken", "LrCatalogSnapshot",
+  ];
+  const ts = new Date().toISOString();
+  const dump = { checkpoint: "SEGURIDAD-1", generated_at: ts, generated_by: user?.id || null, counts: {}, data: {} };
+  for (const e of entities) {
+    try {
+      const list = await base44.asServiceRole.entities[e].list();
+      dump.data[e] = Array.isArray(list) ? list : [];
+      dump.counts[e] = dump.data[e].length;
+    } catch (err) {
+      dump.data[e] = { error: err?.message || "denied" };
+      dump.counts[e] = -1;
+    }
+  }
+  const json = JSON.stringify(dump, null, 2);
+  const filename = `SEGURIDAD-1-backup-${ts.slice(0, 10)}.json`;
+  let downloadUrl = null;
+  try {
+    const blob = new Blob([json], { type: "application/json" });
+    const file = new File([blob], filename, { type: "application/json" });
+    const res = await base44.integrations.Core.UploadFile({ file });
+    downloadUrl = res?.file_url || null;
+  } catch (err) {
+    console.error("seguridad-backup upload error", err?.message || err);
+  }
+  return Response.json({ ok: !!downloadUrl, checkpoint: "SEGURIDAD-1", generated_at: ts, counts: dump.counts, downloadUrl, fallback_data_url: downloadUrl ? null : ("data:application/json;base64," + btoa(unescape(encodeURIComponent(json)))) });
+}
