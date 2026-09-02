@@ -389,6 +389,19 @@ export default function Seleccion() {
     const fpMap = projectRawItems.length
       ? idToFpId
       : Object.fromEntries(photos.map((p) => [p.id, p.fingerprintId]).filter(([, v]) => v));
+    // RESET explícito al volver a seleccionar: TODAS las fotos vuelven a estado neutro
+    // (sin selección, rating, etiqueta ni estado anterior) antes de que la IA vuelva a
+    // analizarlas. Garantiza que la re-selección parte de cero y no arrastra nada de
+    // selecciones previas. El paso a stage="selecting" evita que el auto-guardado persista
+    // este reset neutro (se sobrescribe al llegar el nuevo resultado de la IA).
+    setPhotos((prev) => prev.map((p) => ({
+      ...p,
+      aiSelected: false, selectedForEdit: false, colorLabel: "none", rating: 0,
+      status: "REVIEW", groupId: null, groupSize: 1, complementary: false,
+      reason: null, overallScore: 0, scores: null, rejectReasons: [],
+      confidence: null, category: null, groupRank: null, analysisComplete: false,
+      selectionFallback: false, fallbackReason: null,
+    })));
     setStage("selecting");
     setTotal(items.length);
     setDone(0);
