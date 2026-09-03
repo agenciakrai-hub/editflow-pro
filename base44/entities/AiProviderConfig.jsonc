@@ -17,8 +17,7 @@
     },
     "nvidia_enabled": {
       "type": "boolean",
-      "default": false,
-      "description": "Proveedor experimental NVIDIA (MiniMax M3). No es proveedor por defecto."
+      "default": false
     },
     "nvidia_endpoint": {
       "type": "string",
@@ -42,8 +41,8 @@
     },
     "gemini_model": {
       "type": "string",
-      "default": "gemini-3.6-flash",
-      "description": "Modelo multimodal de Gemini. Ej: gemini-3.6-flash, gemini-2.5-flash."
+      "default": "gemini-2.5-flash",
+      "description": "Modelo multimodal de Gemini. \u00danico modelo admitido: gemini-2.5-flash."
     },
     "base44_enabled": {
       "type": "boolean",

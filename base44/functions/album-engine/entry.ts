@@ -21,7 +21,7 @@ import { secrets } from "base44:runtime";
 import { invokeVision } from "../../shared/aiProviderAdapter.ts";
 
 const GEMINI_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
-const GEMINI_DEFAULT_MODEL = "gemini-3.6-flash";
+const GEMINI_DEFAULT_MODEL = "gemini-2.5-flash";
 const CHAIN = ["gemini_paid", "qwen", "nvidia"];
 const PROVIDER_TIMEOUT_MS = 120000;
 const MAX_IMAGES = 24;

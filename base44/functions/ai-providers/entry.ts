@@ -19,7 +19,7 @@ import {
 const NVIDIA_DEFAULT_ENDPOINT = 'https://integrate.api.nvidia.com/v1';
 const NVIDIA_DEFAULT_MODEL = 'minimaxai/minimax-m3';
 const GEMINI_DEFAULT_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
-const GEMINI_DEFAULT_MODEL = 'gemini-3.6-flash';
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
 
 export default async function(req: Request): Promise<Response> {
   try {

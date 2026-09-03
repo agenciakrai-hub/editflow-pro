@@ -25,7 +25,7 @@ export default function AIProviders() {
     nvidia_model: "minimaxai/minimax-m3",
     gemini_enabled: false,
     gemini_endpoint: "https://generativelanguage.googleapis.com/v1beta",
-    gemini_model: "gemini-3.6-flash",
+    gemini_model: "gemini-2.5-flash",
     active_seleccion: "base44",
     active_ajustes: "qwen",
   });
@@ -84,7 +84,7 @@ export default function AIProviders() {
           nvidia_model: data.config.nvidia_model || "minimaxai/minimax-m3",
           gemini_enabled: data.config.gemini_enabled !== false,
           gemini_endpoint: data.config.gemini_endpoint || "https://generativelanguage.googleapis.com/v1beta",
-          gemini_model: data.config.gemini_model || "gemini-3.6-flash",
+          gemini_model: data.config.gemini_model || "gemini-2.5-flash",
           active_seleccion: data.config.active_seleccion || "base44",
           active_ajustes,
         });
@@ -491,8 +491,8 @@ export default function AIProviders() {
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Modelo de visión</label>
           <input value={form.gemini_model} onChange={(e) => setForm({ ...form, gemini_model: e.target.value })}
-            placeholder="gemini-3.6-flash" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
-          <p className="text-xs text-muted-foreground">Modelo multimodal de Gemini (ej. gemini-3.6-flash, gemini-2.5-flash).</p>
+            placeholder="gemini-2.5-flash" className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+          <p className="text-xs text-muted-foreground">Modelo multimodal de Gemini. Solo se admite gemini-2.5-flash.</p>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.gemini_enabled} onChange={(e) => setForm({ ...form, gemini_enabled: e.target.checked })} />
