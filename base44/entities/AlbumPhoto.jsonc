@@ -13,6 +13,10 @@
       "type": "string",
       "description": "Ruta relativa dentro de la carpeta importada."
     },
+    "folder": {
+      "type": "string",
+      "description": "Fase Carpetas \u2014 carpeta de organizaci\u00f3n dentro del \u00e1lbum (p. ej. 'Ceremonia'). Es SOLO una etiqueta virtual del navegador de fotos: nunca se mueven ni duplican los archivos originales. Vac\u00edo = sin carpeta (visible en 'Todas')."
+    },
     "orientation": {
       "type": "string",
       "enum": [

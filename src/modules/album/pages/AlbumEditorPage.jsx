@@ -223,6 +223,24 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     return set;
   }, [store.spreads]);
 
+  // Fase Carpetas — organización VIRTUAL de fotos: la lista de nombres vive en el
+  // proyecto (photo_folders) y cada foto guarda su carpeta en 'folder'. Nunca se
+  // tocan los archivos originales.
+  const handleCreateFolder = (name) => {
+    setProject((p) => ({ ...p, photo_folders: [...(p.photo_folders || []), name] }));
+    updateAlbum(project.id, { photo_folders: [...(project.photo_folders || []), name] }).catch(() => {});
+  };
+  const handleMovePhotos = async (ids, folder) => {
+    try {
+      await bulkUpdatePhotos(ids.map((id) => ({ id, folder })));
+    } catch (e) {
+      toast({ title: "No se pudo mover a la carpeta", description: e?.message, variant: "destructive" });
+      return;
+    }
+    const idSet = new Set(ids);
+    setPhotos((prev) => prev.map((p) => (idSet.has(p.id) ? { ...p, folder } : p)));
+  };
+
   const spreadId = spread?.id;
   const locked = !!spread?.locked;
   const slotHandlers = useMemo(() => {
@@ -342,11 +360,15 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         photos={photos}
         previews={thumbs}
         placedPhotoIds={placedPhotoIds}
+        folders={project.photo_folders || []}
+        getPhotoPreview={(id) => getTierPreview(project.id, id, "preview")}
+        onCreateFolder={handleCreateFolder}
+        onMovePhotos={handleMovePhotos}
+        onAddToCanvas={addPhotoFirstEmpty}
         importing={importing}
         progress={progress}
         onImportFolder={importFolder}
         onImportFiles={importFiles}
-        onPhotoDoubleClick={addPhotoFirstEmpty}
         onRelocate={() => setRelocating(true)}
         relocateCount={missingPhotos.length}
       />

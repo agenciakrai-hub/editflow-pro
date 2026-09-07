@@ -1,36 +1,52 @@
-import React, { useRef, useState } from "react";
-import { FolderOpen, ImageOff, Link2, Loader2, Plus, Search } from "lucide-react";
+import React, { useMemo, useRef, useState } from "react";
+import { FolderOpen, Link2, Loader2, Plus, Search } from "lucide-react";
+import FolderTabs from "@/modules/album/shell/photoBrowser/FolderTabs";
+import ThumbStrip from "@/modules/album/shell/photoBrowser/ThumbStrip";
+import PhotoZoom from "@/modules/album/shell/photoBrowser/PhotoZoom";
 
-// Fase 5.2 — Navegador de fotos (franja inferior, ancho completo): filmstrip
-// arrastrable de TODO el catálogo importado. `previews` son los THUMBS de nivel 1
-// (256 px); los originales jamás se tocan.
-export default function PhotoBrowser({ photos, previews, placedPhotoIds, importing, progress, onImportFolder, onImportFiles, onPhotoDoubleClick, onRelocate, relocateCount }) {
+// Fase Carpetas — navegador de fotos del editor. Organización VIRTUAL por carpetas
+// (etiqueta 'folder' por foto + lista de nombres en el proyecto): los archivos
+// originales nunca se mueven ni duplican. Línea 1: carpetas con contadores; línea 2:
+// buscador, filtro "Sin colocar" (intacto) y slider de tamaño de miniaturas; área
+// principal: tira horizontal navegable de la carpeta seleccionada. Clic en una foto =
+// visualización ampliada (no toca crop ni transformaciones); arrastre = hueco de
+// lienzo o pestaña de carpeta. Drag & drop, importación y relocalización intactos.
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount }) {
   const [q, setQ] = useState("");
-  const [only, setOnly] = useState("all");
+  const [folder, setFolder] = useState("__all__");
+  const [onlyUnplaced, setOnlyUnplaced] = useState(false);
+  const [thumbSize, setThumbSize] = useState(96);
+  const [zoomIndex, setZoomIndex] = useState(null);
   const inputRef = useRef(null);
+
   const matchesQ = (p) => !q || p.filename.toLowerCase().includes(q.toLowerCase());
-  // "Sin colocar" muestra las fotos que no están en ningún hueco de ningún lienzo
-  // (p. ej. sobrantes al cambiar una plantilla): nunca se eliminan automáticamente.
-  const list = only === "unplaced"
-    ? photos.filter((p) => !placedPhotoIds?.has(p.id) && matchesQ(p))
-    : photos.filter(matchesQ);
+  // La carpeta seleccionada filtra la lista; "Sin colocar" se aplica dentro de ella.
+  const list = photos.filter((p) =>
+    (folder === "__all__" || p.folder === folder) &&
+    (!onlyUnplaced || !placedPhotoIds?.has(p.id)) &&
+    matchesQ(p)
+  );
+  const counts = useMemo(() => {
+    const m = {};
+    photos.forEach((p) => { if (p.folder) m[p.folder] = (m[p.folder] || 0) + 1; });
+    return m;
+  }, [photos]);
+
+  const createFolder = () => {
+    const name = window.prompt("Nombre de la nueva carpeta:", "");
+    const trimmed = String(name || "").trim();
+    if (!trimmed || folders.includes(trimmed)) return;
+    onCreateFolder(trimmed);
+  };
 
   return (
-    <div className="flex h-36 shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
-      <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
-        <p className="text-xs font-semibold">Fotos <span className="font-normal text-muted-foreground">({photos.length})</span></p>
-        <div className="relative ml-2 w-44">
-          <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre…"
-            className="h-7 w-full rounded-lg border border-border bg-background pl-7 pr-2 text-[11px]" />
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {[["all", "Todas"], ["unplaced", "Sin colocar"]].map(([k, label]) => (
-            <button key={k} onClick={() => setOnly(k)}
-              className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (only === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
-              {label}
-            </button>
-          ))}
+    <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
+      {/* Línea 1 — carpetas de organización */}
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
+        <p className="shrink-0 text-xs font-semibold">Fotos <span className="font-normal text-muted-foreground">({photos.length})</span></p>
+        <div className="min-w-0 flex-1">
+          <FolderTabs folders={folders} counts={counts} total={photos.length} active={folder}
+            onSelect={setFolder} onCreate={createFolder} onDropPhoto={(id, f) => onMovePhotos([id], f)} />
         </div>
         <button onClick={onImportFolder} disabled={importing}
           className="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-40">
@@ -50,28 +66,41 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, importi
           </button>
         )}
       </div>
-      <div className="flex flex-1 items-stretch gap-2 overflow-x-auto p-2 scrollbar-hide">
-        {list.map((p) => (
-          <div key={p.id} title={p.filename + (previews.get(p.id) ? "" : " · sin preview local")} draggable
-            onDragStart={(e) => { e.dataTransfer.setData("text/album-photo", p.id); e.dataTransfer.effectAllowed = "copy"; }}
-            onDoubleClick={() => onPhotoDoubleClick(p.id)}
-            className="aspect-square shrink-0 cursor-grab overflow-hidden rounded-lg border border-border bg-secondary">
-            {previews.get(p.id) ? (
-              <img src={previews.get(p.id)} draggable={false} alt={p.filename} className="h-full w-full object-cover" />
-            ) : (
-              <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-muted-foreground">
-                <ImageOff className="h-4 w-4" />
-                {p.preview_status === "unlinked" && <span className="text-[9px] font-medium">desvinculada</span>}
-              </div>
-            )}
-          </div>
-        ))}
-        {!list.length && (
-          <p className="self-center px-2 text-[11px] leading-5 text-muted-foreground">
-            Importa la carpeta con las fotos finales exportadas desde Lightroom. Arrastra cualquier foto a un hueco del spread · doble clic la añade al primer hueco libre.
-          </p>
-        )}
+
+      {/* Línea 2 — controles de visualización */}
+      <div className="flex flex-wrap items-center gap-3 border-b border-border px-3 py-1.5">
+        <div className="relative w-44">
+          <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre…"
+            className="h-7 w-full rounded-lg border border-border bg-background pl-7 pr-2 text-[11px]" />
+        </div>
+        <button onClick={() => setOnlyUnplaced((v) => !v)}
+          className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (onlyUnplaced ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
+          Sin colocar ({placedPhotoIds ? photos.length - placedPhotoIds.size : photos.length})
+        </button>
+        <label className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+          Miniaturas
+          <input type="range" min="56" max="200" step="4" value={thumbSize}
+            onChange={(e) => setThumbSize(Number(e.target.value))}
+            className="w-28 accent-foreground" />
+          <span className="w-9 tabular-nums">{thumbSize}px</span>
+        </label>
       </div>
+
+      {/* Área principal — miniaturas de la carpeta seleccionada */}
+      <div style={{ height: thumbSize + 24 }}>
+        <ThumbStrip photos={list} previews={previews} thumbSize={thumbSize}
+          placedPhotoIds={placedPhotoIds}
+          onZoom={(p) => setZoomIndex(list.findIndex((x) => x.id === p.id))}
+          emptyHint="Importa la carpeta con las fotos finales exportadas desde Lightroom. Arrastra cualquier foto a un hueco del lienzo (o a una pestaña de carpeta) · clic para ampliarla." />
+      </div>
+
+      {zoomIndex != null && list[zoomIndex] && (
+        <PhotoZoom photos={list} index={zoomIndex} thumbs={previews}
+          getPhotoPreview={getPhotoPreview} folders={folders}
+          onMoveFolder={onMovePhotos} onAddToCanvas={onAddToCanvas}
+          onClose={() => setZoomIndex(null)} onIndex={setZoomIndex} />
+      )}
     </div>
   );
 }

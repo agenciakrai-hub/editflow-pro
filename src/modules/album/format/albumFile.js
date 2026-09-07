@@ -34,6 +34,7 @@ export function buildAlbumDocument(project, photos, spreads) {
       // Fase Lienzos — aditivo: espacio entre fotos y color de fondo del lienzo.
       photo_gap_mm: project.photo_gap_mm ?? 0,
       background_color: project.background_color ?? "#FFFFFF",
+      photo_folders: project.photo_folders ?? [],
     },
     photos: (photos || []).map((p) => ({
       photo_id: p.id,
@@ -45,6 +46,8 @@ export function buildAlbumDocument(project, photos, spreads) {
       ai_rank: p.ai_rank ?? null,
       ai_scores: p.ai_scores ?? null,
       ai_category: p.ai_category ?? null,
+      // Fase Carpetas — carpeta de organización (etiqueta virtual, opcional).
+      folder: p.folder ?? null,
       // v2 — identidad multicapa (Fase 3 §2). Ausentes en documentos v1: el importador
       // los trata como opcionales y nunca fallan por su falta.
       file_size: p.file_size ?? null,
@@ -121,6 +124,7 @@ export async function importAlbumDocument(doc) {
     style_hint: a.style_hint || "minimal",
     photo_gap_mm: a.photo_gap_mm ?? 0,
     background_color: a.background_color ?? "#FFFFFF",
+    photo_folders: a.photo_folders ?? [],
     source_folder_name: "importado",
     doc_version: doc.format_version >= 2 ? "v2" : "v1",
   });
@@ -139,7 +143,8 @@ export async function importAlbumDocument(doc) {
     ...(p.phash ? { phash: p.phash } : {}),
     ...(p.width_px != null ? { width_px: p.width_px } : {}),
     ...(p.height_px != null ? { height_px: p.height_px } : {}),
-  }));
+    ...(p.folder ? { folder: p.folder } : {}),
+    }));
   if (photoMetas.length) {
     const created = await addPhotos(photoMetas);
     (doc.photos || []).forEach((p, i) => { if (created[i]) idMap.set(p.photo_id, created[i].id); });

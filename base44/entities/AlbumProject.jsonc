@@ -67,6 +67,13 @@
       "default": "#FFFFFF",
       "description": "Fase Lienzos \u2014 color de fondo del lienzo (configuraci\u00f3n global del \u00e1lbum, visible al instante en el editor)."
     },
+    "photo_folders": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Fase Carpetas \u2014 nombres de las carpetas de organizaci\u00f3n creadas por el usuario en el navegador de fotos (organizaci\u00f3n virtual: cada foto guarda su carpeta en el campo 'folder')."
+    },
     "size_preset": {
       "type": "string",
       "default": "custom",
