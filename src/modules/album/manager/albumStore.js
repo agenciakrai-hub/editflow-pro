@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createSpread, deleteSpread, updateSpread, updateAlbum } from "@/modules/album/hooks/useAlbumProject";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
-import { applyLayout, freshTransform, makeCustomSlot, sameRatio } from "@/modules/album/layout/layoutEngine";
-import { applySmartFillToSpread, ensureFaces, smartFillSlot } from "@/modules/album/editor/smartFill";
+import { applyLayout, expandSlotsToCanvas, freshTransform, makeCustomSlot, sameRatio } from "@/modules/album/layout/layoutEngine";
+import { applySmartFillToSpread, ensureFaces, retunePhotoSlots, smartFillSlot } from "@/modules/album/editor/smartFill";
 
 const HISTORY_LIMIT = 50;
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -80,6 +80,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
           locked: !!data.locked,
           ai_generated: !!data.ai_generated,
           fill_photos: !!data.fill_photos,
+          fill_canvas: !!data.fill_canvas,
           ...(data.background_color ? { background_color: data.background_color } : {}),
           slots: data.slots || [],
         };
@@ -174,6 +175,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     let next;
     if (layout) next = applyLayout(s, layout, project);
     else next = { ...s, layout_id: "custom" };
+    // Relleno completo del lienzo activo: la plantilla nueva se aplica YA expandida.
+    if (next.fill_canvas) next = { ...next, slots: expandSlotsToCanvas(project, next.mode, next.slots || []) };
     // Rellenar contenedor: plantilla nueva con la herramienta activa en ESTE lienzo →
     // los huecos con foto se rellenan automáticamente (COVER con prioridad de caras).
     if (next.fill_photos) next = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
@@ -197,6 +200,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       fit_mode: "fit",
       transform: freshTransform(),
     }));
+    // Relleno completo del lienzo activo: la plantilla automática se aplica expandida.
+    if (next.fill_canvas) next = { ...next, slots: expandSlotsToCanvas(project, next.mode, next.slots || []) };
     // Rellenar contenedor activo en este lienzo: las fotos colocadas se rellenan al soltar.
     if (next.fill_photos) next = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
     apply(spreadsRef.current.map((x) => (x.id === id ? next : x)), [id]);
@@ -244,18 +249,55 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     apply(spreadsRef.current.map((x) => (x.id === id ? next : x)), [id]);
   }, [apply, project.id]);
 
+  // Relleno completo del lienzo — POR LIENZO (geometría de la PLANTILLA; independiente
+  // de "Rellenar contenedor", que ajusta cada foto). ON: los huecos se expanden hasta
+  // ocupar todo el lienzo conservando EXACTA la separación entre fotos. OFF: se
+  // restaura la GEOMETRÍA BASE re-aplicando la plantilla del catálogo (nunca se calcula
+  // hacia atrás desde la geometría expandida → sin error acumulativo y ⌘Z exacto).
+  // Solo se toca el lienzo indicado; las fotos nunca se pierden.
+  const setSpreadCanvasFill = useCallback(async (id, fill) => {
+    const s = spreadsRef.current.find((x) => x.id === id);
+    if (!s || s.locked || !s.layout_id || s.layout_id === "custom") return;
+    const oldSlots = s.slots || [];
+    let next;
+    if (fill) {
+      next = { ...s, fill_canvas: true, slots: expandSlotsToCanvas(project, s.mode, oldSlots) };
+    } else {
+      const layout = getLayout(s.layout_id);
+      next = layout ? applyLayout(s, layout, project) : { ...s };
+      next = { ...next, fill_canvas: false };
+    }
+    // Ajuste de fotos con las reglas existentes: encuadre conservado si la proporción
+    // del hueco no cambia; FIT fresco (o COVER inteligente si "Rellenar contenedor"
+    // está activo) si cambia.
+    next.slots = await retunePhotoSlots(oldSlots, next.slots || [], {
+      fillPhotos: !!s.fill_photos, photosById: photosByIdRef.current, projectId: project.id,
+    });
+    apply(spreadsRef.current.map((x) => (x.id === id ? next : x)), [id]);
+  }, [apply, project]);
+
   // Fase Lienzos — recalcula la geometría de TODOS los lienzos con plantilla (no
   // "custom" y no bloqueados) tras un cambio global (p. ej. el espacio entre fotos).
   // Las fotos y sus crops se conservan: applyLayout reasigna por orden y mantiene el
-  // transform de cada foto.
-  const refreshTemplateSpreads = useCallback((album) => {
-    const list = spreadsRef.current.map((s) => {
-      if (s.locked || !s.layout_id || s.layout_id === "custom") return s;
+  // transform de cada foto. Relleno completo del lienzo: tras re-resolver la base se
+  // vuelve a expandir la geometría de los lienzos que lo tienen activo (la separación
+  // nueva queda aplicada: expandSlotsToCanvas conserva los espacios interiores).
+  const refreshTemplateSpreads = useCallback(async (album) => {
+    const out = [];
+    for (const s of spreadsRef.current) {
+      if (s.locked || !s.layout_id || s.layout_id === "custom") { out.push(s); continue; }
       const l = getLayout(s.layout_id);
-      return l ? applyLayout(s, l, album) : s;
-    });
-    apply(list, list.map((s) => s.id));
-  }, [apply]);
+      if (!l) { out.push(s); continue; }
+      const base = applyLayout(s, l, album);
+      if (!s.fill_canvas) { out.push(base); continue; }
+      const expanded = { ...base, slots: expandSlotsToCanvas(album, s.mode, base.slots || []) };
+      expanded.slots = await retunePhotoSlots(s.slots || [], expanded.slots, {
+        fillPhotos: !!s.fill_photos, photosById: photosByIdRef.current, projectId: project.id,
+      });
+      out.push(expanded);
+    }
+    apply(out, out.map((x) => x.id));
+  }, [apply, project.id]);
 
   // ---- Slots ----
   const updateSlot = useCallback((spreadId, slotId, patch, history = true) => {
@@ -411,7 +453,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
     selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
-    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, setLocked, setSpreadFill, refreshTemplateSpreads,
+    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
     updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,

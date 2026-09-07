@@ -1,13 +1,13 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, FileDown, Frame, Redo2, Save, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Expand, FileDown, Frame, Redo2, Save, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import { albumSizeLabel, STATUS_LABEL } from "@/modules/album/lib/albumUnits";
 
 // Fase 5.2 — Topbar profesional: identidad del álbum, guardado, historial, zoom,
 // guías y acciones primarias en una sola barra compacta.
 const GUIDE_DEFS = [["bleed", "Sangrado"], ["margins", "Márgenes"], ["safe", "Zona segura"], ["gutter", "Gutter"]];
 
-export default function EditorTopbar({ album, saving, canUndo, canRedo, onUndo, onRedo, zoomPct, onZoom, onFit, guides, onToggleGuide, onDownload, onExport, fillPhotos, onToggleFillPhotos, fillDisabled }) {
+export default function EditorTopbar({ album, saving, canUndo, canRedo, onUndo, onRedo, zoomPct, onZoom, onFit, guides, onToggleGuide, onDownload, onExport, fillPhotos, onToggleFillPhotos, fillDisabled, canvasFill, onToggleCanvasFill, canvasFillDisabled }) {
   const iconBtn = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-secondary disabled:opacity-40";
   return (
     <header className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
@@ -41,6 +41,14 @@ export default function EditorTopbar({ album, saving, canUndo, canRedo, onUndo, 
             </label>
           ))}
         </div>
+        <button onClick={onToggleCanvasFill} disabled={canvasFillDisabled} aria-pressed={!!canvasFill}
+          title={canvasFill
+            ? "Relleno completo del lienzo: ON (solo este lienzo). La plantilla ocupa todo el lienzo respetando la separación entre fotografías. Clic para volver a la geometría original de la plantilla."
+            : "Hace que la plantilla del lienzo actual ocupe todo el espacio disponible, respetando la separación entre fotografías. Clic para activarlo."}
+          className={"inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-medium disabled:opacity-40 " + (canvasFill ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-secondary")}>
+          <Expand className="h-3.5 w-3.5" /> Relleno completo del lienzo
+          <span className={"rounded px-1 text-[9px] font-bold " + (canvasFill ? "bg-primary-foreground/15" : "bg-secondary")}>{canvasFill ? "ON" : "OFF"}</span>
+        </button>
         <button onClick={onToggleFillPhotos} disabled={fillDisabled} aria-pressed={!!fillPhotos}
           title={fillPhotos
             ? "Rellenar contenedor: ON (solo este lienzo). Las fotos cubren su contenedor priorizando las caras detectadas. Clic para volver a foto completa (FIT)."

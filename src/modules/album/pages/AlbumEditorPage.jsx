@@ -349,6 +349,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         fillPhotos={!!spread?.fill_photos}
         fillDisabled={!spread || !!spread.locked}
         onToggleFillPhotos={() => store.setSpreadFill(spread.id, !spread.fill_photos)}
+        canvasFill={!!spread?.fill_canvas}
+        canvasFillDisabled={!spread || !!spread.locked || !spread.layout_id || spread.layout_id === "custom" || !(spread.slots || []).length}
+        onToggleCanvasFill={() => store.setSpreadCanvasFill(spread.id, !spread.fill_canvas)}
       />
 
       {store.saveError && (

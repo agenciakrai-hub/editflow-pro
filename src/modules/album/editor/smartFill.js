@@ -17,7 +17,7 @@
 // no sale del dispositivo), con caché en memoria por foto. Si el navegador no la
 // ofrece, o no detecta nada, se aplica un anclaje determinista hacia el tercio
 // superior (donde suelen estar las cabezas). Nada se envía a ningún servicio.
-import { freshTransform, photoRatio } from "@/modules/album/layout/layoutEngine";
+import { freshTransform, photoRatio, sameRatio } from "@/modules/album/layout/layoutEngine";
 import { getTierPreview } from "@/modules/album/lib/previewStore";
 
 const faceCache = new Map(); // photoId -> [{x,y,w,h}] (normalizado 0..1) | null
@@ -156,4 +156,27 @@ export async function applySmartFillToSpread(spread, photosById, projectId) {
       return { ...sl, fit_mode: f.fit_mode, transform: f.transform };
     }),
   };
+}
+
+// Reajuste de fotos tras cambiar la GEOMETRÍA de sus contenedores (Relleno completo
+// del lienzo). Reglas EXISTENTES de la app: si la proporción del hueco no cambia, el
+// encuadre manual se conserva tal cual; si cambia, FIT/CONTAIN fresco — o COVER
+// inteligente cuando el lienzo tiene "Rellenar contenedor" activo. Las fotos JAMÁS
+// se pierden: cada hueco conserva su photo_id.
+export async function retunePhotoSlots(oldSlots, newSlots, opts = {}) {
+  const oldById = new Map((oldSlots || []).map((sl) => [sl.slot_id, sl]));
+  const out = [];
+  for (const sl of newSlots || []) {
+    const o = oldById.get(sl.slot_id);
+    if (!sl.photo_id || !o || sameRatio(o.w_mm, o.h_mm, sl.w_mm, sl.h_mm)) { out.push(sl); continue; }
+    const photo = opts.photosById?.get?.(sl.photo_id);
+    if (opts.fillPhotos && photo) {
+      await ensureFaces(opts.projectId, photo);
+      const f = smartFillSlot(sl, photo);
+      out.push({ ...sl, fit_mode: f.fit_mode, transform: f.transform });
+    } else {
+      out.push({ ...sl, fit_mode: "fit", transform: freshTransform() });
+    }
+  }
+  return out;
 }

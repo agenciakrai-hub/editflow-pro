@@ -35,6 +35,11 @@
       "default": false,
       "description": "Fase Rellenar contenedor \u2014 herramienta POR LIENZO: true = las fotos de ESTE lienzo se ajustan autom\u00e1ticamente a COVER (rellenar contenedor) con encuadre inteligente que prioriza las caras detectadas; false = FIT/CONTAIN (foto completa). Por defecto false: retrocompatible con \u00e1lbumes antiguos."
     },
+    "fill_canvas": {
+      "type": "boolean",
+      "default": false,
+      "description": "Fase Relleno completo del lienzo \u2014 POR LIENZO: true = la GEOMETR\u00cdA de la plantilla de ESTE lienzo se expande para ocupar todo el lienzo (o solo su p\u00e1gina en page_left/page_right), conservando exactamente la separaci\u00f3n entre fotos; false = geometr\u00eda base de la plantilla. Por defecto false: retrocompatible con \u00e1lbumes antiguos."
+    },
     "ai_generated": {
       "type": "boolean",
       "default": false,

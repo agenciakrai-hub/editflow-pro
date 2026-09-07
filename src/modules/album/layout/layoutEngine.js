@@ -177,3 +177,64 @@ export function makeCustomSlot(album, photoId) {
     transform: freshTransform(),
   };
 }
+
+// ---- Relleno completo del lienzo (POR LIENZO, Fase Relleno plantilla) ----
+// Expansión 1D por segmentos: los tramos OCUPADOS por huecos crecen
+// proporcionalmente hasta llenar la región [r0, r1]; los tramos LIBRES interiores
+// (separación entre fotos y huecos estructurales de la plantilla) conservan su
+// longitud EXACTA; los márgenes exteriores desaparecen. El mapeo es monótono → los
+// huecos nunca se solapan ni se cruzan, y es idempotente (expandir dos veces da el
+// mismo resultado: no hay error acumulativo).
+function axisExpandMapper(items, r0, r1) {
+  const eps = 1e-6;
+  const bounds = Array.from(new Set(items.flatMap((it) => [it.p, it.p + it.s])))
+    .filter((v) => v >= r0 - eps && v <= r1 + eps)
+    .sort((a, b) => a - b);
+  if (bounds.length < 2) return (p) => Math.min(Math.max(p, r0), r1);
+  const segs = [];
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const a = bounds[i];
+    const b = bounds[i + 1];
+    segs.push({ a, b, len: b - a, covered: items.some((it) => it.p <= a + eps && it.p + it.s >= b - eps) });
+  }
+  const interiorFree = segs.filter((g) => !g.covered).reduce((t, g) => t + g.len, 0);
+  const coveredLen = segs.filter((g) => g.covered).reduce((t, g) => t + g.len, 0);
+  const avail = r1 - r0 - interiorFree;
+  if (coveredLen <= eps || avail <= eps) return (p) => Math.min(Math.max(p, r0), r1);
+  const scale = avail / coveredLen;
+  const map = new Map();
+  let cur = r0;
+  for (const g of segs) {
+    map.set(g.a, cur);
+    cur += g.covered ? g.len * scale : g.len;
+    map.set(g.b, cur);
+  }
+  return (p) => {
+    const v = map.get(p);
+    return v == null ? Math.min(Math.max(p, r0), r1) : Math.min(Math.max(v, r0), r1);
+  };
+}
+
+// Relleno completo del lienzo — expande la GEOMETRÍA de los huecos para que la
+// plantilla ocupe TODO el lienzo (o solo SU página en los modos page_left /
+// page_right: nunca invade la otra página), manteniendo EXACTOS los espacios
+// interiores. Puro: devuelve slots NUEVOS con la misma identidad (photo_id,
+// fit_mode y transform intactos; solo cambian x/y/w/h). El reajuste de cada foto lo
+// decide quien llama, con las reglas existentes de proporción.
+export function expandSlotsToCanvas(album, mode, slots) {
+  const list = (slots || []).filter((sl) => sl.w_mm > 0 && sl.h_mm > 0);
+  if (!list.length) return slots || [];
+  const v = albumVars(album);
+  const rx0 = mode === "page_right" ? v.W - v.page_w : 0;
+  const rx1 = mode === "page_left" ? v.page_w : v.W;
+  const mapX = axisExpandMapper(list.map((sl) => ({ p: sl.x_mm, s: sl.w_mm })), rx0, rx1);
+  const mapY = axisExpandMapper(list.map((sl) => ({ p: sl.y_mm, s: sl.h_mm })), 0, v.H);
+  const r2 = (n) => Math.round(n * 100) / 100;
+  return (slots || []).map((sl) => {
+    const nx = mapX(sl.x_mm);
+    const nxr = mapX(sl.x_mm + sl.w_mm);
+    const ny = mapY(sl.y_mm);
+    const nyb = mapY(sl.y_mm + sl.h_mm);
+    return { ...sl, x_mm: r2(nx), y_mm: r2(ny), w_mm: r2(nxr - nx), h_mm: r2(nyb - ny) };
+  });
+}

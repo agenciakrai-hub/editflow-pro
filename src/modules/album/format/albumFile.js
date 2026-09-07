@@ -66,6 +66,8 @@ export function buildAlbumDocument(project, photos, spreads) {
       // Rellenar contenedor — ajuste POR LIENZO (aditivo; ausente en archivos v1/v2
       // anteriores = false, comportamiento FIT original).
       fill_photos: !!s.fill_photos,
+      // Relleno completo del lienzo — geometría de plantilla POR LIENZO (aditivo).
+      fill_canvas: !!s.fill_canvas,
       slots: (s.slots || []).map((sl) => ({
         slot_id: sl.slot_id,
         photo_id: sl.photo_id || null,
@@ -160,6 +162,7 @@ export async function importAlbumDocument(doc) {
     locked: !!s.locked,
     ai_generated: !!s.ai_generated,
     fill_photos: !!s.fill_photos,
+    fill_canvas: !!s.fill_canvas,
     slots: (s.slots || []).map((sl) => ({
       slot_id: sl.slot_id,
       photo_id: idMap.get(sl.photo_id) || null,
