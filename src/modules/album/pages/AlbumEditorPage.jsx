@@ -1,21 +1,26 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Download, Loader2, Redo2, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, bulkUpdatePhotos } from "@/modules/album/hooks/useAlbumProject";
 import { useAlbumStore } from "@/modules/album/manager/albumStore";
 import { getPreview, getTierPreview, previewKey } from "@/modules/album/lib/previewStore";
 import { ingestFiles, filesFromFileList, importFromPickedFolder, cachePhotoPreviews } from "@/modules/album/import/folderImport";
 import { downloadAlbumFile } from "@/modules/album/format/albumFile";
-import { freshTransform } from "@/modules/album/layout/layoutEngine";
-import { albumSizeLabel, STATUS_LABEL } from "@/modules/album/lib/albumUnits";
-import PhotoPanel from "@/modules/album/editor/PhotoPanel";
+import PhotoBrowser from "@/modules/album/shell/PhotoBrowser";
+import EditorTopbar from "@/modules/album/shell/EditorTopbar";
+import TemplateLibraryPanel from "@/modules/album/shell/TemplateLibraryPanel";
+import SpreadNavigator from "@/modules/album/shell/SpreadNavigator";
+import SpreadControls from "@/modules/album/shell/SpreadControls";
+import PropertiesPanel from "@/modules/album/shell/PropertiesPanel";
 import SpreadCanvas from "@/modules/album/editor/SpreadCanvas";
-import SpreadToolbar from "@/modules/album/editor/SpreadToolbar";
-import AlbumOverview from "@/modules/album/editor/AlbumOverview";
-import LayoutPanel from "@/modules/album/editor/LayoutPanel";
 import RelocateDialog from "@/modules/album/relocate/RelocateDialog";
 import { useToast } from "@/components/ui/use-toast";
 
+// Fase 5.2 — SHELL VISUAL profesional del editor: topbar + biblioteca de plantillas
+// (izq) + navegador de spreads / lienzo / controles (centro) + propiedades (der) +
+// navegador de fotos (abajo). El motor de layouts, la geometría resuelta, las
+// transformaciones virtuales, el autosave y el undo/redo NO se tocan.
+//
 // Fase 3.1 Bloque 4 — en memoria solo viven los THUMBS (256 px, nivel 1) del catálogo;
 // la preview de edición (1000 px, nivel 2) se carga bajo demanda por hueco con LRU.
 export default function AlbumEditorPage({ projectId }) {
@@ -222,53 +227,25 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spreadId, locked]);
 
-  const iconBtn = "inline-flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40";
+  const spreadIndex = store.spreads.findIndex((s) => s.id === spread?.id);
 
   return (
-    <div className="flex min-h-[calc(100vh-8rem)] flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <Link to="/album" className={iconBtn}><ArrowLeft className="h-3.5 w-3.5" /> Álbumes</Link>
-        <div>
-          <h1 className="text-lg font-semibold leading-tight">{project.name}</h1>
-          <p className="text-xs text-muted-foreground">
-            {albumSizeLabel(project)} · {STATUS_LABEL[project.status] || project.status}
-            {project.source_folder_name ? ` · ${project.source_folder_name}` : ""}
-          </p>
-        </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">
-          <span className={"text-xs " + (store.saving ? "animate-pulse text-muted-foreground" : "text-emerald-600")}>
-            {store.saving ? "Guardando…" : "Guardado"}
-          </span>
-          <button className={iconBtn} onClick={store.undo} disabled={!store.canUndo}><Undo2 className="h-3.5 w-3.5" /></button>
-          <button className={iconBtn} onClick={store.redo} disabled={!store.canRedo}><Redo2 className="h-3.5 w-3.5" /></button>
-          <div className="flex items-center gap-1 rounded-lg border border-border px-2 py-1 text-xs">
-            <button title="Alejar" onClick={() => setZoomPct((z) => Math.max(25, z - 25))}><ZoomOut className="h-3.5 w-3.5" /></button>
-            <span className="min-w-10 text-center tabular-nums">{zoomPct}%</span>
-            <button title="Acercar" onClick={() => setZoomPct((z) => Math.min(400, z + 25))}><ZoomIn className="h-3.5 w-3.5" /></button>
-            <button className="font-medium hover:underline" onClick={() => setZoomPct(100)}>Ajustar</button>
-          </div>
-          <button className={iconBtn} onClick={() => downloadAlbumFile(project, photos, store.spreads)}>
-            <Download className="h-3.5 w-3.5" /> .editflowalbum
-          </button>
-          <Link to={`/album?project=${project.id}&view=seleccion`} className={iconBtn}>
-            <Sparkles className="h-3.5 w-3.5" /> Selección IA
-          </Link>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card px-3 py-1.5 text-xs">
-        <span className="font-medium">Guías</span>
-        {[["bleed", "Sangrado"], ["margins", "Márgenes"], ["safe", "Zona segura"], ["gutter", "Gutter"]].map(([k, label]) => (
-          <label key={k} className="inline-flex cursor-pointer items-center gap-1.5">
-            <input type="checkbox" checked={guides[k]} onChange={(e) => setGuides((g) => ({ ...g, [k]: e.target.checked }))} />
-            {label}
-          </label>
-        ))}
-        <span className="ml-auto text-muted-foreground">Arrastra una foto del panel a un hueco · rueda sobre la foto = zoom · arrastra la foto = recorte virtual</span>
-      </div>
+    <div className="flex h-[calc(100vh-8rem)] min-h-[620px] flex-col gap-2">
+      <EditorTopbar
+        album={project}
+        saving={store.saving}
+        canUndo={store.canUndo} canRedo={store.canRedo}
+        onUndo={store.undo} onRedo={store.redo}
+        zoomPct={zoomPct}
+        onZoom={(d) => setZoomPct((z) => Math.min(400, Math.max(25, z + d)))}
+        onFit={() => setZoomPct(100)}
+        guides={guides}
+        onToggleGuide={(k, v) => setGuides((g) => ({ ...g, [k]: v }))}
+        onDownload={() => downloadAlbumFile(project, photos, store.spreads)}
+      />
 
       {store.saveError && (
-        <div className="flex items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <div className="flex shrink-0 items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           <span>{store.saveError}</span>
           <button onClick={() => store.retrySave()} className="ml-auto shrink-0 rounded-lg border border-destructive/50 px-2.5 py-1 font-semibold hover:bg-destructive/20">
             Reintentar guardado
@@ -276,49 +253,24 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         </div>
       )}
 
-      <AlbumOverview
-        album={project}
-        spreads={store.spreads}
-        selectedId={store.selectedSpreadId}
-        onSelect={store.selectSpread}
-        onAdd={() => store.addSpread()}
-        onDuplicate={store.duplicateSpreadById}
-        onDelete={store.deleteSpreadById}
-        onReorder={store.reorderSpreads}
-      />
-
-      <div className="flex min-h-0 flex-1 gap-4">
-        <PhotoPanel
-          photos={photos}
-          previews={thumbs}
-          importing={importing}
-          progress={progress}
-          onImportFolder={importFolder}
-          onImportFiles={importFiles}
-          onPhotoDoubleClick={addPhotoFirstEmpty}
-          onRelocate={() => setRelocating(true)}
-          relocateCount={missingPhotos.length}
+      <div className="flex min-h-0 flex-1 gap-2">
+        <TemplateLibraryPanel
+          album={project}
+          spread={spread}
+          onApplyLayout={(layoutId) => spreadId && store.setSpreadLayoutById(spreadId, layoutId)}
         />
-        <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <SpreadToolbar
-            index={store.spreads.findIndex((s) => s.id === spread?.id)}
-            total={store.spreads.length}
-            hasSpread={!!spread}
-            locked={locked}
-            onPrev={() => {
-              const i = store.spreads.findIndex((s) => s.id === spreadId);
-              if (i > 0) { store.selectSpread(store.spreads[i - 1].id); store.selectSlot(null); }
-            }}
-            onNext={() => {
-              const i = store.spreads.findIndex((s) => s.id === spreadId);
-              if (i >= 0 && i < store.spreads.length - 1) { store.selectSpread(store.spreads[i + 1].id); store.selectSlot(null); }
-            }}
+
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+          <SpreadNavigator
+            album={project}
+            spreads={store.spreads}
+            selectedId={store.selectedSpreadId}
+            thumbs={thumbs}
+            onSelect={store.selectSpread}
             onAdd={() => store.addSpread()}
-            onDuplicate={() => store.duplicateSpreadById(spreadId)}
-            onDelete={() => store.deleteSpreadById(spreadId)}
-            onMoveLeft={() => store.moveSpread(spreadId, -1)}
-            onMoveRight={() => store.moveSpread(spreadId, 1)}
-            onToggleLock={() => store.setLocked(spreadId, !locked)}
+            onDuplicate={store.duplicateSpreadById}
+            onDelete={store.deleteSpreadById}
+            onReorder={store.reorderSpreads}
           />
           {spread ? (
             <SpreadCanvas
@@ -334,22 +286,52 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
               handlers={slotHandlers}
             />
           ) : (
-            <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-border p-10 text-sm text-muted-foreground">
+            <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-border text-sm text-muted-foreground">
               Crea tu primer spread para empezar a maquetar el álbum.
             </div>
           )}
+          <SpreadControls
+            index={spreadIndex}
+            total={store.spreads.length}
+            hasSpread={!!spread}
+            locked={locked}
+            onPrev={() => {
+              if (spreadIndex > 0) { store.selectSpread(store.spreads[spreadIndex - 1].id); store.selectSlot(null); }
+            }}
+            onNext={() => {
+              if (spreadIndex >= 0 && spreadIndex < store.spreads.length - 1) { store.selectSpread(store.spreads[spreadIndex + 1].id); store.selectSlot(null); }
+            }}
+            onAdd={() => store.addSpread()}
+            onDuplicate={() => store.duplicateSpreadById(spreadId)}
+            onDelete={() => store.deleteSpreadById(spreadId)}
+            onMoveLeft={() => store.moveSpread(spreadId, -1)}
+            onMoveRight={() => store.moveSpread(spreadId, 1)}
+            onToggleLock={() => store.setLocked(spreadId, !locked)}
+          />
         </div>
-        <LayoutPanel
+
+        <PropertiesPanel
           album={project}
           spread={spread}
           selectedSlot={selectedSlotWithPhoto}
-          onApplyLayout={(layoutId) => store.setSpreadLayoutById(spreadId, layoutId)}
           onToggleLock={() => store.setLocked(spreadId, !locked)}
           onSlotProp={(patch) => store.updateSlot(spreadId, selectedSlot.slot_id, patch)}
           onRemovePhoto={() => store.removePhotoFromSlot(spreadId, selectedSlot.slot_id)}
           onRemoveSlot={() => store.removeSlot(spreadId, selectedSlot.slot_id)}
         />
       </div>
+
+      <PhotoBrowser
+        photos={photos}
+        previews={thumbs}
+        importing={importing}
+        progress={progress}
+        onImportFolder={importFolder}
+        onImportFiles={importFiles}
+        onPhotoDoubleClick={addPhotoFirstEmpty}
+        onRelocate={() => setRelocating(true)}
+        relocateCount={missingPhotos.length}
+      />
 
       {relocating && (
         <RelocateDialog

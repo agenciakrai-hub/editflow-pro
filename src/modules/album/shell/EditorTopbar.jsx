@@ -1,0 +1,55 @@
+import React from "react";
+import { Link } from "react-router-dom";
+import { ArrowLeft, Download, Redo2, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { albumSizeLabel, STATUS_LABEL } from "@/modules/album/lib/albumUnits";
+
+// Fase 5.2 — Topbar profesional: identidad del álbum, guardado, historial, zoom,
+// guías y acciones primarias en una sola barra compacta.
+const GUIDE_DEFS = [["bleed", "Sangrado"], ["margins", "Márgenes"], ["safe", "Zona segura"], ["gutter", "Gutter"]];
+
+export default function EditorTopbar({ album, saving, canUndo, canRedo, onUndo, onRedo, zoomPct, onZoom, onFit, guides, onToggleGuide, onDownload }) {
+  const iconBtn = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-secondary disabled:opacity-40";
+  return (
+    <header className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
+      <Link to="/album" className={iconBtn} title="Volver a álbumes"><ArrowLeft className="h-4 w-4" /></Link>
+      <div className="mr-2 min-w-0">
+        <h1 className="truncate text-sm font-semibold leading-tight">{album.name}</h1>
+        <p className="truncate text-[11px] text-muted-foreground">
+          {albumSizeLabel(album)} · {STATUS_LABEL[album.status] || album.status}
+          {album.source_folder_name ? ` · ${album.source_folder_name}` : ""}
+        </p>
+      </div>
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        <span className={"text-[11px] font-medium " + (saving ? "animate-pulse text-muted-foreground" : "text-emerald-600")}>
+          {saving ? "Guardando…" : "Guardado"}
+        </span>
+        <div className="flex items-center gap-1">
+          <button className={iconBtn} onClick={onUndo} disabled={!canUndo} title="Deshacer"><Undo2 className="h-4 w-4" /></button>
+          <button className={iconBtn} onClick={onRedo} disabled={!canRedo} title="Rehacer"><Redo2 className="h-4 w-4" /></button>
+        </div>
+        <div className="flex items-center gap-1 rounded-lg border border-border px-1.5 py-1 text-[11px]">
+          <button className="rounded p-0.5 hover:bg-secondary disabled:opacity-40" onClick={() => onZoom(-25)} disabled={zoomPct <= 25} title="Alejar"><ZoomOut className="h-3.5 w-3.5" /></button>
+          <button className="min-w-10 text-center font-medium tabular-nums hover:underline" onClick={onFit} title="Ajustar a 100%">{zoomPct}%</button>
+          <button className="rounded p-0.5 hover:bg-secondary disabled:opacity-40" onClick={() => onZoom(25)} disabled={zoomPct >= 400} title="Acercar"><ZoomIn className="h-3.5 w-3.5" /></button>
+        </div>
+        <div className="hidden items-center gap-2 rounded-lg border border-border px-2 py-1 text-[11px] lg:flex">
+          <span className="font-medium text-muted-foreground">Guías</span>
+          {GUIDE_DEFS.map(([k, label]) => (
+            <label key={k} className="inline-flex cursor-pointer items-center gap-1" title={`Guía: ${label}`}>
+              <input type="checkbox" checked={guides[k]} onChange={(e) => onToggleGuide(k, e.target.checked)} />
+              {label}
+            </label>
+          ))}
+        </div>
+        <button onClick={onDownload}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground hover:opacity-90">
+          <Download className="h-3.5 w-3.5" /> .editflowalbum
+        </button>
+        <Link to={`/album?project=${album.id}&view=seleccion`}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-medium hover:bg-secondary">
+          <Sparkles className="h-3.5 w-3.5" /> Selección IA
+        </Link>
+      </div>
+    </header>
+  );
+}

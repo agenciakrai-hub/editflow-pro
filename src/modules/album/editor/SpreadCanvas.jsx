@@ -24,7 +24,7 @@ export default function SpreadCanvas({ album, spread, photosById, zoomPct, guide
   const px = (mm) => mm * ppm;
 
   return (
-    <div ref={wrapRef} className="min-h-[420px] flex-1 overflow-auto rounded-xl border border-border bg-secondary/40 p-3">
+    <div ref={wrapRef} className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-secondary/40 p-3">
       <div className="relative mx-auto bg-white"
         style={{ width: px(W), height: px(H), boxShadow: "0 10px 30px rgba(0,0,0,0.18)" }}
         onDragOver={(e) => e.preventDefault()}

@@ -32,7 +32,7 @@ export default function AppLayout() {
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const isFull = pathname === "/dashboard" || pathname === "/ajustes-ia" || pathname === "/preset-xmp" || pathname === "/proyectos/nuevo";
+  const isFull = pathname === "/dashboard" || pathname === "/ajustes-ia" || pathname === "/preset-xmp" || pathname === "/proyectos/nuevo" || pathname === "/album";
 
   useEffect(() => {
     base44.auth.me().then(setUser).catch(() => {});
