@@ -344,7 +344,12 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   }
   if (!rec) throw new Error(`Proveedor personalizado no encontrado: ${customId}`);
   if (rec.enabled === false) throw new Error(`Proveedor personalizado deshabilitado: ${rec.name}`);
-  const apiKey = String(rec.api_key || "");
+  // Clave propia guardada en el proveedor; si no hay, fallback al secret de Base44
+  // (builtin_secret) para los proveedores migrados (Gemini/Qwen/NVIDIA).
+  let apiKey = String(rec.api_key || "").trim();
+  if (!apiKey && rec.builtin_secret) {
+    try { apiKey = String(secrets.get(rec.builtin_secret) || "").trim(); } catch { apiKey = ""; }
+  }
   if (!apiKey) throw new Error(`El proveedor "${rec.name}" no tiene API key configurada`);
   const base = String(rec.endpoint || "").trim().replace(/\/+$/, "");
   if (!base) throw new Error(`El proveedor "${rec.name}" no tiene endpoint configurado`);

@@ -1,4 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
+import { secrets } from 'base44:runtime';
 import {
   testConnection,
   testNvidiaConnection,
@@ -93,6 +94,79 @@ function maskKey(key: string): string {
   return key.length <= 8 ? '••••••' : `${key.slice(0, 4)}…${key.slice(-4)}`;
 }
 
+// Clave efectiva de un proveedor: la guardada en la fila (api_key) y, si no hay,
+// el secret de Base44 (builtin_secret) para los proveedores migrados.
+function effectiveKey(rec: any): string {
+  const own = String(rec?.api_key || '').trim();
+  if (own) return own;
+  if (rec?.builtin_secret) {
+    try { return String(secrets.get(rec.builtin_secret) || '').trim(); } catch { return ''; }
+  }
+  return '';
+}
+
+// Proveedores integrados migrados a filas normales (V2 unificada): Gemini, Qwen y
+// NVIDIA nacen como CustomAiProvider la primera vez que se abre la herramienta, con
+// la clave tomada del secret de Base44 (builtin_secret). Al cambiar la clave desde la
+// página, esta se guarda en la fila y pasa a usarse esa. La migración ocurre UNA sola
+// vez (builtin_migrated): si el administrador borra una fila, no se recrea.
+const BUILTIN_DEFS: Array<{ key: string; name: string; host: string; endpoint: string; model: string; legacy: string }> = [
+  { key: 'GEMINI_API_KEY', name: 'Google Gemini', host: 'generativelanguage.googleapis.com', endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-2.5-flash', legacy: 'gemini' },
+  { key: 'QWEN_API_KEY', name: 'Qwen — DashScope', host: 'dashscope', endpoint: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1', model: 'qwen3-vl-plus', legacy: 'qwen' },
+  { key: 'NVIDIA_API_KEY', name: 'NVIDIA NIM', host: 'integrate.api.nvidia.com', endpoint: 'https://integrate.api.nvidia.com/v1', model: 'minimaxai/minimax-m3', legacy: 'nvidia' },
+];
+
+async function ensureBuiltinRows(base44: any) {
+  const cfg = await getConfigRecord(base44);
+  if (cfg?.builtin_migrated) return;
+  const activePatch: any = {};
+  try {
+    const existing = await base44.asServiceRole.entities.CustomAiProvider.list(200);
+    const rows = Array.isArray(existing) ? existing : [];
+    for (const def of BUILTIN_DEFS) {
+      // Ya existe una fila para este proveedor (p. ej. añadida manualmente): no duplicar.
+      if (rows.some((r: any) => String(r?.endpoint || '').includes(def.host))) continue;
+      let key = '';
+      try { key = String(secrets.get(def.key) || '').trim(); } catch {}
+      if (!key) continue;
+      let endpoint = def.endpoint;
+      if (def.legacy === 'qwen' && cfg?.qwen_endpoint) endpoint = normalizeEndpoint(cfg.qwen_endpoint);
+      if (def.legacy === 'nvidia' && cfg?.nvidia_endpoint) endpoint = normalizeEndpoint(cfg.nvidia_endpoint);
+      const check = await fetchModels(endpoint, key).catch(() => null);
+      const models = check?.ok ? check.models.map((m: string) => m.replace(/^models\//, '')) : [def.model];
+      const marks = [models.includes(def.model) ? def.model : models[0]];
+      const rec: any = await base44.asServiceRole.entities.CustomAiProvider.create({
+        name: def.name,
+        endpoint,
+        api_key: '',
+        builtin_secret: def.key,
+        available_models: models,
+        seleccion_models: marks,
+        ajustes_models: marks,
+        model: def.model,
+        enabled: true,
+        last_ok: !!check?.ok,
+        last_reason: check?.ok ? '' : String(check?.reason || ''),
+        last_checked: new Date().toISOString(),
+      });
+      // Remap de referencias legadas ("qwen"/"gemini"/"nvidia") a la fila unificada.
+      if (cfg?.active_seleccion === def.legacy) activePatch.active_seleccion = `custom:${rec.id}`;
+      if (cfg?.active_ajustes === def.legacy) activePatch.active_ajustes = `custom:${rec.id}`;
+    }
+    if (cfg) {
+      await base44.asServiceRole.entities.AiProviderConfig.update(cfg.id, { ...activePatch, builtin_migrated: true });
+    } else {
+      await base44.asServiceRole.entities.AiProviderConfig.create({
+        active_seleccion: activePatch.active_seleccion || 'base44',
+        active_ajustes: activePatch.active_ajustes || 'base44',
+        builtin_migrated: true,
+      });
+    }
+  } catch (e: any) {
+    console.log(`[ai-providers] migracion integrados fallo: ${e?.message || e}`);
+  }
+}
+
 // Nunca expone la API key: solo versión enmascarada.
 function maskProvider(r: any) {
   return {
@@ -107,8 +181,10 @@ function maskProvider(r: any) {
     last_ok: !!r.last_ok,
     last_reason: r.last_reason || '',
     last_checked: r.last_checked || '',
-    masked_key: maskKey(r.api_key),
-    has_key: !!r.api_key,
+    builtin_secret: r.builtin_secret || '',
+    masked_key: maskKey(effectiveKey(r)),
+    has_key: !!effectiveKey(r),
+    has_own_key: !!r.api_key,
   };
 }
 
@@ -193,6 +269,8 @@ export default async function(req: Request): Promise<Response> {
     // Proveedores propios (CustomAiProvider V2).
     // ------------------------------------------------------------------
     if (action === 'list') {
+      // Migra (una sola vez) los proveedores integrados a filas unificadas.
+      await ensureBuiltinRows(base44);
       const list = await base44.asServiceRole.entities.CustomAiProvider.list('-updated_date', 100);
       return Response.json({ providers: (Array.isArray(list) ? list : []).map(maskProvider) });
     }
@@ -251,11 +329,52 @@ export default async function(req: Request): Promise<Response> {
       return Response.json({ ok: true, provider: maskProvider(rec) });
     }
 
+    // Cambia la API key de un proveedor: verifica la clave nueva contra el endpoint y,
+    // si es válida, la guarda en la fila y refresca la lista de modelos disponibles.
+    if (action === 'update-key') {
+      const id = String(body.id || '');
+      const apiKey = String(body.api_key || '').trim();
+      const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
+      if (!rec) return Response.json({ ok: false, reason: 'Proveedor no encontrado' });
+      if (!apiKey) return Response.json({ ok: false, reason: 'Falta la nueva API key' });
+      const check = await fetchModels(rec.endpoint, apiKey);
+      if (!check.ok) {
+        return Response.json({ ok: false, reason: `La nueva clave no se pudo verificar: ${check.reason}` });
+      }
+      const models = check.models.map((m: string) => m.replace(/^models\//, ''));
+      const updated = await base44.asServiceRole.entities.CustomAiProvider.update(id, {
+        api_key: apiKey,
+        available_models: models,
+        last_ok: true,
+        last_reason: '',
+        last_checked: new Date().toISOString(),
+      });
+      return Response.json({ ok: true, provider: maskProvider(updated), total_models: models.length });
+    }
+
+    // Guarda solo el proveedor activo por herramienta (sin tocar el resto de la config).
+    if (action === 'save-active') {
+      const patch: any = {};
+      if (typeof body.active_seleccion === 'string' && body.active_seleccion.trim()) patch.active_seleccion = body.active_seleccion.trim();
+      if (typeof body.active_ajustes === 'string' && body.active_ajustes.trim()) patch.active_ajustes = body.active_ajustes.trim();
+      const existing = await getConfigRecord(base44);
+      let cfg;
+      if (existing) {
+        cfg = await base44.asServiceRole.entities.AiProviderConfig.update(existing.id, patch);
+      } else {
+        cfg = await base44.asServiceRole.entities.AiProviderConfig.create({
+          active_seleccion: patch.active_seleccion || 'base44',
+          active_ajustes: patch.active_ajustes || 'base44',
+        });
+      }
+      return Response.json({ ok: true, config: cfg });
+    }
+
     if (action === 'retest') {
       const id = String(body.id || '');
       const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
       if (!rec) return Response.json({ ok: false, reason: 'Proveedor no encontrado' });
-      const check = await fetchModels(rec.endpoint, rec.api_key);
+      const check = await fetchModels(rec.endpoint, effectiveKey(rec));
       const patch: any = {
         last_ok: check.ok,
         last_reason: check.ok ? '' : check.reason,

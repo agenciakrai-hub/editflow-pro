@@ -51,12 +51,17 @@
     "active_seleccion": {
       "type": "string",
       "default": "base44",
-      "description": "Proveedor activo para Seleccion IA. Uno de: base44, qwen, nvidia, gemini, none, o custom:<id> para un proveedor personalizado."
+      "description": "Proveedor activo para Seleccion IA. Uno de: base44, none, o custom:<id> para un proveedor de la base de datos."
     },
     "active_ajustes": {
       "type": "string",
       "default": "base44",
-      "description": "Proveedor activo para Ajustes IA. Uno de: base44, qwen, nvidia, gemini, none, o custom:<id> para un proveedor personalizado."
+      "description": "Proveedor activo para Ajustes IA. Uno de: custom:<id>, o valores legados (base44, qwen, nvidia, gemini, none)."
+    },
+    "builtin_migrated": {
+      "type": "boolean",
+      "default": false,
+      "description": "true tras migrar los proveedores integrados (Gemini/Qwen/NVIDIA) a filas de CustomAiProvider. Evita recrearlos si el administrador los borra."
     }
   },
   "required": [

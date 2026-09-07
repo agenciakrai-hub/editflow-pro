@@ -12,7 +12,11 @@
     },
     "api_key": {
       "type": "string",
-      "description": "API key del proveedor. Se almacena en la base de datos (acceso admin-only via RLS). Nunca se devuelve al frontend (solo versi\u00f3n enmascarada)."
+      "description": "API key propia del proveedor. Si est\u00e1 vac\u00eda y hay builtin_secret, el motor usa ese secret de Base44. Nunca se devuelve al frontend (solo versi\u00f3n enmascarada)."
+    },
+    "builtin_secret": {
+      "type": "string",
+      "description": "Solo para proveedores migrados de los secrets de Base44 (GEMINI_API_KEY, QWEN_API_KEY, NVIDIA_API_KEY): si api_key est\u00e1 vac\u00eda, el motor usa este secret."
     },
     "available_models": {
       "type": "array",

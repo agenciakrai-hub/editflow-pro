@@ -1,13 +1,16 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, Loader2, Power, RefreshCw, Save, Search, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, KeyRound, Loader2, Power, RefreshCw, Save, Search, Trash2, XCircle } from "lucide-react";
 
-// Tarjeta de proveedor propio: badge de conexión, API key enmascarada, lista buscable de
-// modelos disponibles con casillas por tarea (Selección IA / Ajustes IA). Las
-// selecciones NUNCA se guardan automáticamente: solo al pulsar "Guardar".
-export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete }) {
+// Tarjeta de proveedor (unificada): badge de conexión, API key enmascarada con cambio
+// de clave, lista buscable de modelos con casillas por tarea (Selección IA / Ajustes
+// IA), encendido/apagado y borrado. Las selecciones de modelos NUNCA se guardan
+// automáticamente: solo al pulsar "Guardar".
+export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey }) {
   const [search, setSearch] = useState("");
   const [selDraft, setSelDraft] = useState(provider.seleccion_models || []);
   const [ajDraft, setAjDraft] = useState(provider.ajustes_models || []);
+  const [showKey, setShowKey] = useState(false);
+  const [newKey, setNewKey] = useState("");
 
   const models = provider.available_models || [];
   const filtered = useMemo(() => {
@@ -26,6 +29,14 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
   const toggleModel = (task, model) => {
     const setDraft = task === "seleccion" ? setSelDraft : setAjDraft;
     setDraft((d) => (d.includes(model) ? d.filter((m) => m !== model) : [...d, model]));
+  };
+
+  const saveKey = async () => {
+    const ok = await onUpdateKey(provider.id, newKey);
+    if (ok) {
+      setNewKey("");
+      setShowKey(false);
+    }
   };
 
   return (
@@ -49,6 +60,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {provider.endpoint} · API key {provider.masked_key || "—"}
+            {provider.builtin_secret && !provider.has_own_key ? ` (secret ${provider.builtin_secret})` : ""}
           </p>
           {provider.last_reason && <p className="mt-0.5 text-xs text-red-500">{provider.last_reason}</p>}
         </div>
@@ -66,6 +78,25 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
+      </div>
+
+      {/* Cambio de API key */}
+      <div className="space-y-2">
+        <button onClick={() => setShowKey((v) => !v)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium underline-offset-2 hover:underline">
+          <KeyRound className="h-3.5 w-3.5" /> {showKey ? "Ocultar cambio de clave" : "Cambiar API key"}
+        </button>
+        {showKey && (
+          <div className="flex gap-2">
+            <input type="password" value={newKey} onChange={(e) => setNewKey(e.target.value)}
+              placeholder="Nueva API key (sk-…)"
+              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm" />
+            <button onClick={saveKey} disabled={!newKey.trim() || busy("key")}
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40">
+              {busy("key") ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Guardar clave
+            </button>
+          </div>
+        )}
       </div>
 
       {models.length > 0 ? (
