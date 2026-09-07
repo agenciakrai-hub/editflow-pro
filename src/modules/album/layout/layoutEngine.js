@@ -109,6 +109,8 @@ export function bestLayoutFor(album, photos) {
   let best = null;
   for (const l of candidates) {
     const geo = resolveSlots(l, album);
+    // Plantillas con menos huecos que fotos: no caben todas, se descartan.
+    if (geo.length < n) continue;
     const slots = geo.map((g, i) => ({ i, ratio: g.w_mm / g.h_mm })).sort((a, b) => a.ratio - b.ratio);
     const ph = photos.map((p) => ({ id: p.id, ratio: photoRatio(p) })).sort((a, b) => a.ratio - b.ratio);
     const assignment = new Array(geo.length).fill(null);
