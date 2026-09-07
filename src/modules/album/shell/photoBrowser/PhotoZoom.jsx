@@ -6,17 +6,24 @@ import Lightbox from "@/components/Lightbox";
 // la carpeta de la foto y "Añadir al lienzo". Carga la preview de nivel 2 (1000 px)
 // bajo demanda con el LRU existente; si no existe, el thumb. Nunca modifica la foto,
 // su crop ni las transformaciones de los lienzos.
-export default function PhotoZoom({ photos, index, thumbs, getPhotoPreview, folders, onMoveFolder, onAddToCanvas, onClose, onIndex }) {
+export default function PhotoZoom({ photos, index, thumbs, getPhotoPreview, loadHiRes, folders, onMoveFolder, onAddToCanvas, onClose, onIndex }) {
   const [hiRes, setHiRes] = useState({});
   const photo = photos[index];
 
+  // Nivel 2 (preview 1000 px) inmediato + mejora progresiva a nivel 3: versión desde
+  // el ORIGINAL generada bajo demanda (LRU compartido). Nunca modifica la foto.
   useEffect(() => {
     const p = photos[index];
     if (!p || hiRes[p.id]) return undefined;
     let alive = true;
     getPhotoPreview(p.id)
-      .then((u) => { if (alive && u) setHiRes((m) => ({ ...m, [p.id]: u })); })
+      .then((u) => { if (alive && u && !loadHiRes) setHiRes((m) => ({ ...m, [p.id]: u })); else if (alive && u) setHiRes((m) => (m[p.id] ? m : { ...m, [p.id]: u })); })
       .catch(() => {});
+    if (loadHiRes) {
+      loadHiRes(p)
+        .then((u) => { if (alive && u) setHiRes((m) => ({ ...m, [p.id]: u })); })
+        .catch(() => {});
+    }
     return () => { alive = false; };
   }, [index, photos]); // eslint-disable-line react-hooks/exhaustive-deps
 

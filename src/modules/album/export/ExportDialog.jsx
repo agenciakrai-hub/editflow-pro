@@ -87,6 +87,7 @@ export default function ExportDialog({ album, spreads, photosById, onClose }) {
           quality: quality / 100,
           pxPerMm,
           includeBleed: tab === "print" && includeBleed,
+          checkResolution: tab === "print",
           overlays:
             tab === "review"
               ? {
@@ -254,9 +255,30 @@ export default function ExportDialog({ album, spreads, photosById, onClose }) {
         )}
 
         {result && (
-          <p className="text-xs font-medium text-emerald-600">
-            {result.count} lienzo(s) exportado(s){result.missing ? ` · ${result.missing} foto(s) sin preview en este dispositivo` : ""}.
-          </p>
+          <div className="space-y-2">
+            <p className="text-xs font-medium text-emerald-600">
+              {result.count} lienzo(s) exportado(s){result.missing ? ` · ${result.missing} foto(s) sin preview en este dispositivo` : ""}.
+            </p>
+            {result.fromPreview > 0 && (
+              <p className="text-xs text-amber-600">
+                ⚠ {result.fromPreview} foto(s) exportadas desde la preview guardada: la carpeta de originales
+                no está disponible en este dispositivo. Para máxima calidad, importa o re-vincula la carpeta
+                original antes de volver a exportar.
+              </p>
+            )}
+            {result.lowRes?.length > 0 && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700">
+                <p className="font-semibold">
+                  ⚠ {result.lowRes.length} fotografía(s) podrían no tener suficiente resolución para impresión en el tamaño seleccionado.
+                </p>
+                <p className="mt-1 text-amber-600">
+                  {result.lowRes.slice(0, 8).map((x) => `${x.filename} (~${x.dpi} DPI)`).join(" · ")}
+                  {result.lowRes.length > 8 ? " …" : ""}
+                </p>
+                <p className="mt-1 text-amber-600">La exportación continuó igualmente.</p>
+              </div>
+            )}
+          </div>
         )}
 
         <div className="flex justify-end gap-2 border-t border-border pt-3">

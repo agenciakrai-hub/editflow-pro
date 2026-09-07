@@ -13,30 +13,6 @@ export async function getBestPreviewUrl(projectId, photo) {
   return url || null;
 }
 
-function loadImage(src) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = src;
-  });
-}
-
-// Carga bajo demanda las previews de las fotos de un lienzo (caché compartida por
-// exportación). Las fotos originales NUNCA se tocan.
-export async function preloadSpreadImages(projectId, spread, photosById, cache = new Map()) {
-  await Promise.all(
-    (spread.slots || []).map(async (sl) => {
-      if (!sl.photo_id || cache.has(sl.photo_id)) return;
-      const photo = photosById.get(sl.photo_id);
-      if (!photo) return;
-      const url = await getBestPreviewUrl(projectId, photo);
-      cache.set(sl.photo_id, url ? await loadImage(url) : null);
-    })
-  );
-  return cache;
-}
-
 // Pinta una foto en su hueco replicando EXACTAMENTE el render del editor: object-fit
 // contain ("fit", foto completa) o cover ("fill") + transformación virtual (zoom y
 // desplazamiento alrededor del centro del hueco, como en pantalla).

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { Grip, ImageOff, Lock, Move } from "lucide-react";
 import usePhotoPreview from "@/modules/album/hooks/usePhotoPreview";
 
@@ -16,7 +16,15 @@ import usePhotoPreview from "@/modules/album/hooks/usePhotoPreview";
 //     foto congelada; al cambiar su geometría, el motor recalcula sola la foto (auto
 //     cover). Huecos SIN foto: el modo efectivo es siempre "container".
 export default function SlotFrame({ slot, photo, projectId, ppm, selected, locked, mode, onSelect, onEnterContainerMode, handlers }) {
-  const previewUrl = usePhotoPreview(projectId, slot.photo_id, photo?.filename);
+  // Calidad dinámica del lienzo: resolución mínima que la foto necesita EN PANTALLA
+  // (lado mayor del hueco × escala px/mm del zoom × densidad del dispositivo). El hook
+  // carga la preview 1000 px inmediata y mejora desde el ORIGINAL si esta cifra la
+  // supera; redondeada a pasos de 512 para no regenerar en cada píxel de zoom.
+  const requiredEdge = useMemo(() => {
+    const dpr = window.devicePixelRatio || 1;
+    return Math.ceil((Math.max(slot.w_mm, slot.h_mm) * ppm * dpr) / 512) * 512;
+  }, [slot.w_mm, slot.h_mm, ppm]);
+  const previewUrl = usePhotoPreview(projectId, slot.photo_id, photo?.filename, requiredEdge, photo);
   const t = slot.transform || {};
   const scale = t.scale ?? 1;
   // Corrección recorte — FIT/CONTAIN por defecto: la foto se ve COMPLETA (sin recorte

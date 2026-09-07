@@ -13,7 +13,7 @@ const ALL = "__all__";
 // Colocación múltiple — selección con clic (individual), Ctrl/Cmd+clic (alternar) y
 // Shift+clic (rango), con estado visual claro (anillo + check). Arrastrar la selección
 // al lienzo crea automáticamente la plantilla adecuada. Doble clic = ampliada.
-export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount }) {
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount }) {
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
@@ -129,7 +129,7 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
 
       {zoomIndex != null && list[zoomIndex] && (
         <PhotoZoom photos={list} index={zoomIndex} thumbs={previews}
-          getPhotoPreview={getPhotoPreview} folders={folders}
+          getPhotoPreview={getPhotoPreview} loadHiRes={loadHiRes} folders={folders}
           onMoveFolder={onMovePhotos} onAddToCanvas={onAddToCanvas}
           onClose={() => setZoomIndex(null)} onIndex={setZoomIndex} />
       )}

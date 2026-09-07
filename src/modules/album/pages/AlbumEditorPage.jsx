@@ -5,6 +5,7 @@ import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, bulkUpdatePh
 import { useAlbumStore } from "@/modules/album/manager/albumStore";
 import { bestLayoutFor } from "@/modules/album/layout/layoutEngine";
 import { getPreview, getTierPreview, previewKey } from "@/modules/album/lib/previewStore";
+import { loadHiResPreview } from "@/modules/album/lib/previewService";
 import { ingestFiles, filesFromFileList, importFromPickedFolder, cachePhotoPreviews } from "@/modules/album/import/folderImport";
 import { saveAlbumFile } from "@/modules/album/format/albumFileIO";
 import PhotoBrowser from "@/modules/album/shell/PhotoBrowser";
@@ -434,6 +435,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         placedPhotoIds={placedPhotoIds}
         folders={project.photo_folders || []}
         getPhotoPreview={(id) => getTierPreview(project.id, id, "preview")}
+        loadHiRes={(photo) => loadHiResPreview(project.id, photo.id, photo.filename, photo, 2400)}
         onCreateFolder={handleCreateFolder}
         onMovePhotos={handleMovePhotos}
         onAddToCanvas={addPhotoFirstEmpty}
