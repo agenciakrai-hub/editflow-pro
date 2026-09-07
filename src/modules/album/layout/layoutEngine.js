@@ -79,53 +79,80 @@ export function compatibleLayouts(album, photoCount) {
 
 export const freshTransform = () => ({ scale: 1, offset_x_mm: 0, offset_y_mm: 0, rotation: 0, crop: null });
 
-// Mejora encuadre — AUTO FIT / AUTO COVER: garantiza que la foto cubre SIEMPRE el
-// contenedor (escala >= 1 y offsets dentro del límite que el propio zoom permite, sin
-// huecos ni deformación, proporción original intacta). freshTransform es el ajuste
-// INICIAL al entrar la foto en un hueco; fitTransform RECALCULA el encuadre cuando
-// cambia la geometría del contenedor o la plantilla: conserva el encuadre anterior
-// siempre que siga siendo geométricamente válido (PRIORIDAD 2) y si no, reclampa
-// zoom/posición/crop virtual al mejor encuadre automático (PRIORIDAD 3-4).
-export function fitTransform(slot) {
-  const t = slot.transform || freshTransform();
-  const scale = Math.max(1, Number(t.scale ?? 1) || 1);
-  const limX = ((scale - 1) * (slot.w_mm || 0)) / 2;
-  const limY = ((scale - 1) * (slot.h_mm || 0)) / 2;
-  const clamp = (v, lim) => Math.max(-lim, Math.min(lim, Number(v) || 0));
-  // Redondeo a 0.000001 mm: elimina el ruido de coma flotante del cálculo de límites
-  // (1.4-1 ≠ 0.4 exacto) sin pérdida práctica de precisión de impresión.
-  const r6 = (v) => Math.round(v * 1e6) / 1e6;
-  return { ...t, scale: r6(scale), offset_x_mm: r6(clamp(t.offset_x_mm, limX)), offset_y_mm: r6(clamp(t.offset_y_mm, limY)) };
+// Corrección recorte — misma proporción de contenedor (tolerancia 1 % logarítmica).
+// Si el hueco nuevo conserva la proporción del antiguo, el encuadre manual del
+// fotógrafo sigue siendo válido y se conserva tal cual.
+export function sameRatio(w1, h1, w2, h2) {
+  if (!(w1 > 0) || !(h1 > 0) || !(w2 > 0) || !(h2 > 0)) return false;
+  return Math.abs(Math.log((w1 / h1) / (w2 / h2))) < 0.01;
+}
+
+// Ratio de aspecto (ancho/alto) de una foto: dimensiones reales si existen y, si no,
+// la orientación registrada. Base de la plantilla automática determinista.
+export function photoRatio(photo) {
+  if (photo?.width_px > 0 && photo?.height_px > 0) return photo.width_px / photo.height_px;
+  if (photo?.orientation === "portrait") return 2 / 3;
+  if (photo?.orientation === "square") return 1;
+  return 3 / 2;
+}
+
+// Colocación múltiple — SELECCIÓN INTELIGENTE determinista (sin IA): entre las
+// plantillas compatibles con el número de fotos, elige la de menor penalización
+// |log(ratio_hueco / ratio_foto)| emparejando fotos y huecos por proporción
+// (verticales con verticales, horizontales con horizontales), con recargo por huecos
+// vacíos. Devuelve { layout, assignment, penalty } — assignment alinea cada photo_id
+// con el orden de slots del layout (null = hueco vacío) — o null si no hay plantilla
+// compatible.
+export function bestLayoutFor(album, photos) {
+  const n = photos.length;
+  const candidates = compatibleLayouts(album, n);
+  let best = null;
+  for (const l of candidates) {
+    const geo = resolveSlots(l, album);
+    const slots = geo.map((g, i) => ({ i, ratio: g.w_mm / g.h_mm })).sort((a, b) => a.ratio - b.ratio);
+    const ph = photos.map((p) => ({ id: p.id, ratio: photoRatio(p) })).sort((a, b) => a.ratio - b.ratio);
+    const assignment = new Array(geo.length).fill(null);
+    let penalty = 0.4 * (geo.length - n);
+    ph.forEach((p, k) => {
+      const s = slots[k];
+      assignment[s.i] = p.id;
+      penalty += Math.abs(Math.log(s.ratio / p.ratio));
+    });
+    if (!best || penalty < best.penalty) best = { layout: l, assignment, penalty };
+  }
+  return best;
 }
 
 // Fase Lienzos — aplica una plantilla conservando las fotos por orden. Las fotos que
 // no caben NO se eliminan: quedan en el catálogo (se ven con el filtro "Sin colocar").
-// El transform (zoom/pan/crop virtual) de cada foto conservada se mantiene siempre
-// que es posible (misma posición en la nueva estructura).
+// Corrección recorte: el ajuste AUTOMÁTICO inicial es FIT/CONTAIN — la foto se ve
+// COMPLETA, sin recortes, con su proporción original y centrada. El encuadre manual
+// del fotógrafo se conserva SOLO si el nuevo hueco mantiene la proporción del antiguo.
 export function applyLayout(spread, layout, album) {
   const geo = resolveSlots(layout, album);
   const oldSlots = spread.slots || [];
   const photoIds = oldSlots.map((s) => s.photo_id).filter(Boolean);
-  const transformByPhoto = new Map();
-  oldSlots.forEach((s) => { if (s.photo_id && s.transform) transformByPhoto.set(s.photo_id, s.transform); });
+  const oldByPhoto = new Map();
+  oldSlots.forEach((s) => { if (s.photo_id) oldByPhoto.set(s.photo_id, s); });
   return {
     ...spread,
     layout_id: layout.id,
     slots: geo.map((g, i) => {
       const pid = photoIds[i] || null;
+      const old = pid ? oldByPhoto.get(pid) : null;
+      // PRIORIDADES: 1) conservar la foto asignada (por orden). 2) conservar su
+      // encuadre manual solo si el nuevo hueco tiene la misma proporción. 3) si la
+      // proporción cambió, recolocar en FIT/CONTAIN automático (recalcula escala y
+      // posición iniciales; foto completa, sin recorte, sin deformación). 4) nunca
+      // eliminar fotos ni perder transformaciones innecesariamente.
+      const keep = old && sameRatio(old.w_mm, old.h_mm, g.w_mm, g.h_mm);
       return {
         slot_id: g.slot_id,
         photo_id: pid,
         x_mm: g.x_mm, y_mm: g.y_mm, w_mm: g.w_mm, h_mm: g.h_mm,
-        fit_mode: "fill",
+        fit_mode: keep ? (old.fit_mode || "fit") : "fit",
         z_index: i,
-        // PRIORIDADES del cambio de plantilla: 1) conservar la foto asignada (por orden),
-        // 2) conservar su encuadre anterior si es geométricamente válido, 3) si la
-        // proporción del hueco cambió, recalcular zoom/posición/crop (auto cover),
-        // 4) nunca dejar huecos ni deformar. fitTransform aplica 2→4 en un solo paso.
-        transform: pid
-          ? fitTransform({ w_mm: g.w_mm, h_mm: g.h_mm, transform: transformByPhoto.get(pid) || freshTransform() })
-          : freshTransform(),
+        transform: keep && old.transform ? old.transform : freshTransform(),
       };
     }),
   };
@@ -143,7 +170,7 @@ export function makeCustomSlot(album, photoId) {
     y_mm: Math.round((v.H - h) / 2),
     w_mm: w,
     h_mm: h,
-    fit_mode: "fill",
+    fit_mode: "fit",
     z_index: 100,
     transform: freshTransform(),
   };

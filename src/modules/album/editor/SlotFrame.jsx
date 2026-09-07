@@ -19,7 +19,9 @@ export default function SlotFrame({ slot, photo, projectId, ppm, selected, locke
   const previewUrl = usePhotoPreview(projectId, slot.photo_id, photo?.filename);
   const t = slot.transform || {};
   const scale = t.scale ?? 1;
-  const fit = slot.fit_mode || "fill";
+  // Corrección recorte — FIT/CONTAIN por defecto: la foto se ve COMPLETA (sin recorte
+  // automático) manteniendo su proporción; "fill" (cover) queda solo como opción manual.
+  const fit = slot.fit_mode || "fit";
   const effMode = slot.photo_id && mode !== "container" ? "photo" : "container";
   const wheelTs = useRef(0);
   const elRef = useRef(null);

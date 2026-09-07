@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, bulkUpdatePhotos } from "@/modules/album/hooks/useAlbumProject";
 import { useAlbumStore } from "@/modules/album/manager/albumStore";
+import { bestLayoutFor } from "@/modules/album/layout/layoutEngine";
 import { getPreview, getTierPreview, previewKey } from "@/modules/album/lib/previewStore";
 import { ingestFiles, filesFromFileList, importFromPickedFolder, cachePhotoPreviews } from "@/modules/album/import/folderImport";
 import { downloadAlbumFile } from "@/modules/album/format/albumFile";
@@ -207,6 +208,26 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     else store.addSlotWithPhoto(spread.id, photoId);
   };
 
+  // Colocación múltiple — al soltar varias fotos en el lienzo se elige
+  // automáticamente la plantilla que mejor encaja con su número y proporciones
+  // (determinista: matching fotos↔huecos por ratio, sin IA) y se colocan en
+  // FIT/CONTAIN (foto completa, sin recorte automático). Si el lienzo actual ya tiene
+  // fotos, se crea un lienzo nuevo con la plantilla.
+  const dropPhotosOnCanvas = (photoIds) => {
+    if (!spread || !Array.isArray(photoIds) || photoIds.length < 2) return;
+    const objs = photoIds.map((id) => photosById.get(id)).filter(Boolean);
+    if (!objs.length) return;
+    const pick = bestLayoutFor(project, objs);
+    if (!pick) {
+      toast({ title: "Sin plantilla compatible", description: `No hay plantilla para ${objs.length} fotos en un lienzo; suelta menos fotos o repártelas en varios lienzos.`, variant: "destructive" });
+      return;
+    }
+    const hasPhotos = (spread.slots || []).some((sl) => sl.photo_id);
+    if (hasPhotos) store.addSpreadWithAutoLayout(pick.layout.id, pick.assignment);
+    else store.applyAutoLayout(spread.id, pick.layout.id, pick.assignment);
+    toast({ title: "Plantilla aplicada automáticamente", description: `${objs.length} foto(s) colocadas en «${pick.layout.id}», completas y sin recorte.` });
+  };
+
   // Fase Lienzos — configuración global del álbum (fondo + espacio entre fotos).
   // El cambio de espacio recalcula la geometría de los lienzos con plantilla.
   const updateAlbumConfig = (patch) => {
@@ -319,6 +340,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
               onSelectSlot={store.selectSlot}
               onSelectSlotContainer={store.selectSlotContainer}
               onDropPhotoOnCanvas={(photoId) => store.addSlotWithPhoto(spread.id, photoId)}
+              onDropPhotosOnCanvas={dropPhotosOnCanvas}
               handlers={slotHandlers}
             />
           ) : (

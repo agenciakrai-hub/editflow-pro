@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createSpread, deleteSpread, updateSpread, updateAlbum } from "@/modules/album/hooks/useAlbumProject";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
-import { applyLayout, fitTransform, freshTransform, makeCustomSlot } from "@/modules/album/layout/layoutEngine";
+import { applyLayout, freshTransform, makeCustomSlot, sameRatio } from "@/modules/album/layout/layoutEngine";
 
 const HISTORY_LIMIT = 50;
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -173,6 +173,45 @@ export function useAlbumStore(project, initialSpreads) {
     setSelectedSlotId(null);
   }, [apply, project]);
 
+  // Colocación múltiple — aplica al lienzo ACTUAL (sin fotos) la plantilla elegida
+  // automáticamente y asigna las fotos a los huecos según el matching por proporción
+  // (assignment alineado al orden de slots; null = hueco vacío). Ajuste inicial
+  // FIT/CONTAIN: cada foto se ve completa, sin recorte automático.
+  const applyAutoLayout = useCallback((id, layoutId, photoIds) => {
+    const s = spreadsRef.current.find((x) => x.id === id);
+    if (!s || s.locked) return;
+    const layout = getLayout(layoutId);
+    if (!layout) return;
+    const next = applyLayout(s, layout, project);
+    next.slots = (next.slots || []).map((sl, i) => ({
+      ...sl,
+      photo_id: photoIds?.[i] ?? null,
+      fit_mode: "fit",
+      transform: freshTransform(),
+    }));
+    apply(spreadsRef.current.map((x) => (x.id === id ? next : x)), [id]);
+    setSelectedSlotId(null);
+  }, [apply, project]);
+
+  // Colocación múltiple — crea un lienzo NUEVO con la plantilla automática y las fotos.
+  const addSpreadWithAutoLayout = useCallback((layoutId, photoIds) => {
+    const base = { id: tmpId(), project_id: project.id, order_index: spreadsRef.current.length, mode: "spread", layout_id: layoutId, locked: false, ai_generated: false, slots: [] };
+    const layout = getLayout(layoutId);
+    const built = layout ? applyLayout(base, layout, project) : base;
+    const next = {
+      ...built,
+      slots: (built.slots || []).map((sl, i) => ({
+        ...sl,
+        photo_id: photoIds?.[i] ?? null,
+        fit_mode: "fit",
+        transform: freshTransform(),
+      })),
+    };
+    apply([...spreadsRef.current, next], [next.id]);
+    setSelectedSpreadId(next.id);
+    setSelectedSlotId(null);
+  }, [apply, project]);
+
   const setLocked = useCallback((id, locked) => {
     apply(spreadsRef.current.map((x) => (x.id === id ? { ...x, locked } : x)), [id]);
   }, [apply]);
@@ -200,11 +239,15 @@ export function useAlbumStore(project, initialSpreads) {
           if (sl.slot_id !== slotId) return sl;
           const t = patch.transform ? { ...sl.transform, ...patch.transform } : sl.transform;
           const merged = { ...sl, ...patch, transform: t };
-          // Al cambiar la geometría del contenedor (mover/resize del hueco o panel de
-          // propiedades), la foto se recalcula EN VIVO para volver a cubrirlo (auto
-          // cover), conservando el encuadre anterior si sigue siendo válido.
+          // Al cambiar la geometría del contenedor: si la PROPORCIÓN del hueco cambia,
+          // la foto se recoloca en FIT/CONTAIN (se ve completa, sin recorte, sin
+          // desplazamientos inesperados); si la proporción se mantiene, no se toca
+          // nada (la foto no se mueve mientras se redimensiona el contenedor).
           if ((patch.w_mm != null || patch.h_mm != null) && merged.photo_id) {
-            merged.transform = fitTransform(merged);
+            if (!sameRatio(sl.w_mm, sl.h_mm, merged.w_mm, merged.h_mm)) {
+              merged.transform = freshTransform();
+              merged.fit_mode = "fit";
+            }
           }
           return merged;
         }),
@@ -222,10 +265,11 @@ export function useAlbumStore(project, initialSpreads) {
     if (slotId) setSlotMode("container");
   }, []);
 
-  // freshTransform = AJUSTE INICIAL AUTOMÁTICO al entrar la foto en el contenedor:
-  // auto cover centrado (escala 1, sin offsets): cubre todo, sin deformar, centrado.
+  // AJUSTE INICIAL AUTOMÁTICO al entrar la foto en el contenedor: FIT/CONTAIN
+  // (escala 1, centrada) — la foto completa es visible, sin recorte automático, con su
+  // proporción original. El usuario puede recortar después manualmente si lo desea.
   const assignPhotoToSlot = useCallback((spreadId, slotId, photoId) => {
-    updateSlot(spreadId, slotId, { photo_id: photoId, transform: freshTransform() });
+    updateSlot(spreadId, slotId, { photo_id: photoId, transform: freshTransform(), fit_mode: "fit" });
     selectSlot(slotId);
   }, [updateSlot, selectSlot]);
 
@@ -244,8 +288,8 @@ export function useAlbumStore(project, initialSpreads) {
       return {
         ...x,
         slots: x.slots.map((sl) =>
-          sl.slot_id === fromSlotId ? { ...sl, photo_id: to.photo_id, transform: freshTransform() }
-            : sl.slot_id === toSlotId ? { ...sl, photo_id: from.photo_id, transform: freshTransform() }
+          sl.slot_id === fromSlotId ? { ...sl, photo_id: to.photo_id, transform: freshTransform(), fit_mode: "fit" }
+            : sl.slot_id === toSlotId ? { ...sl, photo_id: from.photo_id, transform: freshTransform(), fit_mode: "fit" }
             : sl
         ),
       };
@@ -310,7 +354,7 @@ export function useAlbumStore(project, initialSpreads) {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
     selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
-    setSpreadLayoutById, setLocked, refreshTemplateSpreads,
+    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, setLocked, refreshTemplateSpreads,
     updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,

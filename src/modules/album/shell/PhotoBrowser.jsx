@@ -1,28 +1,32 @@
 import React, { useMemo, useRef, useState } from "react";
-import { FolderOpen, Link2, Loader2, Plus, Search } from "lucide-react";
+import { FolderOpen, Link2, Loader2, Plus, Search, X } from "lucide-react";
 import FolderTabs from "@/modules/album/shell/photoBrowser/FolderTabs";
 import ThumbStrip from "@/modules/album/shell/photoBrowser/ThumbStrip";
 import PhotoZoom from "@/modules/album/shell/photoBrowser/PhotoZoom";
 
+const ALL = "__all__";
+
 // Fase Carpetas — navegador de fotos del editor. Organización VIRTUAL por carpetas
 // (etiqueta 'folder' por foto + lista de nombres en el proyecto): los archivos
-// originales nunca se mueven ni duplican. Línea 1: carpetas con contadores; línea 2:
-// buscador, filtro "Sin colocar" (intacto) y slider de tamaño de miniaturas; área
-// principal: tira horizontal navegable de la carpeta seleccionada. Clic en una foto =
-// visualización ampliada (no toca crop ni transformaciones); arrastre = hueco de
-// lienzo o pestaña de carpeta. Drag & drop, importación y relocalización intactos.
+// originales nunca se mueven ni duplican.
+//
+// Colocación múltiple — selección con clic (individual), Ctrl/Cmd+clic (alternar) y
+// Shift+clic (rango), con estado visual claro (anillo + check). Arrastrar la selección
+// al lienzo crea automáticamente la plantilla adecuada. Doble clic = ampliada.
 export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount }) {
   const [q, setQ] = useState("");
-  const [folder, setFolder] = useState("__all__");
+  const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
   const [thumbSize, setThumbSize] = useState(96);
   const [zoomIndex, setZoomIndex] = useState(null);
+  const [selIds, setSelIds] = useState(() => new Set());
+  const anchorRef = useRef(null);
   const inputRef = useRef(null);
 
   const matchesQ = (p) => !q || p.filename.toLowerCase().includes(q.toLowerCase());
   // La carpeta seleccionada filtra la lista; "Sin colocar" se aplica dentro de ella.
   const list = photos.filter((p) =>
-    (folder === "__all__" || p.folder === folder) &&
+    (folder === ALL || p.folder === folder) &&
     (!onlyUnplaced || !placedPhotoIds?.has(p.id)) &&
     matchesQ(p)
   );
@@ -38,6 +42,28 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
     if (!trimmed || folders.includes(trimmed)) return;
     onCreateFolder(trimmed);
   };
+
+  const handlePhotoClick = (e, p, idx) => {
+    if (e.shiftKey && anchorRef.current != null) {
+      const a = Math.min(anchorRef.current, idx);
+      const b = Math.max(anchorRef.current, idx);
+      setSelIds(new Set(list.slice(a, b + 1).map((x) => x.id)));
+      return;
+    }
+    if (e.metaKey || e.ctrlKey) {
+      setSelIds((prev) => {
+        const n = new Set(prev);
+        if (n.has(p.id)) n.delete(p.id); else n.add(p.id);
+        return n;
+      });
+      anchorRef.current = idx;
+      return;
+    }
+    setSelIds(new Set([p.id]));
+    anchorRef.current = idx;
+  };
+  const openZoom = (p) => setZoomIndex(list.findIndex((x) => x.id === p.id));
+  const clearSelection = () => { setSelIds(new Set()); anchorRef.current = null; };
 
   return (
     <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
@@ -78,6 +104,12 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
           className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (onlyUnplaced ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
           Sin colocar ({placedPhotoIds ? photos.length - placedPhotoIds.size : photos.length})
         </button>
+        {selIds.size > 0 && (
+          <button onClick={clearSelection} title="Arrastra la selección al lienzo para crear la plantilla automática"
+            className="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
+            {selIds.size} seleccionada{selIds.size !== 1 ? "s" : ""} <X className="h-2.5 w-2.5" />
+          </button>
+        )}
         <label className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
           Miniaturas
           <input type="range" min="56" max="200" step="4" value={thumbSize}
@@ -90,9 +122,9 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
       {/* Área principal — miniaturas de la carpeta seleccionada */}
       <div style={{ height: thumbSize + 24 }}>
         <ThumbStrip photos={list} previews={previews} thumbSize={thumbSize}
-          placedPhotoIds={placedPhotoIds}
-          onZoom={(p) => setZoomIndex(list.findIndex((x) => x.id === p.id))}
-          emptyHint="Importa la carpeta con las fotos finales exportadas desde Lightroom. Arrastra cualquier foto a un hueco del lienzo (o a una pestaña de carpeta) · clic para ampliarla." />
+          placedPhotoIds={placedPhotoIds} selectedIds={selIds}
+          onPhotoClick={handlePhotoClick} onPhotoDoubleClick={openZoom}
+          emptyHint="Importa la carpeta con las fotos finales exportadas desde Lightroom. Clic selecciona (Ctrl/Cmd y Shift para varias) · doble clic amplía · arrastra la selección al lienzo y la plantilla se crea automáticamente." />
       </div>
 
       {zoomIndex != null && list[zoomIndex] && (
