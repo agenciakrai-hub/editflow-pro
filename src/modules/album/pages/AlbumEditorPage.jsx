@@ -15,6 +15,7 @@ import SpreadControls from "@/modules/album/shell/SpreadControls";
 import PropertiesPanel from "@/modules/album/shell/PropertiesPanel";
 import SpreadCanvas from "@/modules/album/editor/SpreadCanvas";
 import RelocateDialog from "@/modules/album/relocate/RelocateDialog";
+import ExportDialog from "@/modules/album/export/ExportDialog";
 import { useToast } from "@/components/ui/use-toast";
 
 // Fase 5.2 — SHELL VISUAL profesional del editor: topbar + biblioteca de plantillas
@@ -75,6 +76,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(null);
   const [relocating, setRelocating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const store = useAlbumStore(project, spreads);
 
   const spread = store.selectedSpread;
@@ -342,6 +344,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         guides={guides}
         onToggleGuide={(k, v) => setGuides((g) => ({ ...g, [k]: v }))}
         onDownload={saveProjectFile}
+        onExport={() => setExporting(true)}
       />
 
       {store.saveError && (
@@ -441,6 +444,15 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onRelocate={() => setRelocating(true)}
         relocateCount={missingPhotos.length}
       />
+
+      {exporting && (
+        <ExportDialog
+          album={project}
+          spreads={store.spreads}
+          photosById={photosById}
+          onClose={() => setExporting(false)}
+        />
+      )}
 
       {relocating && (
         <RelocateDialog
