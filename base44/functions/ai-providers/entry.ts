@@ -2,24 +2,118 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import {
   testConnection,
   testNvidiaConnection,
-  testNvidiaVision,
   testGeminiConnection,
-  testCustomConnection,
-  detectBestModel,
   isQwenKeyPresent,
   isNvidiaKeyPresent,
   isGeminiKeyPresent,
+  pickBestVisionModel,
 } from '../../shared/aiProviderAdapter.ts';
 
-// Proveedores IA — admin-only. Acciones: get-config, save-config, test-connection,
-// test-nvidia-vision. NUNCA devuelve las API Keys (solo *_key_present boolean). Las
-// claves viven como secrets de Base44 (QWEN_API_KEY, NVIDIA_API_KEY) y se leen solo
-// en backend.
+// Proveedores IA V2 — admin-only. UNA SOLA herramienta de proveedores: se añade un
+// proveedor con endpoint + API key, la función autodetecta el nombre (dominio), normaliza
+// la URL base (añade /v1 si falta ruta), verifica la conexión con GET {endpoint}/models
+// y guarda en available_models TODOS los modelos detectados. El administrador marca en
+// la página qué modelos sirven para Selección IA y cuáles para Ajustes IA; los motores
+// usan exclusivamente esa lista marcada (seleccion_models / ajustes_models).
+//
+// Acciones:
+//   - get-config / save-config / test-connection : proveedores integrados (secrets de Base44)
+//   - list / add / update-models / retest / toggle / delete : proveedores propios
+//
+// NUNCA devuelve las API keys (solo una versión enmascarada).
 
 const NVIDIA_DEFAULT_ENDPOINT = 'https://integrate.api.nvidia.com/v1';
 const NVIDIA_DEFAULT_MODEL = 'minimaxai/minimax-m3';
 const GEMINI_DEFAULT_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
 const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
+const MODELS_PAGE_LIMIT = 500;
+
+// Normaliza la URL base: valida http(s), quita slashes finales y añade /v1 cuando solo
+// se introduce el dominio (https://openrouter.ai -> https://openrouter.ai/v1).
+function normalizeEndpoint(raw: string): string {
+  const url = String(raw || '').trim().replace(/\/+$/, '');
+  if (!/^https?:\/\/.+/i.test(url)) {
+    throw new Error('El endpoint debe ser una URL válida que empiece por http:// o https:// (ej. https://openrouter.ai). No es un email ni un nombre.');
+  }
+  const u = new URL(url);
+  if (!u.pathname || u.pathname === '/') return `${u.protocol}//${u.host}/v1`;
+  return url;
+}
+
+// Nombre amigable autodetectado del dominio (openrouter.ai -> Openrouter).
+function nameFromDomain(endpoint: string): string {
+  try {
+    const host = new URL(endpoint).hostname.replace(/^www\./, '');
+    const base = host.split('.')[0] || 'Proveedor';
+    return base.charAt(0).toUpperCase() + base.slice(1);
+  } catch {
+    return 'Proveedor';
+  }
+}
+
+// Verifica la conexión y lista TODOS los modelos del proveedor (GET {endpoint}/models).
+async function fetchModels(
+  endpoint: string,
+  apiKey: string
+): Promise<{ ok: boolean; models: string[]; reason: string; http_status: number | null; latency_ms: number }> {
+  const t0 = Date.now();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    let res: Response;
+    try {
+      res = await fetch(`${endpoint}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const bodyText = await res.text().catch(() => '');
+    if (!res.ok) {
+      return { ok: false, models: [], reason: `HTTP ${res.status}: ${bodyText.slice(0, 200)}`, http_status: res.status, latency_ms: Date.now() - t0 };
+    }
+    const data = JSON.parse(bodyText);
+    const models = (data?.data || data?.models || [])
+      .map((m: any) => String(m?.id || m?.name || '').trim())
+      .filter(Boolean);
+    if (!models.length) {
+      return { ok: false, models: [], reason: 'El proveedor no devolvió modelos en GET /models', http_status: res.status, latency_ms: Date.now() - t0 };
+    }
+    return { ok: true, models: models.slice(0, MODELS_PAGE_LIMIT), reason: '', http_status: res.status, latency_ms: Date.now() - t0 };
+  } catch (e: any) {
+    return { ok: false, models: [], reason: String(e?.message || e), http_status: null, latency_ms: Date.now() - t0 };
+  }
+}
+
+function maskKey(key: string): string {
+  if (!key) return '';
+  return key.length <= 8 ? '••••••' : `${key.slice(0, 4)}…${key.slice(-4)}`;
+}
+
+// Nunca expone la API key: solo versión enmascarada.
+function maskProvider(r: any) {
+  return {
+    id: r.id,
+    name: r.name,
+    endpoint: r.endpoint,
+    available_models: Array.isArray(r.available_models) ? r.available_models : [],
+    seleccion_models: Array.isArray(r.seleccion_models) ? r.seleccion_models : [],
+    ajustes_models: Array.isArray(r.ajustes_models) ? r.ajustes_models : [],
+    model: r.model || '',
+    enabled: r.enabled !== false,
+    last_ok: !!r.last_ok,
+    last_reason: r.last_reason || '',
+    last_checked: r.last_checked || '',
+    masked_key: maskKey(r.api_key),
+    has_key: !!r.api_key,
+  };
+}
+
+async function getConfigRecord(base44: any) {
+  const list = await base44.asServiceRole.entities.AiProviderConfig.list();
+  return Array.isArray(list) && list.length ? list[0] : null;
+}
 
 export default async function(req: Request): Promise<Response> {
   try {
@@ -30,10 +124,13 @@ export default async function(req: Request): Promise<Response> {
 
     const body = await req.json().catch(() => ({}));
     const action = body?.action;
+    console.log(`[ai-providers] user=${user.id} action=${action}`);
 
+    // ------------------------------------------------------------------
+    // Proveedores integrados (Qwen, NVIDIA, Gemini) — secrets de Base44.
+    // ------------------------------------------------------------------
     if (action === 'get-config') {
-      const list = await base44.asServiceRole.entities.AiProviderConfig.list();
-      const cfg = Array.isArray(list) && list.length ? list[0] : null;
+      const cfg = await getConfigRecord(base44);
       return Response.json({
         config: cfg,
         qwen_key_present: isQwenKeyPresent(),
@@ -57,8 +154,7 @@ export default async function(req: Request): Promise<Response> {
         active_seleccion: typeof body.active_seleccion === 'string' && body.active_seleccion.trim() ? body.active_seleccion.trim() : 'base44',
         active_ajustes: typeof body.active_ajustes === 'string' && body.active_ajustes.trim() ? body.active_ajustes.trim() : 'base44',
       };
-      const list = await base44.asServiceRole.entities.AiProviderConfig.list();
-      const existing = Array.isArray(list) && list.length ? list[0] : null;
+      const existing = await getConfigRecord(base44);
       let cfg;
       if (existing) {
         cfg = await base44.asServiceRole.entities.AiProviderConfig.update(existing.id, patch);
@@ -82,77 +178,93 @@ export default async function(req: Request): Promise<Response> {
       return Response.json(result);
     }
 
-    if (action === 'test-nvidia-vision') {
-      const previewBase64 = typeof body?.preview_base64 === 'string' ? body.preview_base64.trim() : '';
-      const result = await testNvidiaVision(base44, previewBase64);
-      return Response.json(result);
-    }
-
-    if (action === 'list-custom') {
+    // ------------------------------------------------------------------
+    // Proveedores propios (CustomAiProvider V2).
+    // ------------------------------------------------------------------
+    if (action === 'list') {
       const list = await base44.asServiceRole.entities.CustomAiProvider.list('-updated_date', 100);
-      const masked = (Array.isArray(list) ? list : []).map((r: any) => ({
-        id: r.id, name: r.name, endpoint: r.endpoint, model: r.model,
-        enabled: r.enabled !== false, last_ok: !!r.last_ok, last_reason: r.last_reason || "",
-        last_checked: r.last_checked || "", has_key: !!r.api_key, updated_date: r.updated_date,
-      }));
-      return Response.json({ providers: masked });
+      return Response.json({ providers: (Array.isArray(list) ? list : []).map(maskProvider) });
     }
 
-    if (action === 'detect-model') {
-      const res = await detectBestModel(base44, { endpoint: body.endpoint, api_key: body.api_key, id: body.id });
-      return Response.json(res);
-    }
-
-    if (action === 'add-custom') {
-      const name = typeof body.name === 'string' ? body.name.trim() : '';
-      const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : '';
-      let model = typeof body.model === 'string' ? body.model.trim() : '';
-      const apiKey = typeof body.api_key === 'string' ? body.api_key.trim() : '';
-      if (!name || !endpoint || !apiKey) {
-        return Response.json({ ok: false, reason: 'Faltan datos (nombre, endpoint o API key)' }, { status: 400 });
-      }
-      // Si no se especifica modelo (o "auto"), detectar el mejor modelo de vision del
-      // proveedor consultando su endpoint /models (proveedores con miles de modelos).
-      if (!model || model.toLowerCase() === 'auto') {
-        const det = await detectBestModel(base44, { endpoint, api_key: apiKey });
-        if (!det.ok) {
-          return Response.json({ ok: false, reason: `No se pudo detectar un modelo: ${det.reason}` });
-        }
-        model = det.model;
-      }
-      const test = await testCustomConnection(base44, { endpoint, model, api_key: apiKey });
-      if (!test.ok) {
-        return Response.json({ ok: false, reason: test.reason || `HTTP ${test.http_status}`, http_status: test.http_status, latency_ms: test.latency_ms });
-      }
-      const rec = await base44.asServiceRole.entities.CustomAiProvider.create({
-        name, endpoint, model, api_key: apiKey, enabled: true,
-        last_ok: true, last_reason: "", last_checked: new Date().toISOString(),
-      });
-      return Response.json({ ok: true, id: rec.id, name: rec.name, model: rec.model, http_status: test.http_status, latency_ms: test.latency_ms });
-    }
-
-    if (action === 'retest-custom') {
-      const id = typeof body.id === 'string' ? body.id : '';
-      const test = await testCustomConnection(base44, { id });
+    if (action === 'add') {
       try {
-        await base44.asServiceRole.entities.CustomAiProvider.update(id, {
-          last_ok: !!test.ok, last_reason: test.ok ? "" : (test.reason || `HTTP ${test.http_status}`),
+        const endpoint = normalizeEndpoint(body.endpoint);
+        const apiKey = String(body.api_key || '').trim();
+        if (!apiKey) return Response.json({ ok: false, reason: 'Falta la API key' });
+        const check = await fetchModels(endpoint, apiKey);
+        if (!check.ok) {
+          return Response.json({ ok: false, reason: `No se pudo verificar la conexión: ${check.reason}` });
+        }
+        const rec = await base44.asServiceRole.entities.CustomAiProvider.create({
+          name: nameFromDomain(endpoint),
+          endpoint,
+          api_key: apiKey,
+          available_models: check.models,
+          seleccion_models: [],
+          ajustes_models: [],
+          // Legado: mejor modelo de vision detectado (fallback si nunca se marcan modelos).
+          model: pickBestVisionModel(check.models),
+          enabled: true,
+          last_ok: true,
+          last_reason: '',
           last_checked: new Date().toISOString(),
         });
-      } catch {}
-      return Response.json(test);
+        return Response.json({
+          ok: true,
+          provider: maskProvider(rec),
+          total_models: check.models.length,
+          latency_ms: check.latency_ms,
+        });
+      } catch (e: any) {
+        return Response.json({ ok: false, reason: String(e?.message || e) });
+      }
     }
 
-    if (action === 'toggle-custom') {
-      const id = typeof body.id === 'string' ? body.id : '';
-      const enabled = !!body.enabled;
-      await base44.asServiceRole.entities.CustomAiProvider.update(id, { enabled });
+    if (action === 'update-models') {
+      const id = String(body.id || '');
+      const clean = (v: any) => (Array.isArray(v) ? v.map((m: any) => String(m || '').trim()).filter(Boolean) : []);
+      const rec = await base44.asServiceRole.entities.CustomAiProvider.update(id, {
+        seleccion_models: clean(body.seleccion_models),
+        ajustes_models: clean(body.ajustes_models),
+      });
+      return Response.json({ ok: true, provider: maskProvider(rec) });
+    }
+
+    if (action === 'retest') {
+      const id = String(body.id || '');
+      const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
+      if (!rec) return Response.json({ ok: false, reason: 'Proveedor no encontrado' });
+      const check = await fetchModels(rec.endpoint, rec.api_key);
+      const patch: any = {
+        last_ok: check.ok,
+        last_reason: check.ok ? '' : check.reason,
+        last_checked: new Date().toISOString(),
+      };
+      if (check.ok) patch.available_models = check.models;
+      const updated = await base44.asServiceRole.entities.CustomAiProvider.update(id, patch);
+      return Response.json({ ok: check.ok, reason: check.reason, provider: maskProvider(updated), total_models: check.models.length });
+    }
+
+    if (action === 'toggle') {
+      const id = String(body.id || '');
+      await base44.asServiceRole.entities.CustomAiProvider.update(id, { enabled: !!body.enabled });
       return Response.json({ ok: true });
     }
 
-    if (action === 'delete-custom') {
-      const id = typeof body.id === 'string' ? body.id : '';
+    if (action === 'delete') {
+      const id = String(body.id || '');
       await base44.asServiceRole.entities.CustomAiProvider.delete(id);
+      // Si estaba activo para alguna tarea, revertir a base44 para no dejar una
+      // referencia muerta en la configuración (los motores harían fallback).
+      try {
+        const cfg = await getConfigRecord(base44);
+        if (cfg) {
+          const patch: any = {};
+          if (cfg.active_seleccion === `custom:${id}`) patch.active_seleccion = 'base44';
+          if (cfg.active_ajustes === `custom:${id}`) patch.active_ajustes = 'base44';
+          if (Object.keys(patch).length) await base44.asServiceRole.entities.AiProviderConfig.update(cfg.id, patch);
+        }
+      } catch {}
       return Response.json({ ok: true });
     }
 

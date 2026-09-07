@@ -84,10 +84,12 @@ Devuelve un JSON con las claves exactas listadas, mas "analysis" (frase corta de
   properties.confidence_score = { type: "number" };
   const schema = { type: "object", properties, required: [...PROFILE_KEYS, "analysis", "confidence_score"] };
 
-  // Proveedor externo segun active_ajustes; si no hay ninguno, se fuerza Qwen. Nunca cae
-  // a Base44/InvokeLLM: las previews van como data URLs directas.
+  // Proveedor externo segun active_ajustes (qwen/gemini/nvidia/proveedores propios
+  // custom:<id>); si no hay ninguno, se fuerza Qwen. Nunca cae a Base44/InvokeLLM: las
+  // previews van como data URLs directas.
   let provider = await activeProviderFor(base44, "ajustes");
-  if (provider !== "qwen" && provider !== "gemini" && provider !== "nvidia") provider = "qwen";
+  const isExternal = provider === "qwen" || provider === "gemini" || provider === "nvidia" || String(provider).startsWith("custom:");
+  if (!isExternal) provider = "qwen";
   const result = await invokeVision(base44, {
     task: "ajustes",
     prompt,

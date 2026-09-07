@@ -73,11 +73,13 @@ Devuelve un JSON con las claves exactas listadas mas confidence_score.`;
     required: [...VISUAL_PARAM_KEYS, "confidence_score"],
   };
 
-  // Proveedor externo segun active_ajustes (qwen/gemini/nvidia); si la config no tiene uno
-  // externo, se fuerza Qwen. Nunca cae a Base44/InvokeLLM: la preview va como data URL
-  // directa y los creditos de integracion pueden estar agotados.
+  // Proveedor externo segun active_ajustes (qwen/gemini/nvidia/proveedores propios
+  // custom:<id>); si la config no tiene uno externo, se fuerza Qwen. Nunca cae a
+  // Base44/InvokeLLM: la preview va como data URL directa y los creditos de integracion
+  // pueden estar agotados.
   let provider = await activeProviderFor(base44, "ajustes");
-  if (provider !== "qwen" && provider !== "gemini" && provider !== "nvidia") provider = "qwen";
+  const isExternal = provider === "qwen" || provider === "gemini" || provider === "nvidia" || String(provider).startsWith("custom:");
+  if (!isExternal) provider = "qwen";
   const result = await invokeVision(base44, {
     task: "ajustes",
     prompt,

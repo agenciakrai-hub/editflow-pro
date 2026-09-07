@@ -349,8 +349,19 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   const base = String(rec.endpoint || "").trim().replace(/\/+$/, "");
   if (!base) throw new Error(`El proveedor "${rec.name}" no tiene endpoint configurado`);
   const endpoint = base + "/chat/completions";
-  const model = String(rec.model || "").trim();
-  if (!model) throw new Error(`El proveedor "${rec.name}" no tiene modelo configurado`);
+  // Modelo por tarea (V2): usa SOLO los modelos que el administrador marcó para esta
+  // tarea en Proveedores IA (seleccion_models / ajustes_models). Con varios marcados,
+  // "Auto" elige el mejor modelo de visión de la lista. Fallback: el modelo legado V1
+  // (proveedores con modelo único). Nunca usa modelos fuera de la lista marcada.
+  const markedRaw: any = opts.task === "ajustes" ? rec.ajustes_models : rec.seleccion_models;
+  const marked = (Array.isArray(markedRaw) ? markedRaw : [])
+    .map((m: any) => String(m || "").trim())
+    .filter(Boolean);
+  const legacy = String(rec.model || "").trim();
+  if (!marked.length && !legacy) {
+    throw new Error(`El proveedor "${rec.name}" no tiene modelos marcados para ${opts.task === "ajustes" ? "Ajustes IA" : "Selección IA"} (márcalos en Proveedores IA)`);
+  }
+  const model = marked.length ? pickBestVisionModel(marked) : legacy;
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
   const content: any[] = [{ type: "text", text: opts.prompt }];
   for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });

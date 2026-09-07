@@ -4,19 +4,40 @@
   "properties": {
     "name": {
       "type": "string",
-      "description": "Nombre del proveedor personalizado."
+      "description": "Nombre amigable del proveedor, autodetectado del dominio del endpoint."
     },
     "endpoint": {
       "type": "string",
-      "description": "URL base OpenAI-compatible (sin /chat/completions)."
-    },
-    "model": {
-      "type": "string",
-      "description": "Identificador del modelo de vision (OpenAI-compatible)."
+      "description": "URL base OpenAI-compatible (sin /chat/completions). Ej: https://openrouter.ai/api/v1"
     },
     "api_key": {
       "type": "string",
-      "description": "API key del proveedor. Se almacena en la base de datos (acceso admin-only via RLS)."
+      "description": "API key del proveedor. Se almacena en la base de datos (acceso admin-only via RLS). Nunca se devuelve al frontend (solo versi\u00f3n enmascarada)."
+    },
+    "available_models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Todos los modelos detectados autom\u00e1ticamente al verificar la conexi\u00f3n (GET {endpoint}/models)."
+    },
+    "seleccion_models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Modelos que el administrador marc\u00f3 para Selecci\u00f3n IA. Los motores usan EXCLUSIVAMENTE esta lista (o el modelo legado como fallback)."
+    },
+    "ajustes_models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Modelos que el administrador marc\u00f3 para Ajustes IA (ajustes b\u00e1sicos). Los motores usan EXCLUSIVAMENTE esta lista (o el modelo legado como fallback)."
+    },
+    "model": {
+      "type": "string",
+      "description": "Legado V1: modelo \u00fanico de visi\u00f3n. Solo se usa como fallback si no hay modelos marcados para la tarea."
     },
     "enabled": {
       "type": "boolean",
@@ -36,8 +57,7 @@
   },
   "required": [
     "name",
-    "endpoint",
-    "model"
+    "endpoint"
   ],
   "rls": {
     "read": {
