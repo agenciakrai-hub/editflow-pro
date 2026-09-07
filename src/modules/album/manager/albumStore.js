@@ -460,7 +460,13 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       if (!restored.some((r) => r.id === s.id) && !String(s.id).startsWith("tmp_")) deletedRef.current.add(s.id);
       dirtyRef.current.delete(s.id);
     });
-    restored.forEach((s) => { if (!deletedRef.current.has(s.id)) dirtyRef.current.set(s.id, s); });
+    // CORRECCIÓN UNDO/REDO EXACTO: todo lienzo que VUELVE en el snapshot se
+    // "des-borra" (sale de deletedRef) y se marca sucio para persistir. Sin esto,
+    // rehacer (⌘⇧Z) una maquetación cuyos lienzos ya tenían ID real dejaba esos IDs
+    // en deletedRef → el siguiente guardado los borraba del servidor aunque se
+    // mostraban en pantalla (redo no persistía exactamente). Vale también para
+    // deshacer un borrado: el lienzo recuperado se re-crea/actualiza.
+    restored.forEach((s) => { deletedRef.current.delete(s.id); dirtyRef.current.set(s.id, s); });
     setSpreads(restored);
     setSelectedSpreadId((cur) => (restored.some((r) => r.id === cur) ? cur : restored.length ? restored[0].id : null));
     setSelectedSlotId(null);
