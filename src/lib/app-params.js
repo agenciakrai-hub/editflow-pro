@@ -35,10 +35,20 @@ const getAppParamValue = (paramName, { defaultValue = undefined, removeFromUrl =
 }
 
 const getAppParams = () => {
-	if (getAppParamValue("clear_access_token") === 'true') {
+	// CORRECCIÓN CRÍTICA (sesión que no persistía): "clear_access_token=true" llega
+	// por la URL una única vez — tras el logout del servidor. Es UNA INSTRUCCIÓN
+	// PUNTUAL, nunca un estado persistente. El código anterior lo guardaba en
+	// localStorage (vía getAppParamValue) y, en CADA arranque posterior sin el
+	// parámetro en la URL, volvía a leer ese "true" caducado y BORRABA el token
+	// recién restaurado → login obligatorio en cada reapertura de la aplicación.
+	// Regla: solo limpia los tokens si el parámetro está EN LA URL en este arranque,
+	// y el flag jamás sobrevive en storage (además sana el estado ya envenenado).
+	const clearInUrl = !isNode && new URLSearchParams(window.location.search).get("clear_access_token") === "true";
+	if (clearInUrl) {
 		storage.removeItem('base44_access_token');
 		storage.removeItem('token');
 	}
+	storage.removeItem('base44_clear_access_token');
 	return {
 		appId: getAppParamValue("app_id", { defaultValue: import.meta.env.VITE_BASE44_APP_ID }),
 		token: getAppParamValue("access_token", { removeFromUrl: true }),
