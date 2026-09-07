@@ -138,8 +138,10 @@ async function callGeminiPaidOnce(apiKey, cfg, prompt, fileUrls) {
 }
 
 async function callGeminiPaid(base44, prompt, fileUrls) {
-  const apiKey = secrets.get("GEMINI_API_KEY_PAID");
-  if (!apiKey) throw new Error("gemini_paid: GEMINI_API_KEY_PAID no configurado (la key gratuita está EXCLUIDA de Album AI)");
+  // Nueva API key única: prefiere la key de pago aislada de Album AI y, si no está
+  // seteada, usa la nueva key general (GEMINI_API_KEY) — siempre gemini-2.5-flash.
+  const apiKey = secrets.get("GEMINI_API_KEY_PAID") || secrets.get("GEMINI_API_KEY");
+  if (!apiKey) throw new Error("gemini_paid: no hay API key de Gemini configurada (GEMINI_API_KEY_PAID ni GEMINI_API_KEY)");
   const cfg = await getPlatformConfig(base44);
   const transient = new Set([429, 503]);
   let lastErr = null;

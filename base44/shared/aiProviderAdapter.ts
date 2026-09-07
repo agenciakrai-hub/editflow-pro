@@ -285,7 +285,12 @@ async function callProvider(base44: any, provider: string, opts: InvokeOpts): Pr
 // Cadena de failover: el proveedor activo primero, luego el resto de proveedores
 // habilitados (personalizados + integrados), y base44 como ultimo recurso. Si el
 // proveedor activo falla, el proceso no se detiene: reintenta con el siguiente.
+//
+// GEMINI EXCLUSIVO: si Gemini es el proveedor activo (seleccion/ajustes), NO hay
+// failover — se usa unicamente la nueva API key (GEMINI_API_KEY) con el modelo
+// gemini-2.5-flash. Nunca cae a Qwen/NVIDIA/Base44 ni a otras keys.
 async function buildFailoverChain(base44: any, active: string): Promise<string[]> {
+  if (active === "gemini") return ["gemini"];
   const chain: string[] = [];
   const push = (p: string) => { if (p && p !== "none" && !chain.includes(p)) chain.push(p); };
   push(active);
