@@ -23,6 +23,7 @@ export default function IntegratedProviderCard({
   testing,
   result,
   note,
+  extra,
 }) {
   return (
     <div className={`rounded-xl border border-border bg-card p-5 space-y-4 ${keyPresent ? "" : "opacity-70"}`}>
@@ -70,6 +71,7 @@ export default function IntegratedProviderCard({
         </button>
       </div>
       {result && <ResultCard result={result} />}
+      {extra}
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   );

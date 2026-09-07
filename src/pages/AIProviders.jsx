@@ -5,6 +5,7 @@ import { useToast } from "@/components/ui/use-toast";
 import AddProviderForm from "@/components/aiProviders/AddProviderForm";
 import ProviderCard from "@/components/aiProviders/ProviderCard";
 import IntegratedProviderCard from "@/components/aiProviders/IntegratedProviderCard";
+import NvidiaVisionTest from "@/components/aiProviders/NvidiaVisionTest";
 
 // Proveedores IA V2 — admin. UNA sola herramienta para añadir proveedores de IA: URL +
 // API key → la app verifica la conexión, muestra TODOS los modelos disponibles y el
@@ -287,6 +288,7 @@ export default function AIProviders() {
           onTest={() => testIntegrated("nvidia")}
           testing={testing.nvidia}
           result={results.nvidia}
+          extra={<NvidiaVisionTest />}
           note="La ruta NVIDIA envía previews como data:image/jpeg;base64 directo, sin UploadFile ni InvokeLLM. Sin failover."
         />
       </section>

@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import {
   testConnection,
   testNvidiaConnection,
+  testNvidiaVision,
   testGeminiConnection,
   isQwenKeyPresent,
   isNvidiaKeyPresent,
@@ -175,6 +176,15 @@ export default async function(req: Request): Promise<Response> {
       if (provider === 'nvidia') result = await testNvidiaConnection(base44);
       else if (provider === 'gemini') result = await testGeminiConnection(base44);
       else result = await testConnection(base44);
+      return Response.json(result);
+    }
+
+    // Diagnóstico de visión NVIDIA: envía UNA imagen de prueba (base64) como data URL
+    // directa al endpoint. NO usa UploadFile ni InvokeLLM.
+    if (action === 'test-nvidia-vision') {
+      const previewBase64 = String(body?.preview_base64 || '').replace(/^data:image\/[a-z+]+;base64,/i, '');
+      if (!previewBase64) return Response.json({ ok: false, reason: 'Falta preview_base64' });
+      const result = await testNvidiaVision(base44, previewBase64);
       return Response.json(result);
     }
 
