@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, bulkUpdatePhotos } from "@/modules/album/hooks/useAlbumProject";
@@ -6,7 +6,7 @@ import { useAlbumStore } from "@/modules/album/manager/albumStore";
 import { bestLayoutFor } from "@/modules/album/layout/layoutEngine";
 import { getPreview, getTierPreview, previewKey } from "@/modules/album/lib/previewStore";
 import { ingestFiles, filesFromFileList, importFromPickedFolder, cachePhotoPreviews } from "@/modules/album/import/folderImport";
-import { downloadAlbumFile } from "@/modules/album/format/albumFile";
+import { saveAlbumFile } from "@/modules/album/format/albumFileIO";
 import PhotoBrowser from "@/modules/album/shell/PhotoBrowser";
 import EditorTopbar from "@/modules/album/shell/EditorTopbar";
 import TemplateLibraryPanel from "@/modules/album/shell/TemplateLibraryPanel";
@@ -262,6 +262,51 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     setPhotos((prev) => prev.map((p) => (idSet.has(p.id) ? { ...p, folder } : p)));
   };
 
+  // ---- Fase A/B — guardado del ARCHIVO del proyecto (⌘+S) ----
+  // ⌘+S guarda el .editflowalbum en la ruta VINCULADA (o abre el selector la primera
+  // vez y la vincula). El autosave interno de la base de datos sigue funcionando de
+  // forma independiente: este guardado es solo el archivo real del proyecto.
+  const [savingFile, setSavingFile] = useState(false);
+  const saveProjectFile = async () => {
+    if (savingFile) return;
+    setSavingFile(true);
+    try {
+      const res = await saveAlbumFile(project, photos, store.spreads);
+      if (res?.mode === "linked") toast({ title: "Álbum guardado", description: "Guardado en la ruta vinculada." });
+      else if (res?.mode === "picked") toast({ title: "Álbum guardado", description: "Ruta vinculada: ⌘+S guardará directamente aquí la próxima vez." });
+      else if (res?.mode === "download") toast({ title: "Archivo descargado", description: "Tu navegador no permite guardar en ruta: se descargó el .editflowalbum." });
+    } catch (e) {
+      toast({ title: "No se pudo guardar el archivo", description: e?.message, variant: "destructive" });
+    } finally {
+      setSavingFile(false);
+    }
+  };
+
+  // ---- Fase A — atajos de teclado profesionales ----
+  // ⌘/Ctrl+Z = un paso atrás, ⌘/Ctrl+Shift+Z = rehacer, ⌘/Ctrl+S = guardar archivo.
+  // Reutilizan el sistema undo/redo y el guardado EXISTENTES del editor (nada paralelo)
+  // y no actúan mientras se escribe en un input/textarea.
+  const shortcutsRef = useRef({});
+  shortcutsRef.current = { undo: store.undo, redo: store.redo, save: saveProjectFile };
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      const k = e.key.toLowerCase();
+      if (k === "z") {
+        e.preventDefault();
+        if (e.shiftKey) shortcutsRef.current.redo?.();
+        else shortcutsRef.current.undo?.();
+      } else if (k === "s") {
+        e.preventDefault();
+        shortcutsRef.current.save?.();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const spreadId = spread?.id;
   const locked = !!spread?.locked;
   const slotHandlers = useMemo(() => {
@@ -288,7 +333,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     <div className="flex h-[calc(100vh-8rem)] min-h-[620px] flex-col gap-2">
       <EditorTopbar
         album={project}
-        saving={store.saving}
+        saving={store.saving || savingFile}
         canUndo={store.canUndo} canRedo={store.canRedo}
         onUndo={store.undo} onRedo={store.redo}
         zoomPct={zoomPct}
@@ -296,7 +341,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onFit={() => setZoomPct(100)}
         guides={guides}
         onToggleGuide={(k, v) => setGuides((g) => ({ ...g, [k]: v }))}
-        onDownload={() => downloadAlbumFile(project, photos, store.spreads)}
+        onDownload={saveProjectFile}
       />
 
       {store.saveError && (

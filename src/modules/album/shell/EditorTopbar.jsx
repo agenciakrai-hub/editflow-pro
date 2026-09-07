@@ -1,6 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Download, Redo2, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Redo2, Save, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import { albumSizeLabel, STATUS_LABEL } from "@/modules/album/lib/albumUnits";
 
 // Fase 5.2 — Topbar profesional: identidad del álbum, guardado, historial, zoom,
@@ -41,9 +41,9 @@ export default function EditorTopbar({ album, saving, canUndo, canRedo, onUndo, 
             </label>
           ))}
         </div>
-        <button onClick={onDownload}
+        <button onClick={onDownload} title="Guardar proyecto (⌘S / Ctrl+S)"
           className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground hover:opacity-90">
-          <Download className="h-3.5 w-3.5" /> .editflowalbum
+          <Save className="h-3.5 w-3.5" /> Guardar
         </button>
         <Link to={`/album?project=${album.id}&view=seleccion`}
           className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-medium hover:bg-secondary">

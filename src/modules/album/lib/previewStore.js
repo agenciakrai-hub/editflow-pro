@@ -65,6 +65,19 @@ export async function getFolderHandle(projectId) {
   try { return await tx("handles", "readonly", (s) => s.get(projectId)); } catch { return null; }
 }
 
+// Fase Guardado (⌘+S) — handle del ARCHIVO .editflowalbum vinculado al proyecto.
+// Vive en el mismo store "handles" con clave prefijada "file::"; la limpieza al
+// eliminar el álbum también lo cubre. Dispositivo-local, no toca el formato.
+const fileHandleKey = (projectId) => `file::${projectId}`;
+
+export async function putAlbumFileHandle(projectId, handle) {
+  try { return await tx("handles", "readwrite", (s) => s.put(handle, fileHandleKey(projectId))); } catch { return null; }
+}
+
+export async function getAlbumFileHandle(projectId) {
+  try { return await tx("handles", "readonly", (s) => s.get(fileHandleKey(projectId))); } catch { return null; }
+}
+
 // Limpieza al eliminar un álbum: previews y handle locales.
 export function deleteProjectData(projectId) {
   return db().then(
@@ -79,6 +92,7 @@ export function deleteProjectData(projectId) {
         };
         req.onerror = () => resolve();
         t.objectStore("handles").delete(projectId);
+        t.objectStore("handles").delete(`file::${projectId}`);
       })
   );
 }

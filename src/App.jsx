@@ -29,6 +29,7 @@ import Estilos from '@/pages/Estilos';
 import Cerebro from '@/pages/Cerebro';
 import HistorialTrabajos from '@/pages/HistorialTrabajos';
 import AlbumApp from '@/modules/album/pages/AlbumApp';
+import AlbumFileLauncher from '@/modules/album/format/AlbumFileLauncher';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -91,6 +92,7 @@ function App() {
       <QueryClientProvider client={queryClientInstance}>
         <Router>
           <ScrollToTop />
+          <AlbumFileLauncher />
           <AuthenticatedApp />
         </Router>
         <Toaster />

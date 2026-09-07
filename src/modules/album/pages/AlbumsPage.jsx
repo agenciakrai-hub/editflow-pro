@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { BookOpen, FilePlus2, Loader2, Trash2, Upload } from "lucide-react";
 import AlbumCreateForm from "@/modules/album/components/AlbumCreateForm";
 import { listAlbums, createAlbum, deleteAlbum } from "@/modules/album/hooks/useAlbumProject";
-import { parseAlbumDocument, importAlbumDocument } from "@/modules/album/format/albumFile";
+import { openAlbumFile, importOpenedAlbumFile } from "@/modules/album/format/albumFileIO";
 import { deleteProjectData } from "@/modules/album/lib/previewStore";
 import { albumSizeLabel, STATUS_LABEL, EVENT_LABEL } from "@/modules/album/lib/albumUnits";
 import { useToast } from "@/components/ui/use-toast";
@@ -15,7 +15,8 @@ export default function AlbumsPage() {
   const [albums, setAlbums] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [creating, setCreating] = useState(false);
-  const importRef = useRef(null);
+  const [openingFile, setOpeningFile] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
 
   const load = async () => setAlbums(await listAlbums());
 
@@ -47,24 +48,45 @@ export default function AlbumsPage() {
     }
   };
 
-  const handleImportFile = async (e) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (!f) return;
+  // Fase C — apertura directa del archivo del álbum: validar, importar como álbum
+  // NUEVO y entrar directamente en el editor. El handle del archivo queda VINCULADO:
+  // ⌘+S guardará sobre ese mismo archivo. Compatible v1/v2 (lo garantiza el parser).
+  const openImportedFile = async (file, handle = null) => {
+    setOpeningFile(true);
     try {
-      const doc = parseAlbumDocument(await f.text());
-      const p = await importAlbumDocument(doc);
-      toast({ title: "Álbum importado", description: "Re-importa la carpeta de fotos para recuperar las previews." });
+      const p = await importOpenedAlbumFile(file, handle);
+      toast({ title: "Álbum abierto", description: "Re-importa la carpeta de fotos para recuperar las previews. ⌘+S guardará en este archivo." });
       navigate(`/album?project=${p.id}`);
     } catch (err) {
       toast({ title: "Archivo inválido", description: err?.message, variant: "destructive" });
+    } finally {
+      setOpeningFile(false);
     }
+  };
+
+  const handleOpenFile = async () => {
+    if (openingFile) return;
+    const res = await openAlbumFile();
+    if (res?.canceled || !res?.file) return;
+    await openImportedFile(res.file, res.handle || null);
+  };
+
+  const handleDropFile = async (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer?.files?.[0];
+    if (f && String(f.name).toLowerCase().endsWith(".editflowalbum")) await openImportedFile(f, null);
   };
 
   const btn = "inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-medium hover:bg-secondary";
 
   return (
-    <div className="space-y-5">
+    <div
+      className={"space-y-5 rounded-xl " + (dragOver ? "border-2 border-dashed border-primary bg-primary/5" : "")}
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false); }}
+      onDrop={handleDropFile}
+    >
       <div className="flex flex-wrap items-start gap-3">
         <div>
           <p className="text-sm text-muted-foreground">Album AI</p>
@@ -74,9 +96,9 @@ export default function AlbumsPage() {
           </p>
         </div>
         <div className="ml-auto flex gap-2">
-          <button className={btn} onClick={() => importRef.current?.click()}>
-            <Upload className="h-4 w-4" /> Importar .editflowalbum
-            <input ref={importRef} type="file" accept=".editflowalbum,application/json" className="hidden" onChange={handleImportFile} />
+          <button className={btn} onClick={handleOpenFile} disabled={openingFile} title="Abrir un archivo .editflowalbum (también puedes arrastrarlo aquí)">
+            {openingFile ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+            {openingFile ? "Abriendo…" : "Abrir .editflowalbum"}
           </button>
           <button className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90" onClick={() => setShowForm((v) => !v)}>
             <FilePlus2 className="h-4 w-4" /> Nuevo álbum
