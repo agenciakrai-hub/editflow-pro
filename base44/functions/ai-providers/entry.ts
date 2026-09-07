@@ -124,8 +124,14 @@ async function ensureBuiltinRows(base44: any) {
     const existing = await base44.asServiceRole.entities.CustomAiProvider.list(200);
     const rows = Array.isArray(existing) ? existing : [];
     for (const def of BUILTIN_DEFS) {
-      // Ya existe una fila para este proveedor (p. ej. añadida manualmente): no duplicar.
-      if (rows.some((r: any) => String(r?.endpoint || '').includes(def.host))) continue;
+      // Ya existe una fila para este proveedor (p. ej. añadida manualmente): no duplicar,
+      // pero se remapean las referencias legadas a esa fila existente.
+      const existingRow = rows.find((r: any) => String(r?.endpoint || '').includes(def.host));
+      if (existingRow) {
+        if (cfg?.active_seleccion === def.legacy) activePatch.active_seleccion = `custom:${existingRow.id}`;
+        if (cfg?.active_ajustes === def.legacy) activePatch.active_ajustes = `custom:${existingRow.id}`;
+        continue;
+      }
       let key = '';
       try { key = String(secrets.get(def.key) || '').trim(); } catch {}
       if (!key) continue;
