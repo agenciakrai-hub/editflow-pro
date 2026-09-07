@@ -33,11 +33,11 @@
     },
     "width_mm": {
       "type": "number",
-      "description": "Ancho del spread completo en mm (can\u00f3nico)."
+      "description": "Ancho del lienzo completo en mm (can\u00f3nico)."
     },
     "height_mm": {
       "type": "number",
-      "description": "Alto en mm (can\u00f3nico)."
+      "description": "Alto del lienzo en mm (can\u00f3nico)."
     },
     "dpi": {
       "type": "number",
@@ -54,7 +54,18 @@
     },
     "gutter_mm": {
       "type": "number",
-      "default": 6
+      "default": 6,
+      "description": "Legado (pliego doble p\u00e1gina): separaci\u00f3n central entre p\u00e1ginas. Las plantillas V2 usan photo_gap_mm como espacio entre fotos."
+    },
+    "photo_gap_mm": {
+      "type": "number",
+      "default": 0,
+      "description": "Fase Lienzos \u2014 espacio visual entre fotograf\u00edas (mm) que el motor aplica DIN\u00c1MICAMENTE al resolver cualquier plantilla. No est\u00e1 fijado en las plantillas: al cambiarlo, la geometr\u00eda de los lienzos con plantilla se recalcula."
+    },
+    "background_color": {
+      "type": "string",
+      "default": "#FFFFFF",
+      "description": "Fase Lienzos \u2014 color de fondo del lienzo (configuraci\u00f3n global del \u00e1lbum, visible al instante en el editor)."
     },
     "size_preset": {
       "type": "string",
@@ -73,7 +84,7 @@
     "spread_count_target": {
       "type": "number",
       "default": 20,
-      "description": "N\u00famero aproximado de spreads (gu\u00eda para futura IA, no l\u00edmite)."
+      "description": "N\u00famero aproximado de lienzos (gu\u00eda para futura IA, no l\u00edmite)."
     },
     "max_photos_per_spread": {
       "type": "number",

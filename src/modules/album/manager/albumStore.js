@@ -71,6 +71,7 @@ export function useAlbumStore(project, initialSpreads) {
           layout_id: data.layout_id,
           locked: !!data.locked,
           ai_generated: !!data.ai_generated,
+          ...(data.background_color ? { background_color: data.background_color } : {}),
           slots: data.slots || [],
         };
         if (String(id).startsWith("tmp_")) {
@@ -170,6 +171,19 @@ export function useAlbumStore(project, initialSpreads) {
 
   const setLocked = useCallback((id, locked) => {
     apply(spreadsRef.current.map((x) => (x.id === id ? { ...x, locked } : x)), [id]);
+  }, [apply]);
+
+  // Fase Lienzos — recalcula la geometría de TODOS los lienzos con plantilla (no
+  // "custom" y no bloqueados) tras un cambio global (p. ej. el espacio entre fotos).
+  // Las fotos y sus crops se conservan: applyLayout reasigna por orden y mantiene el
+  // transform de cada foto.
+  const refreshTemplateSpreads = useCallback((album) => {
+    const list = spreadsRef.current.map((s) => {
+      if (s.locked || !s.layout_id || s.layout_id === "custom") return s;
+      const l = getLayout(s.layout_id);
+      return l ? applyLayout(s, l, album) : s;
+    });
+    apply(list, list.map((s) => s.id));
   }, [apply]);
 
   // ---- Slots ----
@@ -274,7 +288,7 @@ export function useAlbumStore(project, initialSpreads) {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId,
     selectSpread: setSelectedSpreadId, selectSlot: setSelectedSlotId,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
-    setSpreadLayoutById, setLocked,
+    setSpreadLayoutById, setLocked, refreshTemplateSpreads,
     updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,

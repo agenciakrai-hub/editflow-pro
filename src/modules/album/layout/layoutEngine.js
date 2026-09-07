@@ -9,7 +9,10 @@ export function albumVars(album) {
   const W = Number(album.width_mm);
   const H = Number(album.height_mm);
   const gutter = album.gutter_mm ?? 6;
-  return { W, H, margin: album.margin_mm ?? 10, gutter, bleed: album.bleed_mm ?? 3, page_w: (W - gutter) / 2, page_h: H };
+  // Fase Lienzos — `gap` = espacio entre fotografías (photo_gap_mm) configurado en el
+  // álbum. Las plantillas V2 lo usan como separación DINÁMICA entre huecos: no está
+  // fijado en el catálogo, y al cambiarlo la geometría se recalcula.
+  return { W, H, margin: album.margin_mm ?? 10, gutter, bleed: album.bleed_mm ?? 3, gap: album.photo_gap_mm ?? 0, page_w: (W - gutter) / 2, page_h: H };
 }
 
 // Mini-evaluador de expresiones (+ - * / paréntesis) sobre variables del álbum.
@@ -76,20 +79,30 @@ export function compatibleLayouts(album, photoCount) {
 
 export const freshTransform = () => ({ scale: 1, offset_x_mm: 0, offset_y_mm: 0, rotation: 0, crop: null });
 
+// Fase Lienzos — aplica una plantilla conservando las fotos por orden. Las fotos que
+// no caben NO se eliminan: quedan en el catálogo (se ven con el filtro "Sin colocar").
+// El transform (zoom/pan/crop virtual) de cada foto conservada se mantiene siempre
+// que es posible (misma posición en la nueva estructura).
 export function applyLayout(spread, layout, album) {
   const geo = resolveSlots(layout, album);
-  const photoIds = (spread.slots || []).map((s) => s.photo_id).filter(Boolean);
+  const oldSlots = spread.slots || [];
+  const photoIds = oldSlots.map((s) => s.photo_id).filter(Boolean);
+  const transformByPhoto = new Map();
+  oldSlots.forEach((s) => { if (s.photo_id && s.transform) transformByPhoto.set(s.photo_id, s.transform); });
   return {
     ...spread,
     layout_id: layout.id,
-    slots: geo.map((g, i) => ({
-      slot_id: g.slot_id,
-      photo_id: photoIds[i] || null,
-      x_mm: g.x_mm, y_mm: g.y_mm, w_mm: g.w_mm, h_mm: g.h_mm,
-      fit_mode: "fill",
-      z_index: i,
-      transform: freshTransform(),
-    })),
+    slots: geo.map((g, i) => {
+      const pid = photoIds[i] || null;
+      return {
+        slot_id: g.slot_id,
+        photo_id: pid,
+        x_mm: g.x_mm, y_mm: g.y_mm, w_mm: g.w_mm, h_mm: g.h_mm,
+        fit_mode: "fill",
+        z_index: i,
+        transform: (pid && transformByPhoto.get(pid)) || freshTransform(),
+      };
+    }),
   };
 }
 

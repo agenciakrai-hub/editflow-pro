@@ -4,12 +4,24 @@ import { getLayout } from "@/modules/album/layout/layoutCatalog";
 import { freshTransform } from "@/modules/album/layout/layoutEngine";
 import { mmToUnit, unitToMm } from "@/modules/album/lib/albumUnits";
 
-// Fase 5.2 — Panel de propiedades contextual (derecha): info del spread + ajustes
-// del hueco seleccionado (transformaciones VIRTUALES, no destructivas).
-export default function PropertiesPanel({ album, spread, selectedSlot, onToggleLock, onSlotProp, onRemovePhoto, onRemoveSlot }) {
+const GAP_PRESETS = [0, 1, 2, 3, 4, 5];
+const BG_PRESETS = [
+  { value: "#FFFFFF", label: "Blanco" },
+  { value: "#000000", label: "Negro" },
+  { value: "#808080", label: "Gris" },
+];
+
+// Fase Lienzos — Panel de propiedades (derecha): configuración global del álbum
+// (color de fondo + espacio entre fotos, visible al instante en el lienzo), info
+// del lienzo activo y ajustes del hueco seleccionado (transformaciones VIRTUALES,
+// no destructivas).
+export default function PropertiesPanel({ album, spread, selectedSlot, onAlbumConfig, onToggleLock, onSlotProp, onRemovePhoto, onRemoveSlot }) {
   const btn = "w-full rounded-lg border border-border px-2.5 py-1.5 text-left text-xs font-medium hover:bg-secondary disabled:opacity-40";
   const num = "w-full rounded-md border border-border bg-background px-2 py-1 text-xs tabular-nums";
   const unit = album.display_unit || "cm";
+  const gap = album.photo_gap_mm ?? 0;
+  const bg = album.background_color || "#FFFFFF";
+  const chip = "rounded-md border px-1.5 py-0.5 text-[10px] font-medium";
 
   return (
     <aside className="flex w-56 shrink-0 flex-col gap-2 overflow-y-auto rounded-xl border border-border bg-card p-3 lg:w-64">
@@ -18,9 +30,43 @@ export default function PropertiesPanel({ album, spread, selectedSlot, onToggleL
         <p className="text-xs font-semibold">Propiedades</p>
       </div>
 
+      {/* Configuración global del álbum */}
+      <div className="rounded-lg border border-border p-2.5">
+        <p className="text-[11px] font-semibold">Álbum</p>
+        <p className="mt-1.5 text-[10px] text-muted-foreground">Color de fondo</p>
+        <div className="mt-1 flex items-center gap-1.5">
+          {BG_PRESETS.map((b) => (
+            <button key={b.value} title={b.label} onClick={() => onAlbumConfig({ background_color: b.value })}
+              className={"h-5 w-5 rounded-md border " + (bg.toLowerCase() === b.value.toLowerCase() ? "border-transparent ring-2 ring-primary" : "border-border hover:opacity-80")}
+              style={{ backgroundColor: b.value }} />
+          ))}
+          <label className="ml-auto inline-flex cursor-pointer items-center gap-1 text-[10px] text-muted-foreground">
+            <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(bg) ? bg : "#FFFFFF"}
+              onChange={(e) => onAlbumConfig({ background_color: e.target.value })}
+              className="h-5 w-5 cursor-pointer rounded-md border border-border bg-transparent p-0" />
+            Personalizado
+          </label>
+        </div>
+        <p className="mt-2 text-[10px] text-muted-foreground">Espacio entre fotos (mm)</p>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {GAP_PRESETS.map((v) => (
+            <button key={v} onClick={() => onAlbumConfig({ photo_gap_mm: v })}
+              className={chip + (gap === v ? " border-primary bg-secondary font-semibold" : " border-border hover:bg-secondary")}>
+              {v}
+            </button>
+          ))}
+          <input type="number" min="0" max="40" step="0.5" value={gap}
+            onChange={(e) => onAlbumConfig({ photo_gap_mm: Math.max(0, Number(e.target.value) || 0) })}
+            className="w-14 rounded-md border border-border bg-background px-1.5 py-0.5 text-[10px] tabular-nums" />
+        </div>
+        <p className="mt-1.5 text-[10px] leading-3 text-muted-foreground">
+          Los lienzos con plantilla recalculan su geometría al cambiar el espacio.
+        </p>
+      </div>
+
       {spread ? (
         <div className="rounded-lg border border-border p-2.5">
-          <p className="text-[11px] font-semibold">Spread</p>
+          <p className="text-[11px] font-semibold">Lienzo</p>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {getLayout(spread.layout_id)?.name || "Libre (huecos sueltos)"} · {(spread.slots || []).filter((s) => s.photo_id).length} foto(s)
           </p>
@@ -30,7 +76,7 @@ export default function PropertiesPanel({ album, spread, selectedSlot, onToggleL
           </button>
         </div>
       ) : (
-        <p className="text-[11px] leading-4 text-muted-foreground">Crea un spread para empezar.</p>
+        <p className="text-[11px] leading-4 text-muted-foreground">Crea un lienzo para empezar.</p>
       )}
 
       {selectedSlot && spread && (

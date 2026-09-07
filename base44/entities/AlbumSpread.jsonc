@@ -9,7 +9,7 @@
     "order_index": {
       "type": "number",
       "default": 0,
-      "description": "Posici\u00f3n del spread en el \u00e1lbum."
+      "description": "Posici\u00f3n del lienzo en el \u00e1lbum."
     },
     "mode": {
       "type": "string",
@@ -23,7 +23,7 @@
     "layout_id": {
       "type": "string",
       "default": "custom",
-      "description": "Layout aplicado por \u00faltima vez ('L001'... o 'custom'). La geometr\u00eda est\u00e1 resuelta en slots, por lo que el \u00e1lbum no depende del cat\u00e1logo."
+      "description": "Plantilla aplicada por \u00faltima vez ('T01'... o 'custom'). La geometr\u00eda est\u00e1 resuelta en slots, por lo que el \u00e1lbum no depende del cat\u00e1logo."
     },
     "locked": {
       "type": "boolean",
@@ -33,11 +33,15 @@
     "ai_generated": {
       "type": "boolean",
       "default": false,
-      "description": "Reserva fase IA: true si el spread naci\u00f3 de una propuesta IA."
+      "description": "Reserva fase IA: true si el lienzo naci\u00f3 de una propuesta IA."
+    },
+    "background_color": {
+      "type": "string",
+      "description": "Reserva Fase Lienzos \u2014 color de fondo espec\u00edfico de este lienzo. Vac\u00edo = se usa el global del \u00e1lbum (background_color del AlbumProject)."
     },
     "slots": {
       "type": "array",
-      "description": "Huecos del spread con geometr\u00eda resuelta en mm y transformaciones virtuales (no destructivas).",
+      "description": "Huecos del lienzo con geometr\u00eda resuelta en mm y transformaciones virtuales (no destructivas).",
       "items": {
         "type": "object",
         "properties": {

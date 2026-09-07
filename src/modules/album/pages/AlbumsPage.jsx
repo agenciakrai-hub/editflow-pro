@@ -70,7 +70,7 @@ export default function AlbumsPage() {
           <p className="text-sm text-muted-foreground">Album AI</p>
           <h1 className="text-2xl font-semibold">Mis álbumes</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Importa tu carpeta de fotos finales exportadas desde Lightroom y maqueta el álbum spread a spread. Las fotos originales nunca se modifican.
+            Importa tu carpeta de fotos finales exportadas desde Lightroom y maqueta el álbum lienzo a lienzo. Las fotos originales nunca se modifican.
           </p>
         </div>
         <div className="ml-auto flex gap-2">

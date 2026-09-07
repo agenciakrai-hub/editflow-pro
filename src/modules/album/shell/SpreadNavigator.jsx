@@ -40,7 +40,7 @@ export default function SpreadNavigator({ album, spreads, selectedId, thumbs, on
               {s.locked && <Lock className="absolute right-0.5 top-0.5 h-2.5 w-2.5 text-neutral-700" />}
             </div>
             <div className="flex items-center justify-between px-0.5 pt-1 text-[10px] text-muted-foreground">
-              <span className="font-semibold text-foreground">{i + 1}</span>
+              <span className="font-semibold text-foreground">{`L${String(i + 1).padStart(2, "0")}`}</span>
               <span>{count} foto{count === 1 ? "" : "s"}</span>
             </div>
             <div className="absolute -top-1.5 right-1.5 hidden gap-1 group-hover:flex">
@@ -55,7 +55,7 @@ export default function SpreadNavigator({ album, spreads, selectedId, thumbs, on
       <button onClick={onAdd}
         className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-dashed border-border px-3 text-xs font-medium text-muted-foreground hover:border-foreground/40 hover:text-foreground"
         style={{ height: cardH + 22 }}>
-        <Plus className="h-3.5 w-3.5" /> Spread
+        <Plus className="h-3.5 w-3.5" /> Lienzo
       </button>
     </div>
   );

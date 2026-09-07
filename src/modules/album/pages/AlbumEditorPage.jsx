@@ -207,6 +207,22 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     else store.addSlotWithPhoto(spread.id, photoId);
   };
 
+  // Fase Lienzos — configuración global del álbum (fondo + espacio entre fotos).
+  // El cambio de espacio recalcula la geometría de los lienzos con plantilla.
+  const updateAlbumConfig = (patch) => {
+    const next = { ...project, ...patch };
+    setProject(next);
+    updateAlbum(project.id, patch).catch(() => {});
+    if (patch.photo_gap_mm != null) store.refreshTemplateSpreads(next);
+  };
+
+  // Fotos colocadas en algún hueco de algún lienzo (para el filtro "Sin colocar").
+  const placedPhotoIds = useMemo(() => {
+    const set = new Set();
+    store.spreads.forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) set.add(sl.photo_id); }));
+    return set;
+  }, [store.spreads]);
+
   const spreadId = spread?.id;
   const locked = !!spread?.locked;
   const slotHandlers = useMemo(() => {
@@ -287,7 +303,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
             />
           ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-border text-sm text-muted-foreground">
-              Crea tu primer spread para empezar a maquetar el álbum.
+              Crea tu primer lienzo para empezar a maquetar el álbum.
             </div>
           )}
           <SpreadControls
@@ -313,6 +329,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         <PropertiesPanel
           album={project}
           spread={spread}
+          onAlbumConfig={updateAlbumConfig}
           selectedSlot={selectedSlotWithPhoto}
           onToggleLock={() => store.setLocked(spreadId, !locked)}
           onSlotProp={(patch) => store.updateSlot(spreadId, selectedSlot.slot_id, patch)}
@@ -324,6 +341,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       <PhotoBrowser
         photos={photos}
         previews={thumbs}
+        placedPhotoIds={placedPhotoIds}
         importing={importing}
         progress={progress}
         onImportFolder={importFolder}

@@ -4,10 +4,16 @@ import { FolderOpen, ImageOff, Link2, Loader2, Plus, Search } from "lucide-react
 // Fase 5.2 — Navegador de fotos (franja inferior, ancho completo): filmstrip
 // arrastrable de TODO el catálogo importado. `previews` son los THUMBS de nivel 1
 // (256 px); los originales jamás se tocan.
-export default function PhotoBrowser({ photos, previews, importing, progress, onImportFolder, onImportFiles, onPhotoDoubleClick, onRelocate, relocateCount }) {
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, importing, progress, onImportFolder, onImportFiles, onPhotoDoubleClick, onRelocate, relocateCount }) {
   const [q, setQ] = useState("");
+  const [only, setOnly] = useState("all");
   const inputRef = useRef(null);
-  const list = q ? photos.filter((p) => p.filename.toLowerCase().includes(q.toLowerCase())) : photos;
+  const matchesQ = (p) => !q || p.filename.toLowerCase().includes(q.toLowerCase());
+  // "Sin colocar" muestra las fotos que no están en ningún hueco de ningún lienzo
+  // (p. ej. sobrantes al cambiar una plantilla): nunca se eliminan automáticamente.
+  const list = only === "unplaced"
+    ? photos.filter((p) => !placedPhotoIds?.has(p.id) && matchesQ(p))
+    : photos.filter(matchesQ);
 
   return (
     <div className="flex h-36 shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
@@ -17,6 +23,14 @@ export default function PhotoBrowser({ photos, previews, importing, progress, on
           <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre…"
             className="h-7 w-full rounded-lg border border-border bg-background pl-7 pr-2 text-[11px]" />
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {[["all", "Todas"], ["unplaced", "Sin colocar"]].map(([k, label]) => (
+            <button key={k} onClick={() => setOnly(k)}
+              className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (only === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
+              {label}
+            </button>
+          ))}
         </div>
         <button onClick={onImportFolder} disabled={importing}
           className="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-40">

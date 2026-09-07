@@ -31,6 +31,9 @@ export function buildAlbumDocument(project, photos, spreads) {
       spread_count_target: project.spread_count_target ?? 20,
       max_photos_per_spread: project.max_photos_per_spread ?? 6,
       style_hint: project.style_hint || "minimal",
+      // Fase Lienzos — aditivo: espacio entre fotos y color de fondo del lienzo.
+      photo_gap_mm: project.photo_gap_mm ?? 0,
+      background_color: project.background_color ?? "#FFFFFF",
     },
     photos: (photos || []).map((p) => ({
       photo_id: p.id,
@@ -116,6 +119,8 @@ export async function importAlbumDocument(doc) {
     spread_count_target: a.spread_count_target ?? 20,
     max_photos_per_spread: a.max_photos_per_spread ?? 6,
     style_hint: a.style_hint || "minimal",
+    photo_gap_mm: a.photo_gap_mm ?? 0,
+    background_color: a.background_color ?? "#FFFFFF",
     source_folder_name: "importado",
     doc_version: doc.format_version >= 2 ? "v2" : "v1",
   });

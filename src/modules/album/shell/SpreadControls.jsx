@@ -7,13 +7,13 @@ export default function SpreadControls({ index, total, hasSpread, locked, onPrev
   const btn = "inline-flex h-7 shrink-0 items-center gap-1 rounded-lg border border-border px-2 text-[11px] font-medium hover:bg-secondary disabled:opacity-40";
   return (
     <div className="flex shrink-0 flex-wrap items-center gap-1.5 rounded-xl border border-border bg-card px-2.5 py-1.5">
-      <button className={btn} onClick={onPrev} disabled={!hasSpread || index <= 0} title="Spread anterior"><ChevronLeft className="h-3.5 w-3.5" /></button>
+      <button className={btn} onClick={onPrev} disabled={!hasSpread || index <= 0} title="Lienzo anterior"><ChevronLeft className="h-3.5 w-3.5" /></button>
       <span className="min-w-20 text-center text-[11px] tabular-nums text-muted-foreground">
-        {hasSpread ? `Spread ${index + 1} / ${total}` : "Sin spreads"}
+        {hasSpread ? `Lienzo ${index + 1} / ${total}` : "Sin lienzos"}
       </span>
-      <button className={btn} onClick={onNext} disabled={!hasSpread || index >= total - 1} title="Spread siguiente"><ChevronRight className="h-3.5 w-3.5" /></button>
+      <button className={btn} onClick={onNext} disabled={!hasSpread || index >= total - 1} title="Lienzo siguiente"><ChevronRight className="h-3.5 w-3.5" /></button>
       <div className="mx-1 hidden h-4 w-px bg-border sm:block" />
-      <button className={btn} onClick={onAdd}><Plus className="h-3.5 w-3.5" /> Nuevo</button>
+      <button className={btn} onClick={onAdd}><Plus className="h-3.5 w-3.5" /> Nuevo lienzo</button>
       <button className={btn} onClick={onDuplicate} disabled={!hasSpread}><Copy className="h-3.5 w-3.5" /> Duplicar</button>
       <button className={btn} onClick={onMoveLeft} disabled={!hasSpread || index <= 0} title="Mover hacia el principio"><ArrowLeft className="h-3.5 w-3.5" /></button>
       <button className={btn} onClick={onMoveRight} disabled={!hasSpread || index >= total - 1} title="Mover hacia el final"><ArrowRight className="h-3.5 w-3.5" /></button>

@@ -41,8 +41,9 @@ export function mmToPx(mm, dpi = 300) {
   return (Number(mm) * dpi) / 25.4;
 }
 
+// Fase Lienzos — el lienzo puede llegar a 1 m (p. ej. 60 × 30 cm = 600 × 300 mm).
 export function validateDimensions(w, h) {
-  return Number(w) >= 100 && Number(w) <= 500 && Number(h) >= 100 && Number(h) <= 500;
+  return Number(w) >= 100 && Number(w) <= 1000 && Number(h) >= 100 && Number(h) <= 1000;
 }
 
 export function albumSizeLabel(album) {
