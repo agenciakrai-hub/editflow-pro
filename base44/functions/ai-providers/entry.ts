@@ -44,6 +44,7 @@ function normalizeEndpoint(raw: string): string {
 // Nombre amigable autodetectado del dominio (openrouter.ai -> Openrouter).
 function nameFromDomain(endpoint: string): string {
   try {
+    if (new URL(endpoint).hostname === 'generativelanguage.googleapis.com') return 'Google Gemini';
     const host = new URL(endpoint).hostname.replace(/^www\./, '');
     const base = host.split('.')[0] || 'Proveedor';
     return base.charAt(0).toUpperCase() + base.slice(1);
@@ -198,22 +199,32 @@ export default async function(req: Request): Promise<Response> {
 
     if (action === 'add') {
       try {
-        const endpoint = normalizeEndpoint(body.endpoint);
+        let endpoint = normalizeEndpoint(body.endpoint);
         const apiKey = String(body.api_key || '').trim();
         if (!apiKey) return Response.json({ ok: false, reason: 'Falta la API key' });
+        // Gemini: la API nativa NO acepta Authorization Bearer (401). Se redirige a la
+        // capa OpenAI-compatible oficial de Google (misma key, mismo modelo, formato OpenAI
+        // en /chat/completions), compatible con todo el flujo de proveedores propios.
+        const isGemini = new URL(endpoint).hostname === 'generativelanguage.googleapis.com';
+        if (isGemini) endpoint = 'https://generativelanguage.googleapis.com/v1beta/openai';
         const check = await fetchModels(endpoint, apiKey);
         if (!check.ok) {
           return Response.json({ ok: false, reason: `No se pudo verificar la conexión: ${check.reason}` });
         }
+        // Los ids de Gemini llegan como "models/xyz": se normalizan a "xyz" para que la
+        // página y el chat/completions usen el mismo identificador.
+        const models = check.models.map((m: string) => m.replace(/^models\//, ''));
+        // Preferencia del proyecto: los motores Gemini se limitan a gemini-2.5-flash.
+        const flash = models.includes('gemini-2.5-flash') ? ['gemini-2.5-flash'] : [];
         const rec = await base44.asServiceRole.entities.CustomAiProvider.create({
           name: nameFromDomain(endpoint),
           endpoint,
           api_key: apiKey,
-          available_models: check.models,
-          seleccion_models: [],
-          ajustes_models: [],
+          available_models: models,
+          seleccion_models: isGemini ? flash : [],
+          ajustes_models: isGemini ? flash : [],
           // Legado: mejor modelo de vision detectado (fallback si nunca se marcan modelos).
-          model: pickBestVisionModel(check.models),
+          model: pickBestVisionModel(models),
           enabled: true,
           last_ok: true,
           last_reason: '',

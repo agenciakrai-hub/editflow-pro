@@ -25,8 +25,9 @@ export default function AddProviderForm({ onAdd, adding, result }) {
         <p className="text-sm font-semibold">Añadir proveedor IA</p>
       </div>
       <p className="text-xs text-muted-foreground">
-        Introduce la URL del proveedor (compatible OpenAI) y su API key. La app detecta el nombre, verifica la conexión
-        y muestra todos los modelos disponibles para que marques cuáles usar en Selección IA y Ajustes IA.
+        Introduce la URL del proveedor (compatible OpenAI) y su API key — ej. https://openrouter.ai o
+        https://generativelanguage.googleapis.com para Gemini. La app detecta el nombre, verifica la conexión y muestra
+        todos los modelos disponibles para que marques cuáles usar en Selección IA y Ajustes IA.
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1.5">
