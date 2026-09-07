@@ -70,8 +70,10 @@ export const AuthProvider = ({ children }) => {
             });
           }
         } else {
+          // Fallo transitorio (red caída / servidor no disponible): la sesión NO se
+          // invalida — solo se marca para reintentar. Nunca se borra el token.
           setAuthError({
-            type: 'unknown',
+            type: 'session_check_failed',
             message: appError.message || 'Failed to load app'
           });
         }
@@ -81,7 +83,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Unexpected error:', error);
       setAuthError({
-        type: 'unknown',
+        type: 'session_check_failed',
         message: error.message || 'An unexpected error occurred'
       });
       setIsLoadingPublicSettings(false);
@@ -103,12 +105,22 @@ export const AuthProvider = ({ children }) => {
       setIsLoadingAuth(false);
       setIsAuthenticated(false);
       setAuthChecked(true);
-      
-      // If user auth fails, it might be an expired token
+
+      // BLINDAJE DE SESIÓN: 401/403 = el token fue rechazado por el servidor
+      // (expirado o inválido) → sesión realmente cerrada, el usuario debe entrar
+      // de nuevo. Cualquier OTRO fallo (sin conexión, timeout, error 5xx) NO
+      // invalida el token guardado en el dispositivo: se marca como verificación
+      // fallida (pantalla de reintento) y JAMÁS se manda al usuario al login ni
+      // se borra nada por un fallo puntual al arrancar.
       if (error.status === 401 || error.status === 403) {
         setAuthError({
           type: 'auth_required',
           message: 'Authentication required'
+        });
+      } else {
+        setAuthError({
+          type: 'session_check_failed',
+          message: error.message || 'Session check failed'
         });
       }
     }

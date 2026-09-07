@@ -47,6 +47,13 @@ const getAppParams = () => {
 	if (clearInUrl) {
 		storage.removeItem('base44_access_token');
 		storage.removeItem('token');
+		// BLINDAJE DE SESIÓN: el parámetro se elimina de la URL en este mismo arranque.
+		// Si quedara anclado (marcador, atajo de escritorio, URL guardada), cada
+		// reapertura volvería a borrar la sesión activa aunque el usuario nunca
+		// hubiera cerrado sesión manualmente.
+		const clearParams = new URLSearchParams(window.location.search);
+		clearParams.delete("clear_access_token");
+		window.history.replaceState({}, document.title, `${window.location.pathname}${clearParams.toString() ? `?${clearParams.toString()}` : ""}${window.location.hash}`);
 	}
 	storage.removeItem('base44_clear_access_token');
 	return {

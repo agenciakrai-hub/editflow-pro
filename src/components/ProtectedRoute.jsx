@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import SessionRetryScreen from '@/components/SessionRetryScreen';
 
 const DefaultFallback = () => (
   <div className="fixed inset-0 flex items-center justify-center">
@@ -26,7 +27,13 @@ export default function ProtectedRoute({ fallback = <DefaultFallback />, unauthe
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
     }
-    return unauthenticatedElement;
+    // Solo se envía al login cuando el servidor RECHAZÓ el token (expirado o
+    // inválido). Un fallo transitorio de verificación (red/servidor) NO cierra la
+    // sesión: se reintenta, jamás se pide login por un fallo puntual.
+    if (authError.type === 'auth_required') {
+      return unauthenticatedElement;
+    }
+    return <SessionRetryScreen />;
   }
 
   if (!isAuthenticated) {
