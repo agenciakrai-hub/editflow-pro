@@ -79,6 +79,25 @@ export function compatibleLayouts(album, photoCount) {
 
 export const freshTransform = () => ({ scale: 1, offset_x_mm: 0, offset_y_mm: 0, rotation: 0, crop: null });
 
+// Mejora encuadre — AUTO FIT / AUTO COVER: garantiza que la foto cubre SIEMPRE el
+// contenedor (escala >= 1 y offsets dentro del límite que el propio zoom permite, sin
+// huecos ni deformación, proporción original intacta). freshTransform es el ajuste
+// INICIAL al entrar la foto en un hueco; fitTransform RECALCULA el encuadre cuando
+// cambia la geometría del contenedor o la plantilla: conserva el encuadre anterior
+// siempre que siga siendo geométricamente válido (PRIORIDAD 2) y si no, reclampa
+// zoom/posición/crop virtual al mejor encuadre automático (PRIORIDAD 3-4).
+export function fitTransform(slot) {
+  const t = slot.transform || freshTransform();
+  const scale = Math.max(1, Number(t.scale ?? 1) || 1);
+  const limX = ((scale - 1) * (slot.w_mm || 0)) / 2;
+  const limY = ((scale - 1) * (slot.h_mm || 0)) / 2;
+  const clamp = (v, lim) => Math.max(-lim, Math.min(lim, Number(v) || 0));
+  // Redondeo a 0.000001 mm: elimina el ruido de coma flotante del cálculo de límites
+  // (1.4-1 ≠ 0.4 exacto) sin pérdida práctica de precisión de impresión.
+  const r6 = (v) => Math.round(v * 1e6) / 1e6;
+  return { ...t, scale: r6(scale), offset_x_mm: r6(clamp(t.offset_x_mm, limX)), offset_y_mm: r6(clamp(t.offset_y_mm, limY)) };
+}
+
 // Fase Lienzos — aplica una plantilla conservando las fotos por orden. Las fotos que
 // no caben NO se eliminan: quedan en el catálogo (se ven con el filtro "Sin colocar").
 // El transform (zoom/pan/crop virtual) de cada foto conservada se mantiene siempre
@@ -100,7 +119,13 @@ export function applyLayout(spread, layout, album) {
         x_mm: g.x_mm, y_mm: g.y_mm, w_mm: g.w_mm, h_mm: g.h_mm,
         fit_mode: "fill",
         z_index: i,
-        transform: (pid && transformByPhoto.get(pid)) || freshTransform(),
+        // PRIORIDADES del cambio de plantilla: 1) conservar la foto asignada (por orden),
+        // 2) conservar su encuadre anterior si es geométricamente válido, 3) si la
+        // proporción del hueco cambió, recalcular zoom/posición/crop (auto cover),
+        // 4) nunca dejar huecos ni deformar. fitTransform aplica 2→4 en un solo paso.
+        transform: pid
+          ? fitTransform({ w_mm: g.w_mm, h_mm: g.h_mm, transform: transformByPhoto.get(pid) || freshTransform() })
+          : freshTransform(),
       };
     }),
   };

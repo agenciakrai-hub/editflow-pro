@@ -315,7 +315,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
               guides={guides}
               selectedSlotId={store.selectedSlotId}
               locked={locked}
+              slotMode={store.slotMode}
               onSelectSlot={store.selectSlot}
+              onSelectSlotContainer={store.selectSlotContainer}
               onDropPhotoOnCanvas={(photoId) => store.addSlotWithPhoto(spread.id, photoId)}
               handlers={slotHandlers}
             />

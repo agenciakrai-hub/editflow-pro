@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createSpread, deleteSpread, updateSpread, updateAlbum } from "@/modules/album/hooks/useAlbumProject";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
-import { applyLayout, freshTransform, makeCustomSlot } from "@/modules/album/layout/layoutEngine";
+import { applyLayout, fitTransform, freshTransform, makeCustomSlot } from "@/modules/album/layout/layoutEngine";
 
 const HISTORY_LIMIT = 50;
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -13,6 +13,10 @@ export function useAlbumStore(project, initialSpreads) {
   const [spreads, setSpreads] = useState(initialSpreads);
   const [selectedSpreadId, setSelectedSpreadId] = useState(initialSpreads.length ? initialSpreads[0].id : null);
   const [selectedSlotId, setSelectedSlotId] = useState(null);
+  // Mejora encuadre — modo de edición del hueco seleccionado: "photo" (UN CLIC sobre
+  // la foto: se encuadra la foto, contenedor FIJO) o "container" (DOBLE CLIC: se edita
+  // el contenedor con la foto congelada). Huecos vacíos: siempre "container".
+  const [slotMode, setSlotMode] = useState("photo");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [hist, setHist] = useState({ canUndo: false, canRedo: false });
@@ -195,17 +199,35 @@ export function useAlbumStore(project, initialSpreads) {
         slots: (s.slots || []).map((sl) => {
           if (sl.slot_id !== slotId) return sl;
           const t = patch.transform ? { ...sl.transform, ...patch.transform } : sl.transform;
-          return { ...sl, ...patch, transform: t };
+          const merged = { ...sl, ...patch, transform: t };
+          // Al cambiar la geometría del contenedor (mover/resize del hueco o panel de
+          // propiedades), la foto se recalcula EN VIVO para volver a cubrirlo (auto
+          // cover), conservando el encuadre anterior si sigue siendo válido.
+          if ((patch.w_mm != null || patch.h_mm != null) && merged.photo_id) {
+            merged.transform = fitTransform(merged);
+          }
+          return merged;
         }),
       };
     });
     apply(list, [spreadId], history);
   }, [apply]);
 
+  const selectSlot = useCallback((slotId) => {
+    setSelectedSlotId(slotId);
+    if (slotId) setSlotMode("photo");
+  }, []);
+  const selectSlotContainer = useCallback((slotId) => {
+    setSelectedSlotId(slotId);
+    if (slotId) setSlotMode("container");
+  }, []);
+
+  // freshTransform = AJUSTE INICIAL AUTOMÁTICO al entrar la foto en el contenedor:
+  // auto cover centrado (escala 1, sin offsets): cubre todo, sin deformar, centrado.
   const assignPhotoToSlot = useCallback((spreadId, slotId, photoId) => {
     updateSlot(spreadId, slotId, { photo_id: photoId, transform: freshTransform() });
-    setSelectedSlotId(slotId);
-  }, [updateSlot]);
+    selectSlot(slotId);
+  }, [updateSlot, selectSlot]);
 
   const removePhotoFromSlot = useCallback((spreadId, slotId) => {
     updateSlot(spreadId, slotId, { photo_id: null, transform: freshTransform() });
@@ -285,8 +307,8 @@ export function useAlbumStore(project, initialSpreads) {
   const selectedSpread = sorted.find((s) => s.id === selectedSpreadId) || sorted[0] || null;
 
   return {
-    spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId,
-    selectSpread: setSelectedSpreadId, selectSlot: setSelectedSlotId,
+    spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
+    selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
     setSpreadLayoutById, setLocked, refreshTemplateSpreads,
     updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
