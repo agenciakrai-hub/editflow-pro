@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createSpread, deleteSpread, updateSpread, updateAlbum } from "@/modules/album/hooks/useAlbumProject";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
 import { applyLayout, expandSlotsToCanvas, freshTransform, makeCustomSlot, sameRatio } from "@/modules/album/layout/layoutEngine";
+import { planAutoLayout } from "@/modules/album/layout/autoPlanner";
 import { applySmartFillToSpread, ensureFaces, retunePhotoSlots, smartFillSlot } from "@/modules/album/editor/smartFill";
 
 const HISTORY_LIMIT = 50;
@@ -225,6 +226,42 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     apply([...spreadsRef.current, next], [next.id]);
     setSelectedSpreadId(next.id);
     setSelectedSlotId(null);
+  }, [apply, project]);
+
+  // ---- Fase 1 — MAQUETACIÓN AUTOMÁTICA DETERMINISTA (sin IA) ----
+  // Crea TODOS los lienzos del plan en UNA operación atómica (una sola entrada de
+  // historial: ⌘Z deshace la maquetación completa y ⌘⇧Z la restaura). Los lienzos
+  // se añaden DESPUÉS del último existente sin tocar nada previo, con la
+  // configuración del álbum (tamaño, márgenes, espacio entre fotos resuelto por
+  // applyLayout) y las mismas reglas que la creación manual (nuevo lienzo: ajuste
+  // FIT inicial, herramientas de relleno desactivadas por defecto). Las fotos
+  // sobrantes permanecen sin colocar; las existentes no se tocan.
+  const autoLayoutPhotos = useCallback((photoIds) => {
+    const ordered = (photoIds || []).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
+    if (!ordered.length) return null;
+    const plan = planAutoLayout(project, ordered);
+    if (!plan.groups.length) return null;
+    const list = [...spreadsRef.current];
+    const created = [];
+    for (const g of plan.groups) {
+      const base = {
+        id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread",
+        layout_id: g.layoutId, locked: false, ai_generated: false, fill_photos: false, fill_canvas: false, slots: [],
+      };
+      const next = applyLayout(base, g.layout, project);
+      next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
+      created.push(next);
+      list.push(next);
+    }
+    apply(list, created.map((s) => s.id));
+    setSelectedSpreadId(created[0].id);
+    setSelectedSlotId(null);
+    return {
+      total: ordered.length,
+      placed: ordered.length - plan.leftover.length,
+      leftover: plan.leftover.length,
+      spreadCount: created.length,
+    };
   }, [apply, project]);
 
   const setLocked = useCallback((id, locked) => {
@@ -453,7 +490,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
     selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
-    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
+    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
     updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,

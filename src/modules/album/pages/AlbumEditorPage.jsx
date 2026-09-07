@@ -247,6 +247,35 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     return set;
   }, [store.spreads]);
 
+  // ---- Fase 1 — MAQUETACIÓN AUTOMÁTICA DETERMINISTA (sin IA) ----
+  // Recibe ids de fotos (selección múltiple o una carpeta) y los ORDENA por el
+  // orden ESTABLE del catálogo (orden de importación mostrado: nunca se mezclan ni
+  // se ordena aleatoriamente). El store calcula el plan completo (DP, no greedy) y
+  // crea los lienzos nuevos DESPUÉS del último existente como UNA operación atómica
+  // (⌘Z deshace toda la maquetación). Desde una carpeta solo se usan fotos SIN
+  // COLOCAR; las ya utilizadas permanecen intactas. El editor salta al primer
+  // lienzo nuevo para revisarlo.
+  const runAutoLayout = (ids) => {
+    const idSet = new Set(ids);
+    const ordered = photos.filter((p) => idSet.has(p.id)).map((p) => p.id);
+    if (!ordered.length) {
+      toast({ title: "Nada que maquetar", description: "Selecciona fotos o una carpeta con fotos sin colocar." });
+      return;
+    }
+    const res = store.autoLayoutPhotos(ordered);
+    if (!res) {
+      toast({ title: "Sin plantillas compatibles", description: "No hay combinación de plantillas para estas fotos con la configuración actual del álbum.", variant: "destructive" });
+      return;
+    }
+    toast({
+      title: "Maquetación completada",
+      description: `${res.total} seleccionada(s) · ${res.placed} colocada(s) · ${res.leftover} sin colocar · ${res.spreadCount} lienzo(s) creado(s) al final del álbum. Revisa los lienzos nuevos (⌘Z deshace toda la maquetación).`,
+    });
+  };
+  const handleAutoLayoutFolder = (folder) => {
+    runAutoLayout(photos.filter((p) => p.folder === folder && !placedPhotoIds.has(p.id)).map((p) => p.id));
+  };
+
   // Fase Carpetas — organización VIRTUAL de fotos: la lista de nombres vive en el
   // proyecto (photo_folders) y cada foto guarda su carpeta en 'folder'. Nunca se
   // tocan los archivos originales.
@@ -451,6 +480,8 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onImportFiles={importFiles}
         onRelocate={() => setRelocating(true)}
         relocateCount={missingPhotos.length}
+        onAutoLayout={runAutoLayout}
+        onAutoLayoutFolder={handleAutoLayoutFolder}
       />
 
       {exporting && (

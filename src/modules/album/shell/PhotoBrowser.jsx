@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
-import { FolderOpen, Link2, Loader2, Plus, Search, X } from "lucide-react";
+import { FolderOpen, Link2, Loader2, Plus, Search, Wand2, X } from "lucide-react";
 import FolderTabs from "@/modules/album/shell/photoBrowser/FolderTabs";
 import ThumbStrip from "@/modules/album/shell/photoBrowser/ThumbStrip";
 import PhotoZoom from "@/modules/album/shell/photoBrowser/PhotoZoom";
@@ -13,7 +13,7 @@ const ALL = "__all__";
 // Colocación múltiple — selección con clic (individual), Ctrl/Cmd+clic (alternar) y
 // Shift+clic (rango), con estado visual claro (anillo + check). Arrastrar la selección
 // al lienzo crea automáticamente la plantilla adecuada. Doble clic = ampliada.
-export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount }) {
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder }) {
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
@@ -108,6 +108,20 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
           <button onClick={clearSelection} title="Arrastra la selección al lienzo para crear la plantilla automática"
             className="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
             {selIds.size} seleccionada{selIds.size !== 1 ? "s" : ""} <X className="h-2.5 w-2.5" />
+          </button>
+        )}
+        {selIds.size > 0 && onAutoLayout && (
+          <button onClick={() => { onAutoLayout([...selIds]); clearSelection(); }}
+            title="Crea lienzos nuevos al final del álbum, elige las plantillas más compatibles y distribuye las fotos (⌘Z deshace toda la maquetación)"
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground hover:opacity-90">
+            <Wand2 className="h-3 w-3" /> Maquetar automáticamente ({selIds.size})
+          </button>
+        )}
+        {folder !== ALL && onAutoLayoutFolder && (
+          <button onClick={() => onAutoLayoutFolder(folder)}
+            title={`Maqueta automáticamente las fotos SIN COLOCAR de «${folder}» en lienzos nuevos al final del álbum`}
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-2.5 text-[11px] font-semibold text-primary hover:bg-primary/20">
+            <Wand2 className="h-3 w-3" /> Maquetar carpeta
           </button>
         )}
         <label className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
