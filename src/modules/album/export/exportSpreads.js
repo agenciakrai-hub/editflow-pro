@@ -35,10 +35,31 @@ function canvasToBlob(canvas, format, quality) {
   });
 }
 
+// REGLA ABSOLUTA (Para impresión = SOLO ARCHIVOS ORIGINALES): antes de escribir nada,
+// se verifica que TODOS los originales de los lienzos seleccionados estén accesibles.
+// Si falta alguno, la exportación queda DETENIDA (0 archivos generados) y se informa
+// exactamente de qué fotografías faltan para que el usuario las localice/re-vincule.
+// El fallback a previews SOLO existe para la revisión manual, nunca para impresión.
+async function findMissingOriginals(album, spreads, photosById) {
+  const missing = [];
+  const seen = new Set();
+  for (const spread of spreads) {
+    for (const sl of (spread.slots || [])) {
+      if (!sl.photo_id || seen.has(sl.photo_id)) continue;
+      seen.add(sl.photo_id);
+      const photo = photosById.get(sl.photo_id);
+      if (!photo) { missing.push({ photo_id: sl.photo_id, filename: sl.photo_id }); continue; }
+      const file = await findOriginalFile(album.id, photo);
+      if (!file) missing.push({ photo_id: sl.photo_id, filename: photo.filename });
+    }
+  }
+  return missing;
+}
+
 // Carga las imágenes de UN lienzo para exportación, desde el ORIGINAL. Cada foto se
 // decodifica UNA A UNA a la resolución necesaria; tras renderizar el lienzo se
 // liberan (releaseImages) para que la memoria no crezca con el número de lienzos.
-async function loadSpreadImages(album, spread, photosById, pxPerMm) {
+async function loadSpreadImages(album, spread, photosById, pxPerMm, requireOriginals) {
   const images = new Map();
   const meta = new Map();
   // Cuerpo de carga de UNA foto: siempre secuencial (nunca dos originales
@@ -63,8 +84,9 @@ async function loadSpreadImages(album, spread, photosById, pxPerMm) {
         }
       } catch {}
     }
-    // Fallback controlado (carpeta original no disponible): preview guardada.
-    const url = await getBestPreviewUrl(album.id, photo);
+    // Fallback controlado: SOLO para revisión manual (baja resolución explícita).
+    // Para impresión jamás se sustituye un original por una preview.
+    const url = requireOriginals ? null : await getBestPreviewUrl(album.id, photo);
     const img = url ? await loadUrlImage(url).catch(() => null) : null;
     images.set(sl.photo_id, img);
     meta.set(sl.photo_id, {
@@ -86,13 +108,23 @@ function releaseImages(meta) {
 }
 
 // options: { folderHandle, format: "jpeg"|"png", quality (0-1), pxPerMm,
-//            includeBleed, overlays, checkResolution }
-// Devuelve { count, missing, fromPreview, lowRes[], mode: "folder"|"download" }.
+//            includeBleed, overlays, checkResolution, requireOriginals }
+// Devuelve { count, missing, fromPreview, lowRes[], mode } o, si requireOriginals y
+// falta algún original, { blocked: true, missingOriginals[], count: 0 }.
 export async function exportSpreads({ album, spreads, photosById, options, onProgress }) {
   const {
     folderHandle, format = "jpeg", quality = 0.92, pxPerMm,
-    includeBleed = false, overlays = null, checkResolution = false,
+    includeBleed = false, overlays = null, checkResolution = false, requireOriginals = false,
   } = options;
+
+  // Para impresión: SIEMPRE originales. Si falta uno, no se genera NADA y se
+  // detiene para una decisión explícita del usuario (localizar / re-vincular).
+  if (requireOriginals) {
+    const missingOriginals = await findMissingOriginals(album, spreads, photosById);
+    if (missingOriginals.length) {
+      return { blocked: true, missingOriginals, count: 0 };
+    }
+  }
   const ext = format === "png" ? "png" : "jpg";
   let missing = 0;
   const fromPreview = new Set();
@@ -101,7 +133,7 @@ export async function exportSpreads({ album, spreads, photosById, options, onPro
 
   for (let i = 0; i < spreads.length; i++) {
     const spread = spreads[i];
-    const { images, meta } = await loadSpreadImages(album, spread, photosById, pxPerMm);
+    const { images, meta } = await loadSpreadImages(album, spread, photosById, pxPerMm, requireOriginals);
     meta.forEach((m, pid) => { if (m.source === "preview") fromPreview.add(pid); });
 
     // Control de resolución (impresión): DPI efectivo real del ORIGINAL en el tamaño

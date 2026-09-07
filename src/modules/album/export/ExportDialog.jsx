@@ -4,6 +4,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useToast } from "@/components/ui/use-toast";
 import { exportSpreads, pickExportFolder, supportsFolderExport } from "@/modules/album/export/exportSpreads";
 import { albumSizeLabel } from "@/modules/album/lib/albumUnits";
+import { putFolderHandle } from "@/modules/album/lib/previewStore";
 
 // Fase Exportación — modal con las DOS opciones principales: PARA IMPRESIÓN y
 // REVISIÓN MANUAL. Habla siempre de LIENZOS. Lee el proyecto sin modificarlo y
@@ -64,6 +65,17 @@ export default function ExportDialog({ album, spreads, photosById, onClose }) {
     if (h) setFolder(h);
   };
 
+  // Para impresión — re-vincular la CARPETA DE ORIGINALES cuando la exportación se
+  // detiene por archivos originales no disponibles (nunca se sustituyen por previews).
+  const linkOriginalFolder = async () => {
+    if (typeof window.showDirectoryPicker !== "function") return;
+    try {
+      const h = await window.showDirectoryPicker({ mode: "readwrite" });
+      await putFolderHandle(album.id, h);
+      toast({ title: "Carpeta original vinculada", description: "Pulsa «Exportar» de nuevo para reintentar." });
+    } catch {}
+  };
+
   const handleExport = async () => {
     setRunning(true);
     setResult(null);
@@ -88,6 +100,7 @@ export default function ExportDialog({ album, spreads, photosById, onClose }) {
           pxPerMm,
           includeBleed: tab === "print" && includeBleed,
           checkResolution: tab === "print",
+          requireOriginals: tab === "print",
           overlays:
             tab === "review"
               ? {
@@ -103,12 +116,20 @@ export default function ExportDialog({ album, spreads, photosById, onClose }) {
         onProgress: (done, t, name) => setProgress({ done, t, name }),
       });
       setResult(res);
-      toast({
-        title: "Exportación completa",
-        description:
-          `${res.count} lienzo(s) exportado(s) a ${folder ? `«${folder.name}»` : "tu equipo"}` +
-          (res.missing ? ` · ${res.missing} foto(s) sin preview en este dispositivo` : ""),
-      });
+      if (res.blocked) {
+        toast({
+          title: "Exportación detenida",
+          description: `Faltan ${res.missingOriginals.length} archivo(s) original(es). Para impresión no se usan previews.`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Exportación completa",
+          description:
+            `${res.count} lienzo(s) exportado(s) a ${folder ? `«${folder.name}»` : "tu equipo"}` +
+            (res.missing ? ` · ${res.missing} foto(s) sin preview en este dispositivo` : ""),
+        });
+      }
     } catch (e) {
       toast({ title: "No se pudo completar la exportación", description: e?.message, variant: "destructive" });
     } finally {
@@ -254,16 +275,36 @@ export default function ExportDialog({ album, spreads, photosById, onClose }) {
           </div>
         )}
 
-        {result && (
+        {result?.blocked && (
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-destructive">
+            <p className="font-semibold">
+              Exportación detenida: {result.missingOriginals.length} archivo(s) original(es) no disponible(s).
+            </p>
+            <p className="mt-1">
+              Para impresión se usan exclusivamente los archivos originales (nunca previews). Vincula de
+              nuevo la carpeta con los originales y vuelve a exportar.
+            </p>
+            <p className="mt-1 max-h-24 overflow-y-auto break-words">
+              {result.missingOriginals.slice(0, 12).map((x) => x.filename).join(" · ")}
+              {result.missingOriginals.length > 12 ? " …" : ""}
+            </p>
+            <button onClick={linkOriginalFolder}
+              className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-destructive/50 px-2.5 py-1.5 font-semibold hover:bg-destructive/20">
+              <FolderOpen className="h-3.5 w-3.5" /> Vincular carpeta original
+            </button>
+          </div>
+        )}
+
+        {result && !result.blocked && (
           <div className="space-y-2">
             <p className="text-xs font-medium text-emerald-600">
               {result.count} lienzo(s) exportado(s){result.missing ? ` · ${result.missing} foto(s) sin preview en este dispositivo` : ""}.
             </p>
             {result.fromPreview > 0 && (
               <p className="text-xs text-amber-600">
-                ⚠ {result.fromPreview} foto(s) exportadas desde la preview guardada: la carpeta de originales
-                no está disponible en este dispositivo. Para máxima calidad, importa o re-vincula la carpeta
-                original antes de volver a exportar.
+                ⚠ {result.fromPreview} foto(s) exportadas desde la preview guardada (esto solo ocurre en
+                Revisión manual): la carpeta de originales no está disponible en este dispositivo. Para
+                impresión, importa o re-vincula la carpeta original antes de exportar.
               </p>
             )}
             {result.lowRes?.length > 0 && (
