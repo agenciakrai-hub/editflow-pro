@@ -78,10 +78,10 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   const [progress, setProgress] = useState(null);
   const [relocating, setRelocating] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const store = useAlbumStore(project, spreads);
+  const photosById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos]);
+  const store = useAlbumStore(project, spreads, photosById);
 
   const spread = store.selectedSpread;
-  const photosById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos]);
   const selectedSlot = spread ? (spread.slots || []).find((s) => s.slot_id === store.selectedSlotId) || null : null;
   const selectedSlotWithPhoto = selectedSlot
     ? { ...selectedSlot, photo: selectedSlot.photo_id ? photosById.get(selectedSlot.photo_id) : null }
@@ -346,6 +346,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onToggleGuide={(k, v) => setGuides((g) => ({ ...g, [k]: v }))}
         onDownload={saveProjectFile}
         onExport={() => setExporting(true)}
+        fillPhotos={!!spread?.fill_photos}
+        fillDisabled={!spread || !!spread.locked}
+        onToggleFillPhotos={() => store.setSpreadFill(spread.id, !spread.fill_photos)}
       />
 
       {store.saveError && (

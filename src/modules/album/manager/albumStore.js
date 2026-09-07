@@ -4,12 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createSpread, deleteSpread, updateSpread, updateAlbum } from "@/modules/album/hooks/useAlbumProject";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
 import { applyLayout, freshTransform, makeCustomSlot, sameRatio } from "@/modules/album/layout/layoutEngine";
+import { applySmartFillToSpread, ensureFaces, smartFillSlot } from "@/modules/album/editor/smartFill";
 
 const HISTORY_LIMIT = 50;
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const tmpId = () => "tmp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-export function useAlbumStore(project, initialSpreads) {
+export function useAlbumStore(project, initialSpreads, photosById) {
   const [spreads, setSpreads] = useState(initialSpreads);
   const [selectedSpreadId, setSelectedSpreadId] = useState(initialSpreads.length ? initialSpreads[0].id : null);
   const [selectedSlotId, setSelectedSlotId] = useState(null);
@@ -22,6 +23,9 @@ export function useAlbumStore(project, initialSpreads) {
   const [hist, setHist] = useState({ canUndo: false, canRedo: false });
   const spreadsRef = useRef(spreads);
   useEffect(() => { spreadsRef.current = spreads; }, [spreads]);
+  // Rellenar contenedor — acceso a las fotos (proporciones reales + caras cacheadas).
+  const photosByIdRef = useRef(photosById);
+  photosByIdRef.current = photosById;
   const undoRef = useRef([]);
   const redoRef = useRef([]);
   const dirtyRef = useRef(new Map());
@@ -75,6 +79,7 @@ export function useAlbumStore(project, initialSpreads) {
           layout_id: data.layout_id,
           locked: !!data.locked,
           ai_generated: !!data.ai_generated,
+          fill_photos: !!data.fill_photos,
           ...(data.background_color ? { background_color: data.background_color } : {}),
           slots: data.slots || [],
         };
@@ -162,13 +167,16 @@ export function useAlbumStore(project, initialSpreads) {
     setSelectedSpreadId(moved.id);
   }, [apply]);
 
-  const setSpreadLayoutById = useCallback((id, layoutId) => {
+  const setSpreadLayoutById = useCallback(async (id, layoutId) => {
     const s = spreadsRef.current.find((x) => x.id === id);
     if (!s || s.locked) return;
     const layout = getLayout(layoutId);
     let next;
     if (layout) next = applyLayout(s, layout, project);
     else next = { ...s, layout_id: "custom" };
+    // Rellenar contenedor: plantilla nueva con la herramienta activa en ESTE lienzo →
+    // los huecos con foto se rellenan automáticamente (COVER con prioridad de caras).
+    if (next.fill_photos) next = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
     apply(spreadsRef.current.map((x) => (x.id === id ? next : x)), [id]);
     setSelectedSlotId(null);
   }, [apply, project]);
@@ -177,7 +185,7 @@ export function useAlbumStore(project, initialSpreads) {
   // automáticamente y asigna las fotos a los huecos según el matching por proporción
   // (assignment alineado al orden de slots; null = hueco vacío). Ajuste inicial
   // FIT/CONTAIN: cada foto se ve completa, sin recorte automático.
-  const applyAutoLayout = useCallback((id, layoutId, photoIds) => {
+  const applyAutoLayout = useCallback(async (id, layoutId, photoIds) => {
     const s = spreadsRef.current.find((x) => x.id === id);
     if (!s || s.locked) return;
     const layout = getLayout(layoutId);
@@ -189,6 +197,8 @@ export function useAlbumStore(project, initialSpreads) {
       fit_mode: "fit",
       transform: freshTransform(),
     }));
+    // Rellenar contenedor activo en este lienzo: las fotos colocadas se rellenan al soltar.
+    if (next.fill_photos) next = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
     apply(spreadsRef.current.map((x) => (x.id === id ? next : x)), [id]);
     setSelectedSlotId(null);
   }, [apply, project]);
@@ -215,6 +225,24 @@ export function useAlbumStore(project, initialSpreads) {
   const setLocked = useCallback((id, locked) => {
     apply(spreadsRef.current.map((x) => (x.id === id ? { ...x, locked } : x)), [id]);
   }, [apply]);
+
+  // Rellenar contenedor — herramienta POR LIENZO. ON: las fotos del lienzo ACTUAL
+  // pasan a COVER inteligente (prioridad de caras) en una sola operación de undo/redo.
+  // OFF: vuelven a FIT/CONTAIN (foto completa, encuadre inicial). Nunca toca otros
+  // lienzos: solo se mapea el spread indicado.
+  const setSpreadFill = useCallback(async (id, fill) => {
+    const s = spreadsRef.current.find((x) => x.id === id);
+    if (!s || s.locked) return;
+    let next = {
+      ...s,
+      fill_photos: !!fill,
+      slots: (s.slots || []).map((sl) =>
+        sl.photo_id && !fill ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl
+      ),
+    };
+    if (fill) next = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
+    apply(spreadsRef.current.map((x) => (x.id === id ? next : x)), [id]);
+  }, [apply, project.id]);
 
   // Fase Lienzos — recalcula la geometría de TODOS los lienzos con plantilla (no
   // "custom" y no bloqueados) tras un cambio global (p. ej. el espacio entre fotos).
@@ -245,8 +273,18 @@ export function useAlbumStore(project, initialSpreads) {
           // nada (la foto no se mueve mientras se redimensiona el contenedor).
           if ((patch.w_mm != null || patch.h_mm != null) && merged.photo_id) {
             if (!sameRatio(sl.w_mm, sl.h_mm, merged.w_mm, merged.h_mm)) {
-              merged.transform = freshTransform();
-              merged.fit_mode = "fit";
+              // Proporción del contenedor cambiada: FIT/CONTAIN… salvo que ESTE lienzo
+              // tenga "Rellenar contenedor" activo → COVER inteligente recalculado
+              // (síncrono, con las caras ya cacheadas; no bloquea la gestión).
+              const photo = s.fill_photos ? photosByIdRef.current.get(merged.photo_id) : null;
+              if (photo) {
+                const f = smartFillSlot(merged, photo);
+                merged.fit_mode = f.fit_mode;
+                merged.transform = f.transform;
+              } else {
+                merged.transform = freshTransform();
+                merged.fit_mode = "fit";
+              }
             }
           }
           return merged;
@@ -268,10 +306,21 @@ export function useAlbumStore(project, initialSpreads) {
   // AJUSTE INICIAL AUTOMÁTICO al entrar la foto en el contenedor: FIT/CONTAIN
   // (escala 1, centrada) — la foto completa es visible, sin recorte automático, con su
   // proporción original. El usuario puede recortar después manualmente si lo desea.
-  const assignPhotoToSlot = useCallback((spreadId, slotId, photoId) => {
-    updateSlot(spreadId, slotId, { photo_id: photoId, transform: freshTransform(), fit_mode: "fit" });
+  // Al colocar una foto: FIT/CONTAIN inicial (completa, sin recorte)… salvo que ESTE
+  // lienzo tenga "Rellenar contenedor" activo → COVER inteligente (prioridad caras).
+  const assignPhotoToSlot = useCallback(async (spreadId, slotId, photoId) => {
+    const s = spreadsRef.current.find((x) => x.id === spreadId);
+    const photo = photoId ? photosByIdRef.current.get(photoId) : null;
+    if (s?.fill_photos && photo) {
+      await ensureFaces(project.id, photo);
+      const sl = (s.slots || []).find((x) => x.slot_id === slotId);
+      const f = sl ? smartFillSlot(sl, photo) : null;
+      updateSlot(spreadId, slotId, { photo_id: photoId, ...(f ? { fit_mode: f.fit_mode, transform: f.transform } : { transform: freshTransform(), fit_mode: "fit" }) });
+    } else {
+      updateSlot(spreadId, slotId, { photo_id: photoId, transform: freshTransform(), fit_mode: "fit" });
+    }
     selectSlot(slotId);
-  }, [updateSlot, selectSlot]);
+  }, [updateSlot, selectSlot, project.id]);
 
   const removePhotoFromSlot = useCallback((spreadId, slotId) => {
     updateSlot(spreadId, slotId, { photo_id: null, transform: freshTransform() });
@@ -285,11 +334,19 @@ export function useAlbumStore(project, initialSpreads) {
     if (!from || !to) return;
     const list = spreadsRef.current.map((x) => {
       if (x.id !== spreadId) return x;
+      const fillFor = (slotId, pid) => {
+        const photo = s.fill_photos && pid ? photosByIdRef.current.get(pid) : null;
+        if (photo) {
+          const f = smartFillSlot((s.slots || []).find((z) => z.slot_id === slotId), photo);
+          return { fit_mode: f.fit_mode, transform: f.transform };
+        }
+        return { transform: freshTransform(), fit_mode: "fit" };
+      };
       return {
         ...x,
         slots: x.slots.map((sl) =>
-          sl.slot_id === fromSlotId ? { ...sl, photo_id: to.photo_id, transform: freshTransform(), fit_mode: "fit" }
-            : sl.slot_id === toSlotId ? { ...sl, photo_id: from.photo_id, transform: freshTransform(), fit_mode: "fit" }
+          sl.slot_id === fromSlotId ? { ...sl, photo_id: to.photo_id, ...fillFor(fromSlotId, to.photo_id) }
+            : sl.slot_id === toSlotId ? { ...sl, photo_id: from.photo_id, ...fillFor(toSlotId, from.photo_id) }
             : sl
         ),
       };
@@ -354,7 +411,7 @@ export function useAlbumStore(project, initialSpreads) {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
     selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
-    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, setLocked, refreshTemplateSpreads,
+    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, setLocked, setSpreadFill, refreshTemplateSpreads,
     updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,

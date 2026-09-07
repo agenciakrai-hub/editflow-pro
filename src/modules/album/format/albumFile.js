@@ -63,6 +63,9 @@ export function buildAlbumDocument(project, photos, spreads) {
       layout_id: s.layout_id || "custom",
       locked: !!s.locked,
       ai_generated: !!s.ai_generated,
+      // Rellenar contenedor — ajuste POR LIENZO (aditivo; ausente en archivos v1/v2
+      // anteriores = false, comportamiento FIT original).
+      fill_photos: !!s.fill_photos,
       slots: (s.slots || []).map((sl) => ({
         slot_id: sl.slot_id,
         photo_id: sl.photo_id || null,
@@ -156,6 +159,7 @@ export async function importAlbumDocument(doc) {
     layout_id: s.layout_id || "custom",
     locked: !!s.locked,
     ai_generated: !!s.ai_generated,
+    fill_photos: !!s.fill_photos,
     slots: (s.slots || []).map((sl) => ({
       slot_id: sl.slot_id,
       photo_id: idMap.get(sl.photo_id) || null,

@@ -30,6 +30,11 @@
       "default": false,
       "description": "Bloqueado frente a cambios (protege frente a la futura IA)."
     },
+    "fill_photos": {
+      "type": "boolean",
+      "default": false,
+      "description": "Fase Rellenar contenedor \u2014 herramienta POR LIENZO: true = las fotos de ESTE lienzo se ajustan autom\u00e1ticamente a COVER (rellenar contenedor) con encuadre inteligente que prioriza las caras detectadas; false = FIT/CONTAIN (foto completa). Por defecto false: retrocompatible con \u00e1lbumes antiguos."
+    },
     "ai_generated": {
       "type": "boolean",
       "default": false,
@@ -70,7 +75,7 @@
               "fill",
               "fit"
             ],
-            "default": "fill"
+            "default": "fit"
           },
           "z_index": {
             "type": "number",
