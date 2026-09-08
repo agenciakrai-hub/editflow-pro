@@ -36,6 +36,9 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
   }, [project.id, entries.length]);
 
   const funnel = selectionJob?.funnel_report || {};
+  const stats = selectionJob?.stats || null;
+  const missingCount = (stats?.failed_no_preview || 0) + (stats?.failed_no_response || 0);
+  const partial = !!(stats?.photo_count && stats.analyzed != null && stats.analyzed < stats.photo_count);
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-border bg-card p-4 text-xs">
@@ -49,6 +52,17 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
         </div>
         {funnel.coverage && <p className="mt-1 text-muted-foreground">Cobertura: {funnel.coverage}</p>}
         {funnel.notes && <p className="mt-1 text-muted-foreground">{funnel.notes}</p>}
+        {stats?.photo_count ? (
+          <p className="mt-1 text-muted-foreground">
+            Catálogo: {stats.photo_count} · Analizadas: {stats.analyzed ?? "—"} · Seleccionadas: {entries.length}
+            {missingCount > 0 ? ` · Sin analizar: ${missingCount}` : ""}
+          </p>
+        ) : null}
+        {partial && (
+          <p className="mt-1 text-amber-600">
+            Análisis parcialmente completado — {missingCount} fotografía(s) no pudieron analizarse (sin preview en este dispositivo o sin respuesta de la IA). Pulsa «Re-ejecutar selección» para reintentarlas.
+          </p>
+        )}
         <p className="mt-2 text-[11px] text-muted-foreground">
           La IA no elimina fotografías: solo recomienda y explica. Tus decisiones manuales prevalecen siempre sobre la IA.
         </p>

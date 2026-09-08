@@ -116,6 +116,7 @@ export function useAiSelection(project, photos) {
           photo_count: photos.length,
           provider_used: result.providerUsed,
           selected_count: result.selection.length,
+          ...(result.funnelStats || {}),
           completed_at: new Date().toISOString(),
         },
       });

@@ -239,7 +239,7 @@ Fotos: ${batch.map((p) => p.alias).join(" | ")}`;
 }
 
 function e7Prompt(eventType, target, descriptors, forced, blocked) {
-  return `Eres el asistente de selección final de un fotógrafo profesional de ${eventType}. Conforma la SELECCIÓN final del álbum con los descriptores de fotos pre-aprobadas (ya filtradas por grupos y momentos). Objetivo aproximado: ${target.total} fotos (${target.per_spread} por doble página, ~${target.spreads} dobles).
+  return `Eres el asistente de selección final de un fotógrafo profesional de ${eventType}. Recibirás descriptores de TODAS las fotos analizadas del catálogo (${descriptors.length} fotos). Las marcadas PROMOTED son la mejor de su grupo/ráfaga, pero la selección puede elegir CUALQUIER foto del catálogo. Conforma la SELECCIÓN final del álbum. Objetivo aproximado: ${target.total} fotos (${target.per_spread} por doble página, ~${target.spreads} dobles).
 Reglas del fotógrafo (JERARQUÍA MÁXIMA): INCLUIR SIEMPRE: ${forced.length ? forced.join(", ") : "(ninguna)"}. EXCLUIR SIEMPRE: ${blocked.length ? blocked.join(", ") : "(ninguna)"}.
 Asigna a cada seleccionada: role (hero | key | support | detail), moment, category, reasons (frase concreta para el fotógrafo), tech_exception (true si la eliges pese a métrica técnica inferior por su valor único/emotivo).
 Asegura cobertura de todos los momentos. Responde SOLO JSON válido:
@@ -326,8 +326,13 @@ async function actionE4(base44, body) {
   const aliases = batch.map((p) => p.alias);
   const out = await invokeAlbumVision(base44, "e4-triage", e4Prompt(body.event_type || "boda", batch), batch.map((p) => p.thumb), body.skip, true);
   const byAlias = new Map((out.result?.analyses || []).map((a) => [a.alias, a]));
-  const analyses = aliases.map((alias) => byAlias.get(alias) || { alias, dims: null, confidence: 0, reasons: "sin análisis (proveedor no devolvió esta foto)" });
-  return json(200, { action: "e4-triage", analyses, provider: out.provider, model: out.model, latency_ms: out.latency_ms });
+  // SOLO se devuelven las fotos que la IA analizó de verdad. Las que el proveedor
+  // omitió viajan en "missing": el cliente las cuenta como fallidas y las reintenta
+  // en la siguiente ejecución (nunca se rellenan con valores neutros, que las
+  // marcaría como analizadas para siempre).
+  const analyses = aliases.filter((alias) => byAlias.has(alias)).map((alias) => byAlias.get(alias));
+  const missing = aliases.filter((alias) => !byAlias.has(alias));
+  return json(200, { action: "e4-triage", analyses, missing, provider: out.provider, model: out.model, latency_ms: out.latency_ms });
 }
 
 async function actionE5(base44, body) {

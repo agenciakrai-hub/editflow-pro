@@ -3,6 +3,11 @@
 const BURST_GAP_MS = 4000; // disparos casi seguidos = misma ráfaga
 const SEQUENCE_WINDOW_MS = 15000; // ventana para unir por similitud visual
 const PHASH_MAX_DIST = 8; // umbral Hamming estricto (Fase 3.1)
+// Tope de tamaño por grupo: al llegar a MAX_GROUP el grupo se cierra aunque la
+// siguiente foto siga siendo "parecida". Sin este tope, un reportaje disparado de
+// forma continua encadena TODO el catálogo en un único grupo (p. ej. 75 de 79 fotos)
+// y el embudo colapsa la selección a una sola foto promovida por grupo.
+const MAX_GROUP = 12;
 
 export function phashHexDistance(a, b) {
   if (!a || !b || a.length !== b.length) return Infinity;
@@ -36,7 +41,7 @@ export function buildGroups(photos) {
       const dt = p.capture_time - prev.capture_time;
       const dist = phashHexDistance(prev.phash, p.phash);
       const related = dt <= BURST_GAP_MS || (dt <= SEQUENCE_WINDOW_MS && dist <= PHASH_MAX_DIST);
-      if (!related) flush();
+      if (!related || current.length >= MAX_GROUP) flush();
     }
     current.push(p);
   }

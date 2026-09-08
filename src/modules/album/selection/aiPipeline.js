@@ -107,8 +107,14 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   onProgress?.({ stage: "e3", done: groups.length, total: groups.length });
 
   // ---- E4: triaje por lotes (remoto, persistido por lote → reanudable) ----
+  // TRAZABILIDAD REAL: total = fotos elegibles del catálogo; fallidas = sin preview
+  // local o sin respuesta del proveedor (identificadas y reintentables). Una foto
+  // que la IA no devuelve NUNCA se rellena con valores neutros: queda pendiente y
+  // se reintenta en la siguiente ejecución.
+  const eligible = photos.length;
   const analyzedPhotoIds = new Set(resume.analyses.map((a) => a.photo_id));
-  const e4Total = items.filter((it) => it.thumb).length;
+  const failedNoPreview = items.filter((it) => !it.thumb).map((it) => it.photo.id);
+  const failedNoResponse = new Set();
   const batches = [];
   const pending = items.filter((it) => !analyzedPhotoIds.has(it.photo.id) && it.thumb);
   for (let i = 0; i < pending.length; i += E4_BATCH) batches.push(pending.slice(i, i + E4_BATCH));
@@ -144,7 +150,11 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     if (records.length) await base44.entities.AlbumPhotoAnalysis.bulkCreate(records);
     analyses.push(...records);
     records.forEach((r) => analyzedPhotoIds.add(r.photo_id));
-    onProgress?.({ stage: "e4", done: Math.min(analyzedPhotoIds.size, e4Total), total: e4Total });
+    (out.missing || []).forEach((a) => {
+      const pid = photoOfAlias.get(a);
+      if (pid && !analyzedPhotoIds.has(pid)) failedNoResponse.add(pid);
+    });
+    onProgress?.({ stage: "e4", done: Math.min(analyses.length, eligible), total: eligible });
   }
   const e4ByPhoto = new Map(analyses.map((a) => [a.photo_id, a]));
 
@@ -157,7 +167,11 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   for (const g of groups) {
     checkAlive();
     const prev = resumeGroups.get(g.group_index);
-    if (prev?.e5 && prev?.promoted_photo_id) {
+    // La agrupación puede cambiar entre ejecuciones (p. ej. tras corregir el
+    // encadenado de grupos): un registro previo solo se reutiliza si sus fotos
+    // coinciden EXACTAMENTE con el grupo actual; si no, se reprocesa entero.
+    const sameIds = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x) => b.includes(x));
+    if (prev?.e5 && prev?.promoted_photo_id && sameIds(prev.photo_ids, g.photo_ids)) {
       promotedByGroup.set(g.group_index, prev.promoted_photo_id);
       groupRecords.push(prev);
       if (g.photo_ids.length >= 2) e5Done++;
@@ -214,6 +228,10 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
         if (photoOfAlias.has(pp.alias)) perPhotoAll.push({ ...pp, photo_id: photoOfAlias.get(pp.alias) });
       });
     }
+    // La promovida es la MEJOR de TODO el grupo (no solo del primer sub-lote):
+    // gana la foto con mejor group_rank entre todas las respuestas recibidas.
+    const ranked = perPhotoAll.filter((pp) => Number.isFinite(pp.group_rank)).sort((a, b) => a.group_rank - b.group_rank)[0];
+    if (ranked) promoted = ranked.photo_id;
     promotedByGroup.set(g.group_index, promoted);
     const rec = {
       id: prev?.id,
@@ -279,14 +297,31 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     const ids = m.photo_ids || (m.aliases || []).map((a) => photoOfAlias.get(a)).filter(Boolean);
     ids.forEach((id) => momentOfPhoto.set(id, m.name));
   }
-  const descriptors = promotedItems.map((pi) => {
-    const an = e4ByPhoto.get(pi.photoId);
-    const g = groups.find((gg) => promotedByGroup.get(gg.group_index) === pi.photoId);
-    return {
-      alias: pi.alias,
-      phrase: `${g?.kind || "single"}; E4 ${JSON.stringify(an?.dims || {})}; conf ${an?.confidence ?? "?"}; ${an?.reasons || ""}`,
-    };
-  });
+  // E7 recibe descriptores de TODAS las fotos analizadas — no solo la promovida de
+  // cada grupo. La selección final puede elegir cualquier foto del catálogo; las
+  // promovidas van marcadas como las mejores de su grupo/ráfaga. Este es el punto
+  // donde el embudo anterior perdía el lote (1 descriptor por grupo → selección
+  // de 1 foto aunque el catálogo tenga 79).
+  const groupOfPhoto = new Map();
+  for (const g of groups) for (const id of g.photo_ids || []) groupOfPhoto.set(id, g);
+  const descriptors = items
+    .filter((it) => e4ByPhoto.has(it.photo.id))
+    .map((it) => {
+      const an = e4ByPhoto.get(it.photo.id);
+      const g = groupOfPhoto.get(it.photo.id);
+      const isPromoted = promotedByGroup.get(g?.group_index) === it.photo.id;
+      return {
+        alias: aliasOf.get(it.photo.id),
+        phrase: `${g?.kind || "single"}${isPromoted ? "; PROMOTED (mejor de su grupo)" : ""}; E4 ${JSON.stringify(an?.dims || {})}; conf ${an?.confidence ?? "?"}; ${an?.reasons || ""}`,
+      };
+    });
+  // REGLA ANTI-DATOS INSUFICIENTES: nunca se genera una selección final cuando el
+  // embudo ha perdido el catálogo (p. ej. 1 descriptor de 79 fotos).
+  if (descriptors.length < Math.floor(eligible * 0.5)) {
+    throw new Error(
+      `Análisis incompleto: ${descriptors.length} descriptores válidos de ${eligible} fotos del catálogo (analizadas ${e4ByPhoto.size}). No se genera una selección con datos insuficientes: pulsa «Re-ejecutar selección» para reintentar las fotos pendientes.`
+    );
+  }
   const target = {
     spreads: project.spread_count_target || 20,
     per_spread: project.max_photos_per_spread || 3,
@@ -324,13 +359,24 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   }
   onProgress?.({ stage: "e7", done: 1, total: 1 });
 
+  // TRAZABILIDAD FINAL: cifras reales del embudo, persistidas en el job para que la
+  // pantalla muestre siempre "X / N analizadas" con las fallidas identificadas.
+  const funnelStats = {
+    eligible,
+    previews_ok: eligible - failedNoPreview.length,
+    analyzed: e4ByPhoto.size,
+    descriptors: descriptors.length,
+    failed_no_preview: failedNoPreview.length,
+    failed_no_response: failedNoResponse.size,
+  };
   return {
     selection,
-    funnel_report: out.funnel_report || {},
+    funnel_report: { ...(out.funnel_report || {}), coverage: out.coverage || "" },
     coverage: out.coverage || "",
     moments,
     analyses,
     groups: groupRecords,
     providerUsed,
+    funnelStats,
   };
 }
