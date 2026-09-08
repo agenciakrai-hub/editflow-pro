@@ -135,8 +135,13 @@ export default function PropertiesPanel({ album, spread, selectedSlot, onAlbumCo
               </div>
               <div className="mt-2 grid grid-cols-2 gap-1.5">
                 {selectedSlot.photo_id && (
-                  <button className={btn} onClick={() => onSlotProp({ transform: freshTransform() })}>
+                  <button className={btn} onClick={() => onSlotProp({ transform: freshTransform() })} title="Vuelve a centrar la foto con zoom 100% (mantiene el modo de ajuste)">
                     <span className="inline-flex items-center gap-1"><RotateCcw className="h-3 w-3" /> Centrar</span>
+                  </button>
+                )}
+                {selectedSlot.photo_id && (
+                  <button className={btn} onClick={() => onSlotProp({ fit_mode: "fit" })} title="Restaura la foto original completa, sin recorte (modo Contener). El reencuadre sigue siendo no destructivo: la imagen original queda intacta.">
+                    <span className="inline-flex items-center gap-1"><RotateCcw className="h-3 w-3" /> Restaurar original</span>
                   </button>
                 )}
                 {selectedSlot.photo_id && (

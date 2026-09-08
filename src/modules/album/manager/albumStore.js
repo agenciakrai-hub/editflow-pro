@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createSpread, deleteSpread, updateSpread, updateAlbum } from "@/modules/album/hooks/useAlbumProject";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
-import { applyLayout, expandSlotsToCanvas, freshTransform, makeCustomSlot, photoRatio, sameRatio } from "@/modules/album/layout/layoutEngine";
+import { applyLayout, bestLayoutFor, expandSlotsToCanvas, freshTransform, makeCustomSlot, photoRatio, sameRatio } from "@/modules/album/layout/layoutEngine";
 import { planAutoLayout } from "@/modules/album/layout/autoPlanner";
 import { analyzePhotosForLayout } from "@/modules/album/layout/visualAi";
 import { applySmartFillToSpread, ensureFaces, retunePhotoSlots, smartFillSlot } from "@/modules/album/editor/smartFill";
@@ -274,6 +274,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     const plan = planAutoLayout(project, ordered, profiles, {
       maxSpreads: opts?.maxSpreads,
       simGroups: opts?.simGroups,
+      priority: opts?.priority,
+      maxPerSpread: opts?.maxPerSpread,
     });
     if (!plan.groups.length) return null;
     const list = [...spreadsRef.current];
@@ -306,6 +308,65 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       usedAi: profiles.size > 0,
     };
   }, [apply, project]);
+
+  // REGENERACIÓN SELECTIVA (punto 13) — re-elige la mejor plantilla para las fotos
+  // que YA están en este lienzo y la reaplica EN SU SITIO (mismo id, mismo orden).
+  // No toca lienzos bloqueados: el usuario mantiene prioridad (punto 11). Una sola
+  // entrada de historial (⌘Z deshace la regeneración del lienzo).
+  const regenerateSpread = useCallback(async (spreadId) => {
+    const s = spreadsRef.current.find((x) => x.id === spreadId);
+    if (!s || s.locked) return null;
+    const objs = (s.slots || []).map((sl) => sl.photo_id).filter(Boolean).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
+    if (!objs.length) return null;
+    const pick = bestLayoutFor(project, objs);
+    if (!pick) return null;
+    await applyAutoLayout(spreadId, pick.layout.id, pick.assignment);
+    return { layoutId: pick.layout.id, count: objs.length };
+  }, [applyAutoLayout, project]);
+
+  // REGENERACIÓN SELECTIVA (punto 13) — rehace la maquetación de TODOS los lienzos
+  // NO bloqueados (los bloqueados permanecen intactos: punto 11/12). Recoge sus
+  // fotos, las reordena por el orden estable del catálogo y vuelve a planificarlas
+  // dentro del límite, respetando prioridad y similitud. Los lienzos nuevos se
+  // añaden tras los bloqueados. Una sola entrada de historial (⌘Z deshace toda
+  // la regeneración). No se pierden fotos: las que no entran quedan sin colocar.
+  const regenerateNonLocked = useCallback(async (opts = {}) => {
+    const current = spreadsRef.current;
+    const keep = current.filter((s) => s.locked);
+    const remove = current.filter((s) => !s.locked);
+    if (!remove.length) return null;
+    const photoIds = [];
+    remove.forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) photoIds.push(sl.photo_id); }));
+    const ordered = photoIds.map((id) => photosByIdRef.current.get(id)).filter(Boolean);
+    if (!ordered.length) return null;
+    let profiles = new Map();
+    try { profiles = await analyzePhotosForLayout(project.id, ordered); } catch { profiles = new Map(); }
+    const plan = planAutoLayout(project, ordered, profiles, {
+      maxSpreads: opts?.maxSpreads, simGroups: opts?.simGroups, priority: opts?.priority, maxPerSpread: opts?.maxPerSpread,
+    });
+    if (!plan.groups.length) return null;
+    pushHistory();
+    // Marcar borrado de los lienzos no bloqueados que se reemplazan (los tmp se
+    // descartan; los reales se borran en el servidor al guardar).
+    remove.forEach((s) => { if (String(s.id).startsWith("tmp_")) dirtyRef.current.delete(s.id); else deletedRef.current.add(s.id); });
+    const list = keep.map((s, i) => ({ ...s, order_index: i }));
+    const created = [];
+    for (const g of plan.groups) {
+      const base = { id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread", layout_id: g.layoutId, locked: false, ai_generated: false, fill_photos: false, fill_canvas: false, photo_gap_mm: null, background_color: null, slots: [] };
+      const next = applyLayout(base, g.layout, project);
+      next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
+      const filled = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
+      created.push(filled);
+      list.push(filled);
+    }
+    setSpreads(list);
+    created.forEach((s) => dirtyRef.current.set(s.id, s));
+    keep.forEach((s) => dirtyRef.current.set(s.id, s));
+    scheduleSave();
+    setSelectedSpreadId(created[0]?.id || (keep[0]?.id ?? null));
+    setSelectedSlotId(null);
+    return { total: ordered.length, placed: ordered.length - plan.leftover.length, leftover: plan.leftover.length, spreadCount: created.length, keptLocked: keep.length, usedAi: profiles.size > 0 };
+  }, [pushHistory, scheduleSave, project]);
 
   // Regla de colocación (arrastre de varias fotos sobre un lienzo CON huecos
   // vacíos): llena SOLO los huecos vacíos del lienzo actual, emparejando fotos y
@@ -632,7 +693,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
     selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer, toggleSlotContainerMode,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
-    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, fillEmptySlotsWithPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
+    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, regenerateSpread, regenerateNonLocked, fillEmptySlotsWithPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
     updateSlot, zoomSlotPhoto, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,

@@ -48,14 +48,14 @@ const SIM_CONSEC_W = 0.5;
 // determinista foto↔hueco (mismo emparejamiento por proporción del motor: verticales
 // con verticales, horizontales con horizontales). Devuelve { assignment, cost }.
 // assignment alinea cada photo_id con el orden de slots del layout.
-function scoreGroup(album, layout, photos, profiles, simGroups) {
+function scoreGroup(album, layout, photos, profiles, simGroups, costs) {
   const geo = resolveSlots(layout, album);
   if (geo.length !== photos.length) return null;
   const maxArea = geo.reduce((m, g) => Math.max(m, g.w_mm * g.h_mm), 0);
   const slots = geo.map((g, i) => ({ i, ratio: g.w_mm / g.h_mm, sizeClass: slotSizeClass(g, maxArea) })).sort((a, b) => a.ratio - b.ratio);
   const ph = photos.map((p) => ({ id: p.id, ratio: photoRatio(p) })).sort((a, b) => a.ratio - b.ratio);
   const assignment = new Array(geo.length).fill(null);
-  let cost = CANVAS_COST;
+  let cost = costs?.canvas ?? CANVAS_COST;
   let visual = 0;
   // SIMILITUD — grupos de ráfaga/secuencia presentes en ESTE bloque de fotos.
   const simIds = new Set();
@@ -110,9 +110,16 @@ function scoreGroup(album, layout, photos, profiles, simGroups) {
 export function planAutoLayout(album, photos, profiles, opts = {}) {
   const n = photos.length;
   if (!n) return { groups: [], leftover: [] };
-  const cap = Number(album.max_photos_per_spread) > 0 ? Number(album.max_photos_per_spread) : 6;
+  const cap = Number(opts?.maxPerSpread) > 0 ? Number(opts.maxPerSpread) : (Number(album.max_photos_per_spread) > 0 ? Number(album.max_photos_per_spread) : 6);
   const usable = compatibleLayouts(album, 0).filter((l) => l.count <= cap);
   if (!usable.length) return { groups: [], leftover: photos };
+  // PRIORIDAD de reparto (decisión del usuario antes de generar, punto 14): ajusta
+  // el coste por lienzo para que la DP prefiera lienzos más llenos (más fotos por
+  // lienzo) o más livianos (más espacio por foto). Equilibrado = coste base. Los
+  // pesos visuales IA siempre son menores que los deterministas, así que esta
+  // prioridad no altera la cobertura ni el límite de lienzos.
+  const priority = opts?.priority || "balanced";
+  const costs = { canvas: priority === "morePhotos" ? CANVAS_COST * 1.6 : priority === "moreSpace" ? CANVAS_COST * 0.5 : CANVAS_COST };
 
   const simGroups = opts?.simGroups || null;
   // Límite de lienzos: el indicado por el usuario o el máximo geométrico posible.
@@ -129,7 +136,7 @@ export function planAutoLayout(album, photos, profiles, opts = {}) {
       if (k > i) continue;
       // El scoring del bloque se calcula UNA vez y se reutiliza para todos los
       // conteos de lienzos c.
-      const sc = scoreGroup(album, l, photos.slice(i - k, i), profiles, simGroups);
+      const sc = scoreGroup(album, l, photos.slice(i - k, i), profiles, simGroups, costs);
       if (!sc) continue;
       const group = { layoutId: l.id, layout: l, assignment: sc.assignment };
       for (let c = 1; c <= maxCanvases; c++) {

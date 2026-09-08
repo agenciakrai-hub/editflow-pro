@@ -18,6 +18,7 @@ import PropertiesPanel from "@/modules/album/shell/PropertiesPanel";
 import SpreadCanvas from "@/modules/album/editor/SpreadCanvas";
 import RelocateDialog from "@/modules/album/relocate/RelocateDialog";
 import ExportDialog from "@/modules/album/export/ExportDialog";
+import AutoLayoutConfigDialog from "@/modules/album/shell/AutoLayoutConfigDialog";
 import { useToast } from "@/components/ui/use-toast";
 
 // Fase 5.2 — SHELL VISUAL profesional del editor: topbar + biblioteca de plantillas
@@ -306,16 +307,16 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   // (⌘Z deshace toda la maquetación). Desde una carpeta solo se usan fotos SIN
   // COLOCAR; las ya utilizadas permanecen intactas. El editor salta al primer
   // lienzo nuevo para revisarlo.
-  const runAutoLayout = async (ids, maxSpreads) => {
+  const runAutoLayout = async (ids, cfg = {}) => {
     const idSet = new Set(ids);
     const ordered = photos.filter((p) => idSet.has(p.id)).map((p) => p.id);
     if (!ordered.length) {
       toast({ title: "Nada que maquetar", description: "Selecciona fotos o una carpeta con fotos sin colocar." });
       return;
     }
-    const limit = Number(maxSpreads) > 0 ? Math.floor(Number(maxSpreads)) : null;
+    const limit = Number(cfg.maxSpreads) > 0 ? Math.floor(Number(cfg.maxSpreads)) : null;
     toast({ title: "Maquetando…", description: limit ? `Preparando la distribución automática (máximo ${limit} lienzos).` : "Preparando la distribución automática de las fotos." });
-    const res = await store.autoLayoutPhotos(ordered, { maxSpreads: limit, simGroups });
+    const res = await store.autoLayoutPhotos(ordered, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread });
     if (!res) {
       toast({ title: "Sin plantillas compatibles", description: "No hay combinación de plantillas para estas fotos dentro del máximo de lienzos indicado y la configuración actual del álbum.", variant: "destructive" });
       return;
@@ -325,8 +326,33 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       description: `${res.total} seleccionada(s) · ${res.placed} colocada(s) · ${res.leftover} sin colocar · ${res.spreadCount} lienzo(s) creado(s) al final del álbum${res.usedAi ? " · con mejora visual IA" : ""}. Revisa los lienzos nuevos (⌘Z deshace toda la maquetación).`,
     });
   };
-  const handleAutoLayoutFolder = (folder, maxSpreads) => {
-    runAutoLayout(photos.filter((p) => p.folder === folder && !placedPhotoIds.has(p.id)).map((p) => p.id), maxSpreads);
+  const handleAutoLayoutFolder = (folder) => {
+    const ids = photos.filter((p) => p.folder === folder && !placedPhotoIds.has(p.id)).map((p) => p.id);
+    setAutoDialog({ mode: "create", ids });
+  };
+  // Configuración antes de maquetar (punto 14) — el diálogo pide límite de lienzos,
+  // fotos por lienzo y prioridad; luego ejecuta la maquetación o la regeneración
+  // selectiva (punto 13). Los lienzos bloqueados siempre se respetan (punto 11/12).
+  const [autoDialog, setAutoDialog] = useState(null);
+  const openAutoLayout = (ids) => setAutoDialog({ mode: "create", ids });
+  const openRegenerateNonLocked = () => {
+    const ids = [];
+    store.spreads.filter((s) => !s.locked).forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) ids.push(sl.photo_id); }));
+    if (!ids.length) { toast({ title: "Nada que regenerar", description: "No hay lienzos no bloqueados con fotos colocadas." }); return; }
+    setAutoDialog({ mode: "regenerate", ids });
+  };
+  const confirmAutoDialog = async (cfg) => {
+    const d = autoDialog;
+    setAutoDialog(null);
+    if (!d) return;
+    if (d.mode === "regenerate") {
+      toast({ title: "Regenerando…", description: "Rehaciendo los lienzos no bloqueados (los bloqueados quedan intactos)." });
+      const res = await store.regenerateNonLocked({ maxSpreads: cfg.maxSpreads, maxPerSpread: cfg.maxPerSpread, priority: cfg.priority, simGroups });
+      if (!res) { toast({ title: "Sin plantillas compatibles", description: "No hay combinación para regenerar con esa configuración.", variant: "destructive" }); return; }
+      toast({ title: "Regeneración completada", description: `${res.placed} foto(s) en ${res.spreadCount} lienzo(s) nuevo(s) · ${res.keptLocked} bloqueado(s) intacto(s) · ${res.leftover} sin colocar (⌘Z deshace).` });
+      return;
+    }
+    runAutoLayout(d.ids, cfg);
   };
 
   // Fase Carpetas — organización VIRTUAL de fotos: la lista de nombres vive en el
@@ -531,6 +557,10 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
             onMoveLeft={() => store.moveSpread(spreadId, -1)}
             onMoveRight={() => store.moveSpread(spreadId, 1)}
             onToggleLock={() => store.setLocked(spreadId, !locked)}
+            onRegenerate={() => store.regenerateSpread(spreadId).then((r) => {
+              if (!r) return;
+              toast({ title: "Lienzo regenerado", description: `Plantilla reelegida para ${r.count} foto(s) (⌘Z deshace).` });
+            })}
           />
         </div>
 
@@ -583,13 +613,22 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onImportFiles={importFiles}
         onRelocate={() => setRelocating(true)}
         relocateCount={missingPhotos.length}
-        onAutoLayout={runAutoLayout}
+        onAutoLayout={openAutoLayout}
         onAutoLayoutFolder={handleAutoLayoutFolder}
+        onRegenerateNonLocked={openRegenerateNonLocked}
         />
         </div>
         </>
       )}
 
+      {autoDialog && (
+        <AutoLayoutConfigDialog
+          open
+          defaults={{ maxSpreads: project.spread_count_target || 20, maxPerSpread: project.max_photos_per_spread || 6, priority: "balanced" }}
+          onConfirm={confirmAutoDialog}
+          onClose={() => setAutoDialog(null)}
+        />
+      )}
       {exporting && (
         <ExportDialog
           album={project}
