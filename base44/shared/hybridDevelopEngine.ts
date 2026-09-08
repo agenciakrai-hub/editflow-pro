@@ -68,7 +68,9 @@ SOLO revelas — nunca generas ni alteras pixeles, identidad, anatomia, ropa ni 
 
 Te muestro ${representatives.length} fotos REPRESENTATIVAS de una misma sesion fotografica (mismo evento, mismo estilo, misma luz general). Tu trabajo NO es revelarlas una a una: es definir un PERFIL DE SESION unico, un recipe base de revelado coherente que un motor local aplicara y adaptara despues a CADA foto de la sesion (corrigiendo exposicion/luces/sombras por foto segun su histograma real).
 
-PRIORIDAD ABSOLUTA: si hay personas, su piel y rostros deben quedar bien expuestos, con color de piel natural y sano. Optimiza para CONSISTENCIA entre tomas (look de sesion) mas que para el gusto variable de una sola foto.
+PRIORIDAD ABSOLUTA: si hay personas, su piel y rostros deben quedar bien expuestos, con color de piel natural y sano — SIN aclarar la sesion por sistema ni quemar las luces. Optimiza para CONSISTENCIA entre tomas (look de sesion) mas que para el gusto variable de una sola foto.
+
+REGLA CRITICA DE EXPOSICION: las previews que ves son JPEG ya procesados por la camara y reflejan la exposicion REAL de la sesion. El recipe base se aplica SOBRE el revelado NEUTRO de Camera Raw (0 = sin ajuste): si la sesion ya esta bien expuesta, el Exposure2012 del perfil debe quedar cercano a 0 (±0.3). Protege las luces altas (Highlights2012/Whites2012 negativos si hay vestidos blancos, cielos o ventanas) y levanta sombras con moderacion (menos de +25 salvo necesidad real).
 
 Analiza el tipo de luz dominante (ventana, contraluz, lateral, flash, exterior), la paleta de color y el mood, y decide un recipe base profesional para:
 ${propList}
