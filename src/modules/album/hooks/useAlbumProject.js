@@ -36,6 +36,13 @@ export async function listSpreads(projectId) {
   return base44.entities.AlbumSpread.filter({ project_id: projectId }, "order_index", 500);
 }
 
+// Grupos de similitud (ráfagas/secuencias) persistidos por el pipeline de
+// Selección IA. Los consume el planificador de maquetación para no colocar
+// fotos casi idénticas en el mismo lienzo ni en lienzos consecutivos.
+export async function listPhotoGroups(projectId) {
+  return base44.entities.AlbumPhotoGroup.filter({ project_id: projectId }, "group_index", 2000);
+}
+
 export async function createSpread(data) {
   return base44.entities.AlbumSpread.create(data);
 }

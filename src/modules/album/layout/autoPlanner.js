@@ -38,11 +38,17 @@ const FACE_W = 0.15;
 const COMP_W = 0.08;
 const HERO_BONUS = 0.08;
 
+// ---- SIMILITUD entre fotos (grupos de ráfaga/secuencia del pipeline de
+// Selección IA): penaliza repetir fotos casi idénticas en el mismo lienzo y, en
+// el planificador, también en lienzos CONSECUTIVOS (cuando es posible evitarlo). ----
+const SIM_SAME_W = 0.9;
+const SIM_CONSEC_W = 0.5;
+
 // Puntúa UNA plantilla contra un grupo de fotos y calcula la asignación
 // determinista foto↔hueco (mismo emparejamiento por proporción del motor: verticales
 // con verticales, horizontales con horizontales). Devuelve { assignment, cost }.
 // assignment alinea cada photo_id con el orden de slots del layout.
-function scoreGroup(album, layout, photos, profiles) {
+function scoreGroup(album, layout, photos, profiles, simGroups) {
   const geo = resolveSlots(layout, album);
   if (geo.length !== photos.length) return null;
   const maxArea = geo.reduce((m, g) => Math.max(m, g.w_mm * g.h_mm), 0);
@@ -51,6 +57,8 @@ function scoreGroup(album, layout, photos, profiles) {
   const assignment = new Array(geo.length).fill(null);
   let cost = CANVAS_COST;
   let visual = 0;
+  // SIMILITUD — grupos de ráfaga/secuencia presentes en ESTE bloque de fotos.
+  const simIds = new Set();
   ph.forEach((p, k) => {
     const s = slots[k];
     assignment[s.i] = p.id;
@@ -58,6 +66,12 @@ function scoreGroup(album, layout, photos, profiles) {
     const so = orientationOf(s.ratio);
     const po = orientationOf(p.ratio);
     if (so !== po) cost += (so === "square" || po === "square") ? ORIENT_ADJACENT : ORIENT_OPPOSITE;
+    // SIMILITUD — penaliza fotos casi idénticas dentro del MISMO lienzo.
+    const gid = simGroups?.get(p.id);
+    if (gid != null) {
+      if (simIds.has(gid)) cost += SIM_SAME_W;
+      simIds.add(gid);
+    }
     // ---- Fase 2 — VISUAL AI SCORE (pesos pequeños: nunca superan al determinista) ----
     const prof = profiles?.get(p.id);
     if (prof) {
@@ -77,38 +91,69 @@ function scoreGroup(album, layout, photos, profiles) {
       visual -= HERO_BONUS;
     }
   }
-  return { assignment, cost: cost + visual };
+  return { assignment, cost: cost + visual, sim: simIds };
 }
 
-// PLAN DE MAQUETACIÓN para un conjunto ORDENADO de fotos: DP sobre prefijos.
-// dp[i] = mejor plan (coste mínimo) para las primeras i fotos. Se maximiza primero
-// el número de fotos colocadas y, a igualdad, se minimiza el coste total. El orden
-// de las fotos JAMÁS se mezcla: los lienzos consumen bloques consecutivos.
-// Las fotos que no entran en ninguna combinación vuelven como `leftover` — el
-// llamador las deja SIN COLOCAR (no se pierden, no se marcan como usadas).
-export function planAutoLayout(album, photos, profiles) {
+// PLAN DE MAQUETACIÓN para un conjunto ORDENADO de fotos: DP sobre prefijos con
+// dimensión de nº de lienzos. dp[i][c] = mejor plan (coste mínimo) para las
+// primeras i fotos usando EXACTAMENTE c lienzos.
+//   · MÁXIMO DE LIENZOS (opts.maxSpreads, configurable antes de ejecutar): el
+//     plan JAMÁS crea más lienzos que el límite; busca la mejor combinación de
+//     plantillas y fotos por lienzo dentro de él.
+//   · SIMILITUD (opts.simGroups: Map<photoId, grupo de ráfaga/secuencia>): penaliza
+//     fotos casi idénticas en el mismo lienzo (scoreGroup) y en lienzos
+//     consecutivos (estado del bloque anterior de la DP).
+// Se maximiza primero el número de fotos colocadas y, a igualdad, se minimiza el
+// coste total. El orden de las fotos JAMÁS se mezcla: los lienzos consumen bloques
+// consecutivos. Las fotos que no entran vuelven como `leftover` (sin colocar,
+// nunca se pierden).
+export function planAutoLayout(album, photos, profiles, opts = {}) {
   const n = photos.length;
   if (!n) return { groups: [], leftover: [] };
   const cap = Number(album.max_photos_per_spread) > 0 ? Number(album.max_photos_per_spread) : 6;
   const usable = compatibleLayouts(album, 0).filter((l) => l.count <= cap);
   if (!usable.length) return { groups: [], leftover: photos };
 
-  const dp = new Array(n + 1).fill(null);
-  dp[0] = { cost: 0, groups: [] };
+  const simGroups = opts?.simGroups || null;
+  // Límite de lienzos: el indicado por el usuario o el máximo geométrico posible.
+  const minCount = Math.max(1, Math.min(...usable.map((l) => l.count)));
+  const geoMax = Math.ceil(n / minCount);
+  const limit = Number(opts?.maxSpreads);
+  const maxCanvases = Number.isFinite(limit) && limit >= 1 ? Math.min(Math.floor(limit), geoMax) : geoMax;
+
+  const dp = Array.from({ length: n + 1 }, () => new Array(maxCanvases + 1).fill(null));
+  dp[0][0] = { cost: 0, groups: [], lastSim: [] };
   for (let i = 1; i <= n; i++) {
     for (const l of usable) {
       const k = l.count;
-      if (k > i || !dp[i - k]) continue;
-      const sc = scoreGroup(album, l, photos.slice(i - k, i), profiles);
+      if (k > i) continue;
+      // El scoring del bloque se calcula UNA vez y se reutiliza para todos los
+      // conteos de lienzos c.
+      const sc = scoreGroup(album, l, photos.slice(i - k, i), profiles, simGroups);
       if (!sc) continue;
-      const cost = dp[i - k].cost + sc.cost;
-      if (!dp[i] || cost < dp[i].cost) {
-        dp[i] = { cost, groups: [...dp[i - k].groups, { layoutId: l.id, layout: l, assignment: sc.assignment }] };
+      const group = { layoutId: l.id, layout: l, assignment: sc.assignment };
+      for (let c = 1; c <= maxCanvases; c++) {
+        const prev = dp[i - k][c - 1];
+        if (!prev) continue;
+        // SIMILITUD — lienzos consecutivos: repetir un grupo del lienzo anterior
+        // penaliza (el mismo lienzo ya se penaliza dentro de scoreGroup).
+        const consec = sc.sim.size && prev.lastSim.length ? [...sc.sim].filter((x) => prev.lastSim.includes(x)).length : 0;
+        const cost = prev.cost + sc.cost + SIM_CONSEC_W * consec;
+        const cur = dp[i][c];
+        if (!cur || cost < cur.cost) {
+          dp[i][c] = { cost, groups: [...prev.groups, group], lastSim: [...sc.sim] };
+        }
       }
     }
   }
-  let end = n;
-  while (end > 0 && !dp[end]) end--;
-  const best = dp[end];
-  return { groups: best.groups, leftover: photos.slice(end) };
+  // Mejor plan global: primero MÁS fotos colocadas dentro del límite, luego MENOR coste.
+  for (let end = n; end > 0; end--) {
+    let best = null;
+    for (let c = 1; c <= maxCanvases; c++) {
+      const cand = dp[end][c];
+      if (cand && (!best || cand.cost < best.cost)) best = cand;
+    }
+    if (best) return { groups: best.groups, leftover: photos.slice(end) };
+  }
+  return { groups: [], leftover: photos };
 }

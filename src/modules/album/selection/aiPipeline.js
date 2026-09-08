@@ -12,6 +12,42 @@ const E4_BATCH = 20;
 const E5_MAX = 12;
 const E6_MAX = 24;
 
+// CONTROL DE SIMILITUD en la selección final: la IA puede aceptar varias fotos
+// casi idénticas del mismo grupo de ráfaga/secuencia. Tope determinista por
+// grupo (ráfaga: 1 foto; secuencia: 2): se conserva la mejor (la promovida; en
+// su defecto, la de mejor rol). Se aplica ANTES de los overrides del fotógrafo,
+// que siempre prevalecen. Reutiliza los grupos E3/E5 ya calculados.
+const ROLE_RANK = { hero: 0, key: 1, support: 2, detail: 3 };
+const SIMILARITY_CAP = { burst: 1, sequence: 2 };
+function enforceSimilarityCaps(selection, groups, promotedByGroup) {
+  const groupOf = new Map();
+  for (const g of groups) for (const id of g.photo_ids || []) groupOf.set(id, g);
+  const byGroup = new Map();
+  selection.forEach((s, i) => {
+    const g = groupOf.get(s.photo_id);
+    if (!g || (g.photo_ids || []).length < 2) return;
+    if (!byGroup.has(g.group_index)) byGroup.set(g.group_index, []);
+    byGroup.get(g.group_index).push({ s, i });
+  });
+  const drop = new Set();
+  for (const [gIdx, items] of byGroup) {
+    const cap = SIMILARITY_CAP[groupOf.get(items[0].s.photo_id)?.kind] || 1;
+    if (items.length <= cap) continue;
+    const promoted = promotedByGroup.get(gIdx);
+    const ranked = [...items].sort((a, b) => {
+      const pa = a.s.photo_id === promoted ? 0 : 1;
+      const pb = b.s.photo_id === promoted ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      const ra = ROLE_RANK[a.s.role] ?? 9;
+      const rb = ROLE_RANK[b.s.role] ?? 9;
+      if (ra !== rb) return ra - rb;
+      return a.i - b.i;
+    });
+    ranked.slice(cap).forEach((x) => drop.add(x.s.photo_id));
+  }
+  return selection.filter((s) => !drop.has(s.photo_id));
+}
+
 export class PipelineCancelled extends Error {
   constructor() {
     super("cancelled");
@@ -312,7 +348,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
       const isPromoted = promotedByGroup.get(g?.group_index) === it.photo.id;
       return {
         alias: aliasOf.get(it.photo.id),
-        phrase: `${g?.kind || "single"}${isPromoted ? "; PROMOTED (mejor de su grupo)" : ""}; E4 ${JSON.stringify(an?.dims || {})}; conf ${an?.confidence ?? "?"}; ${an?.reasons || ""}`,
+        phrase: `${g ? `grupo ${g.group_index} (${g.kind})` : "single"}${isPromoted ? "; PROMOTED (mejor de su grupo)" : ""}; E4 ${JSON.stringify(an?.dims || {})}; conf ${an?.confidence ?? "?"}; ${an?.reasons || ""}`,
       };
     });
   // REGLA ANTI-DATOS INSUFICIENTES: nunca se genera una selección final cuando el
@@ -341,6 +377,9 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
       reasons: s.reasons || "",
       tech_exception: !!s.tech_exception,
     }));
+  // CONTROL DE SIMILITUD: tope determinista por grupo de ráfaga/secuencia (ver
+  // enforceSimilarityCaps). Se ejecuta antes de los overrides del fotógrafo.
+  selection = enforceSimilarityCaps(selection, groups, promotedByGroup);
   // Defensa de la jerarquía en cliente: forced dentro, blocked fuera (siempre).
   const selIds = new Set(selection.map((s) => s.photo_id));
   for (const p of photos) {

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Loader2, PanelBottom, PanelLeft, PanelRight, PanelTop } from "lucide-react";
-import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, bulkUpdatePhotos } from "@/modules/album/hooks/useAlbumProject";
+import { getAlbum, listPhotos, listSpreads, listPhotoGroups, addPhotos, updateAlbum, bulkUpdatePhotos } from "@/modules/album/hooks/useAlbumProject";
 import { useAlbumStore } from "@/modules/album/manager/albumStore";
 import { bestLayoutFor } from "@/modules/album/layout/layoutEngine";
 import { getPreview, getTierPreview, previewKey } from "@/modules/album/lib/previewStore";
@@ -38,13 +38,14 @@ export default function AlbumEditorPage({ projectId }) {
         const project = await getAlbum(projectId);
         const photos = await listPhotos(projectId);
         const spreads = [...(await listSpreads(projectId))].sort((a, b) => a.order_index - b.order_index);
+        const photoGroups = await listPhotoGroups(projectId).catch(() => []);
         const thumbs = new Map();
         await Promise.all(photos.map(async (p) => {
           let t = await getTierPreview(projectId, p.id, "thumb");
           if (!t) t = await getPreview(previewKey(projectId, p.filename)); // legado Fase 2
           if (t) thumbs.set(p.id, t);
         }));
-        if (alive) setData({ project, photos, spreads, thumbs });
+        if (alive) setData({ project, photos, spreads, thumbs, photoGroups });
       } catch (e) {
         if (alive) setError(e?.message || "No se pudo cargar el álbum");
       }
@@ -68,7 +69,7 @@ export default function AlbumEditorPage({ projectId }) {
   return <AlbumEditorInner key={projectId} {...data} />;
 }
 
-function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spreads, thumbs: initialThumbs }) {
+function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spreads, thumbs: initialThumbs, photoGroups }) {
   const { toast } = useToast();
   const [project, setProject] = useState(initialProject);
   const [photos, setPhotos] = useState(initialPhotos);
@@ -94,6 +95,18 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   const navWrapRef = useRef(null);
   const trayWrapRef = useRef(null);
   const photosById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos]);
+  // Similitud entre fotos: grupos de ráfaga/secuencia persistidos por el pipeline
+  // de Selección IA (photoId → grupo). Alimenta al planificador DP existente para
+  // no colocar fotos casi idénticas en el mismo lienzo ni en lienzos consecutivos.
+  const simGroups = useMemo(() => {
+    const m = new Map();
+    for (const g of photoGroups || []) {
+      const ids = g.photo_ids || [];
+      if (ids.length < 2) continue;
+      for (const id of ids) m.set(id, g.group_index);
+    }
+    return m;
+  }, [photoGroups]);
   const store = useAlbumStore(project, spreads, photosById);
 
   const spread = store.selectedSpread;
@@ -293,17 +306,18 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   // (⌘Z deshace toda la maquetación). Desde una carpeta solo se usan fotos SIN
   // COLOCAR; las ya utilizadas permanecen intactas. El editor salta al primer
   // lienzo nuevo para revisarlo.
-  const runAutoLayout = async (ids) => {
+  const runAutoLayout = async (ids, maxSpreads) => {
     const idSet = new Set(ids);
     const ordered = photos.filter((p) => idSet.has(p.id)).map((p) => p.id);
     if (!ordered.length) {
       toast({ title: "Nada que maquetar", description: "Selecciona fotos o una carpeta con fotos sin colocar." });
       return;
     }
-    toast({ title: "Maquetando…", description: "Preparando la distribución automática de las fotos." });
-    const res = await store.autoLayoutPhotos(ordered);
+    const limit = Number(maxSpreads) > 0 ? Math.floor(Number(maxSpreads)) : null;
+    toast({ title: "Maquetando…", description: limit ? `Preparando la distribución automática (máximo ${limit} lienzos).` : "Preparando la distribución automática de las fotos." });
+    const res = await store.autoLayoutPhotos(ordered, { maxSpreads: limit, simGroups });
     if (!res) {
-      toast({ title: "Sin plantillas compatibles", description: "No hay combinación de plantillas para estas fotos con la configuración actual del álbum.", variant: "destructive" });
+      toast({ title: "Sin plantillas compatibles", description: "No hay combinación de plantillas para estas fotos dentro del máximo de lienzos indicado y la configuración actual del álbum.", variant: "destructive" });
       return;
     }
     toast({
@@ -311,8 +325,8 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       description: `${res.total} seleccionada(s) · ${res.placed} colocada(s) · ${res.leftover} sin colocar · ${res.spreadCount} lienzo(s) creado(s) al final del álbum${res.usedAi ? " · con mejora visual IA" : ""}. Revisa los lienzos nuevos (⌘Z deshace toda la maquetación).`,
     });
   };
-  const handleAutoLayoutFolder = (folder) => {
-    runAutoLayout(photos.filter((p) => p.folder === folder && !placedPhotoIds.has(p.id)).map((p) => p.id));
+  const handleAutoLayoutFolder = (folder, maxSpreads) => {
+    runAutoLayout(photos.filter((p) => p.folder === folder && !placedPhotoIds.has(p.id)).map((p) => p.id), maxSpreads);
   };
 
   // Fase Carpetas — organización VIRTUAL de fotos: la lista de nombres vive en el
@@ -553,6 +567,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         <div ref={trayWrapRef} style={trayH ? { height: trayH } : undefined} className="shrink-0 overflow-hidden">
         <PhotoBrowser
           photos={photos}
+          defaultMaxSpreads={project.spread_count_target}
           height={trayH}
         previews={thumbs}
         placedPhotoIds={placedPhotoIds}

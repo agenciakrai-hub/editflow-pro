@@ -13,11 +13,14 @@ const ALL = "__all__";
 // Colocación múltiple — selección con clic (individual), Ctrl/Cmd+clic (alternar) y
 // Shift+clic (rango), con estado visual claro (anillo + check). Arrastrar la selección
 // al lienzo crea automáticamente la plantilla adecuada. Doble clic = ampliada.
-export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, height }) {
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, defaultMaxSpreads, height }) {
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
   const [onlyAccepted, setOnlyAccepted] = useState(false);
+  // Máximo de lienzos que la Maquetación Automática puede crear (decisión del
+  // usuario ANTES de ejecutar). Por defecto, el objetivo del álbum.
+  const [maxSpreads, setMaxSpreads] = useState(() => (Number(defaultMaxSpreads) > 0 ? Math.floor(Number(defaultMaxSpreads)) : 20));
   const [thumbSize, setThumbSize] = useState(96);
   const [zoomIndex, setZoomIndex] = useState(null);
   const [selIds, setSelIds] = useState(() => new Set());
@@ -122,8 +125,20 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
             Selección IA ({acceptedIds.length})
           </button>
         )}
+        {(onAutoLayout || onAutoLayoutFolder) && (
+          <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+            title="Número máximo de lienzos que la Maquetación Automática puede crear">
+            Máx. lienzos
+            <input type="number" min="1" max="200" value={maxSpreads}
+              onChange={(e) => {
+                const v = Math.floor(Number(e.target.value));
+                setMaxSpreads(Number.isFinite(v) && v >= 1 ? Math.min(200, v) : 1);
+              }}
+              className="h-7 w-14 rounded-lg border border-border bg-background px-2 text-[11px] tabular-nums" />
+          </label>
+        )}
         {onAutoLayout && acceptedUnplaced.length > 0 && (
-          <button onClick={() => onAutoLayout(acceptedUnplaced)}
+          <button onClick={() => onAutoLayout(acceptedUnplaced, maxSpreads)}
             title="Maqueta automáticamente en lienzos nuevos las fotos ACEPTADAS en la Selección IA que aún no están colocadas (⌘Z deshace toda la maquetación)"
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-2.5 text-[11px] font-semibold text-primary hover:bg-primary/20">
             <Wand2 className="h-3 w-3" /> Maquetar selección IA ({acceptedUnplaced.length})
@@ -136,14 +151,14 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
           </button>
         )}
         {selIds.size > 0 && onAutoLayout && (
-          <button onClick={() => onAutoLayout([...selIds])}
+          <button onClick={() => onAutoLayout([...selIds], maxSpreads)}
             title="Crea lienzos nuevos al final del álbum, elige las plantillas más compatibles y distribuye las fotos (⌘Z deshace toda la maquetación)"
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground hover:opacity-90">
             <Wand2 className="h-3 w-3" /> Maquetar automáticamente ({selIds.size})
           </button>
         )}
         {folder !== ALL && onAutoLayoutFolder && (
-          <button onClick={() => onAutoLayoutFolder(folder)}
+          <button onClick={() => onAutoLayoutFolder(folder, maxSpreads)}
             title={`Maqueta automáticamente las fotos SIN COLOCAR de «${folder}» en lienzos nuevos al final del álbum`}
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-2.5 text-[11px] font-semibold text-primary hover:bg-primary/20">
             <Wand2 className="h-3 w-3" /> Maquetar carpeta

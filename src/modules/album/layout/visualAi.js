@@ -96,6 +96,14 @@ export async function analyzePhotosForLayout(projectId, photos) {
   }
 }
 
+// Perfil visual IA cacheado de una foto en ESTA sesión (lectura SIN red). Lo usa
+// el ajuste automático al contenedor (smartFill) como punto de interés cuando el
+// navegador no detecta caras: protege al sujeto señalado por la IA visual.
+export function getCachedVisualProfile(photo) {
+  if (!photo?.id) return null;
+  return cache.get(`${photo.id}:${photo.content_hash || ""}`) ?? null;
+}
+
 // Invalida el perfil cacheado de una foto (p. ej. tras reemplazar su archivo).
 export function invalidatePhoto(photoId, contentHash) {
   cache.delete(`${photoId}:${contentHash || ""}`);

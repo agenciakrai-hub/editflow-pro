@@ -19,6 +19,7 @@
 // superior (donde suelen estar las cabezas). Nada se envía a ningún servicio.
 import { freshTransform, photoRatio, sameRatio } from "@/modules/album/layout/layoutEngine";
 import { getTierPreview } from "@/modules/album/lib/previewStore";
+import { getCachedVisualProfile } from "@/modules/album/layout/visualAi";
 
 const faceCache = new Map(); // photoId -> [{x,y,w,h}] (normalizado 0..1) | null
 const MAX_ZOOM = 3; // techo de zoom del relleno automático
@@ -100,7 +101,15 @@ export function smartFillTransform(photo, slot, faces) {
   // Dimensiones de la foto a escala COVER, en mm (cover: sobra exactamente una dimensión).
   const dw = r >= w / h ? h * r : w;
   const dh = r >= w / h ? h : w / r;
-  const { uf, vf } = focusPoint(faces, dw, dh, w, h);
+  // Punto de atención: caras detectadas; si no hay, el FOCAL de la IA visual
+  // (perfil cacheado de la maquetación) protege al sujeto principal; sin uno ni
+  // otro, anclaje determinista de focusPoint.
+  let focal = null;
+  if (!faces?.length) {
+    const prof = getCachedVisualProfile(photo);
+    if (prof?.focalPoint) focal = { uf: prof.focalPoint.x, vf: prof.focalPoint.y };
+  }
+  const { uf, vf } = focal || focusPoint(faces, dw, dh, w, h);
   const bx = 0; // punto de atención centrado en horizontal
   const by = -h * 0.08; // y algo por encima del centro (42% del alto)
   // Zoom mínimo k que mantiene la imagen cubriendo el hueco mientras el punto de
@@ -170,7 +179,7 @@ export async function retunePhotoSlots(oldSlots, newSlots, opts = {}) {
     const o = oldById.get(sl.slot_id);
     if (!sl.photo_id || !o || sameRatio(o.w_mm, o.h_mm, sl.w_mm, sl.h_mm)) { out.push(sl); continue; }
     const photo = opts.photosById?.get?.(sl.photo_id);
-    if (opts.fillPhotos && photo) {
+    if (photo) {
       await ensureFaces(opts.projectId, photo);
       const f = smartFillSlot(sl, photo);
       out.push({ ...sl, fit_mode: f.fit_mode, transform: f.transform });
