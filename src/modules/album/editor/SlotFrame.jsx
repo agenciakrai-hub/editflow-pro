@@ -105,6 +105,11 @@ export default function SlotFrame({ slot, photo, projectId, ppm, selected, locke
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
+        // Colocación MÚLTIPLE (selección arrastrada): la gestiona el LIENZO, que
+        // distribuye todas las fotos en los huecos vacíos de la plantilla actual.
+        // NO se hace stopPropagation: el evento debe burbujear hasta el contenedor
+        // del lienzo. Solo una foto individual cae en ESTE hueco concreto.
+        if (e.dataTransfer.getData("text/album-photo-multi")) return;
         e.stopPropagation();
         const pid = e.dataTransfer.getData("text/album-photo");
         const sid = e.dataTransfer.getData("text/album-slot");
