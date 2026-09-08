@@ -39,6 +39,20 @@
       },
       "description": "Modelos que el administrador marc\u00f3 para Ajustes IA (ajustes b\u00e1sicos). Los motores usan EXCLUSIVAMENTE esta lista (o el modelo legado como fallback)."
     },
+    "edicion_models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Modelos que el administrador marc\u00f3 para EDICI\u00d3N de imagen (image-edit / generaci\u00f3n de p\u00edxeles) en la pesta\u00f1a Edici\u00f3n del proveedor. Reserva para las herramientas de edici\u00f3n."
+    },
+    "video_models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Modelos que el administrador marc\u00f3 para V\u00cdDEO (generaci\u00f3n / edici\u00f3n de v\u00eddeo) en la pesta\u00f1a V\u00eddeo del proveedor. Reserva para las herramientas de v\u00eddeo."
+    },
     "model": {
       "type": "string",
       "description": "Legado V1: modelo \u00fanico de visi\u00f3n. Solo se usa como fallback si no hay modelos marcados para la tarea."

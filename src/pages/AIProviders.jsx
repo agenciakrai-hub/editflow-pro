@@ -65,10 +65,10 @@ export default function AIProviders() {
     return ok;
   };
 
-  const saveModels = async (id, seleccion_models, ajustes_models) => {
+  const saveModels = async (id, seleccion_models, ajustes_models, edicion_models, video_models) => {
     setBusyAction({ id, action: "save" });
     try {
-      const res = await base44.functions.invoke("ai-providers", { action: "update-models", id, seleccion_models, ajustes_models });
+      const res = await base44.functions.invoke("ai-providers", { action: "update-models", id, seleccion_models, ajustes_models, edicion_models, video_models });
       const data = res?.data ?? res;
       if (data.ok) {
         setProviders((prev) => prev.map((p) => (p.id === id ? data.provider : p)));

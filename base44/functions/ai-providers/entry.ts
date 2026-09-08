@@ -182,6 +182,8 @@ function maskProvider(r: any) {
     available_models: Array.isArray(r.available_models) ? r.available_models : [],
     seleccion_models: Array.isArray(r.seleccion_models) ? r.seleccion_models : [],
     ajustes_models: Array.isArray(r.ajustes_models) ? r.ajustes_models : [],
+    edicion_models: Array.isArray(r.edicion_models) ? r.edicion_models : [],
+    video_models: Array.isArray(r.video_models) ? r.video_models : [],
     model: r.model || '',
     enabled: r.enabled !== false,
     last_ok: !!r.last_ok,
@@ -331,6 +333,8 @@ export default async function(req: Request): Promise<Response> {
       const rec = await base44.asServiceRole.entities.CustomAiProvider.update(id, {
         seleccion_models: clean(body.seleccion_models),
         ajustes_models: clean(body.ajustes_models),
+        edicion_models: clean(body.edicion_models),
+        video_models: clean(body.video_models),
       });
       return Response.json({ ok: true, provider: maskProvider(rec) });
     }
