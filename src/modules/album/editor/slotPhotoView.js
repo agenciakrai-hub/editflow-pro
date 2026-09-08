@@ -58,3 +58,27 @@ export function coverPanMargins(slot, photo) {
   const k = slot?.transform?.scale ?? 1;
   return { mx: Math.max(0, (k * dw - sw) / 2), my: Math.max(0, (k * dh - sh) / 2) };
 }
+
+// REENCUADRE NO DESTRUCTIVO — márgenes de arrastre de la FOTO dentro del hueco
+// (modo relleno), POR EJE. El contenedor es solo una VENTANA visual sobre la
+// foto original completa (que jamás se recorta en origen):
+//   · Foto (a su zoom actual) MAYOR que el contenedor en un eje → el arrastre se
+//     limita a lo que sobra: el contenedor sigue cubierto y TODA la foto es
+//     alcanzable desplazándose hasta sus bordes.
+//   · Foto MENOR en un eje (zoom alejado por debajo de la base cover) → eje
+//     LIBRE (null): el fotógrafo coloca la foto completa donde quiera.
+export function photoPanMargins(slot, photo) {
+  const wp = photo?.width_px;
+  const hp = photo?.height_px;
+  if (!(wp > 0) || !(hp > 0)) return null;
+  const sw = slot?.w_mm;
+  const sh = slot?.h_mm;
+  if (!(sw > 0) || !(sh > 0)) return null;
+  const r = wp / hp;
+  const dw = Math.max(sw, sh * r);
+  const dh = Math.max(sh, sw / r);
+  const k = slot?.transform?.scale ?? 1;
+  const mx = (k * dw - sw) / 2;
+  const my = (k * dh - sh) / 2;
+  return { mx: mx > 0 ? mx : null, my: my > 0 ? my : null };
+}

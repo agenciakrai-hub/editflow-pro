@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { AlertTriangle, Grip, ImageOff, Lock } from "lucide-react";
 import usePhotoPreview from "@/modules/album/hooks/usePhotoPreview";
-import { slotPhotoView, slotEffDpi, coverPanMargins } from "@/modules/album/editor/slotPhotoView";
+import { slotPhotoView, slotEffDpi, photoPanMargins } from "@/modules/album/editor/slotPhotoView";
 import { HAND_BLACK, HAND_GREEN } from "@/modules/album/editor/cursors";
 
 // Tiradores del contenedor en modo mano negra: los 4 lados y las 4 esquinas.
@@ -85,13 +85,17 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
     handlers.onGestureBegin?.();
     const bx = t.offset_x_mm || 0;
     const by = t.offset_y_mm || 0;
-    // Modo RELLENO: el reencuadre se limita al margen REAL de cobertura — la foto
-    // nunca deja huecos al arrastrarla y todo el recorrido es encuadre válido.
-    const m = slot.fit_mode === "fill" ? coverPanMargins(slot, photo) : null;
+    // REENCUADRE NO DESTRUCTIVO: el contenedor es una ventana visual sobre la
+    // foto ORIGINAL completa (la fuente jamás se recorta). Por eje: si la foto
+    // (a su zoom actual) sobresale del hueco, el arrastre se limita a lo que
+    // sobra (toda la foto es alcanzable hasta sus bordes); si es menor (zoom
+    // alejado), el eje queda LIBRE y el fotógrafo la coloca donde quiera.
+    const m = slot.fit_mode === "fill" ? photoPanMargins(slot, photo) : null;
     dragWindow(e, (dx, dy) => {
       let nx = bx + dx / ppm;
       let ny = by + dy / ppm;
-      if (m) { nx = Math.max(-m.mx, Math.min(m.mx, nx)); ny = Math.max(-m.my, Math.min(m.my, ny)); }
+      if (m?.mx != null) nx = Math.max(-m.mx, Math.min(m.mx, nx));
+      if (m?.my != null) ny = Math.max(-m.my, Math.min(m.my, ny));
       handlers.onPan?.(slot.slot_id, nx, ny);
     });
   };

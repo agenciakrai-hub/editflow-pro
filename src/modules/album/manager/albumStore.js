@@ -465,15 +465,14 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // Zoom de la FOTO de un hueco (rueda del lienzo): lee la escala del estado VIVO
   // (ref), nunca de un snapshot antiguo del render — antes el closure capturaba la
   // escala inicial y la rueda se quedaba clavada en un solo paso, pisando además el
-  // valor del slider. Mismos límites que el slider de propiedades (30 % – 800 %):
-  // ambos controles quedan sincronizados sobre el mismo transform.scale.
+  // valor del slider. Mismos límites que el slider de propiedades (30 % – 800 %)
+  // en CUALQUIER modo: alejar por debajo de la base cover permite ver y reencuadrar
+  // sobre la FOTO ORIGINAL COMPLETA (el recorte del contenedor es solo visual,
+  // nunca destructivo). Ambos controles quedan sincronizados sobre transform.scale.
   const zoomSlotPhoto = useCallback((spreadId, slotId, factor) => {
     const s = spreadsRef.current.find((x) => x.id === spreadId);
     const sl = (s?.slots || []).find((x) => x.slot_id === slotId);
-    // En modo RELLENO el suelo es la base COVER (1): por debajo el contenedor
-    // quedaría descubierto. En CONTENER se mantiene el rango 30 % – 800 %.
-    const min = s?.fit_mode === "fill" ? 1 : 0.3;
-    const next = Math.min(8, Math.max(min, (sl?.transform?.scale ?? 1) * factor));
+    const next = Math.min(8, Math.max(0.3, (sl?.transform?.scale ?? 1) * factor));
     updateSlot(spreadId, slotId, { transform: { scale: Math.round(next * 100) / 100 } }, false);
   }, [updateSlot]);
 

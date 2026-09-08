@@ -94,11 +94,11 @@ export default function PropertiesPanel({ album, spread, selectedSlot, onAlbumCo
               </div>
               <p className="mt-1 text-[10px] leading-3 text-muted-foreground">
                 {selectedSlot.fit_mode === "fill"
-                  ? "Recorta a cubrir el hueco; arrastra la foto en el lienzo para reencuadrarla (nunca deja huecos)."
+                  ? "Cubre el hueco por defecto; aleja el zoom y arrastra la foto para reencuadrar sobre la foto original completa (el recorte es solo visual)."
                   : "Foto completa y centrada; arrastra o amplía el zoom para recortar."}
               </p>
               <label className="mt-2 block text-[11px] text-muted-foreground">Zoom: {Math.round((selectedSlot.transform?.scale ?? 1) * 100)}%</label>
-              <input type="range" min={selectedSlot.fit_mode === "fill" ? "100" : "30"} max="800" value={Math.round((selectedSlot.transform?.scale ?? 1) * 100)}
+              <input type="range" min="30" max="800" value={Math.round((selectedSlot.transform?.scale ?? 1) * 100)}
                 onChange={(e) => onSlotProp({ transform: { scale: Number(e.target.value) / 100 } })}
                 className="w-full accent-foreground" />
               {(() => {
