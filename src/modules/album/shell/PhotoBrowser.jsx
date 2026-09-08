@@ -111,7 +111,7 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
           </button>
         )}
         {selIds.size > 0 && onAutoLayout && (
-          <button onClick={() => { onAutoLayout([...selIds]); clearSelection(); }}
+          <button onClick={() => onAutoLayout([...selIds])}
             title="Crea lienzos nuevos al final del álbum, elige las plantillas más compatibles y distribuye las fotos (⌘Z deshace toda la maquetación)"
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg bg-primary px-2.5 text-[11px] font-semibold text-primary-foreground hover:opacity-90">
             <Wand2 className="h-3 w-3" /> Maquetar automáticamente ({selIds.size})

@@ -32,8 +32,24 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   const dirtyRef = useRef(new Map());
   const deletedRef = useRef(new Set());
   const remapRef = useRef(new Map());
+  // UNDO/REDO EXACTO — lienzos cuyo borrado ya se PERSISTIÓ en el servidor (flush
+  // completado). Rehacer una maquetación (o deshacer un borrado) ya no puede
+  // reutilizar ese id: el registro no existe; hay que RE-CREAR el lienzo con
+  // identidad nueva conservando plantilla, fotos y transformaciones.
+  const goneRef = useRef(new Set());
   const timerRef = useRef(null);
   const flushRef = useRef(null);
+
+  // Resuelve la identidad ACTUAL de un id de snapshot siguiendo la cadena de
+  // re-mapeos (tmp→real al persistir, real borrado→tmp nuevo al restaurar). Los
+  // snapshots del historial guardan ids antiguos; el registro vivo puede haber
+  // cambiado de id varias veces.
+  const resolveId = useCallback((id) => {
+    let cur = id;
+    const seen = new Set();
+    while (remapRef.current.has(cur) && !seen.has(cur)) { seen.add(cur); cur = remapRef.current.get(cur); }
+    return cur;
+  }, []);
 
   const pushHistory = useCallback(() => {
     undoRef.current.push(clone(spreadsRef.current));
@@ -68,6 +84,9 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       for (const id of Array.from(deletedRef.current)) {
         try {
           await deleteSpread(id);
+          // Borrado persistido: este id ya no existe en el servidor. Si un redo lo
+          // recupera, deberá re-crearse con identidad nueva (ver restore).
+          goneRef.current.add(id);
           deletedRef.current.delete(id);
           dirtyRef.current.delete(id);
         } catch { failed = true; }
@@ -82,6 +101,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
           ai_generated: !!data.ai_generated,
           fill_photos: !!data.fill_photos,
           fill_canvas: !!data.fill_canvas,
+          // Separación entre fotos PROPIA del lienzo (null = global del álbum).
+          ...(data.photo_gap_mm != null ? { photo_gap_mm: data.photo_gap_mm } : {}),
           ...(data.background_color ? { background_color: data.background_color } : {}),
           slots: data.slots || [],
         };
@@ -244,9 +265,13 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     const list = [...spreadsRef.current];
     const created = [];
     for (const g of plan.groups) {
+      // Configuración EXPLÍCITA propia de cada lienzo nuevo (nunca hereda de otros):
+      // herramientas de relleno OFF, separación null (= global del álbum) y fondo
+      // vacío (= global). Cambiarla después afecta SOLO a este lienzo.
       const base = {
         id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread",
-        layout_id: g.layoutId, locked: false, ai_generated: false, fill_photos: false, fill_canvas: false, slots: [],
+        layout_id: g.layoutId, locked: false, ai_generated: false,
+        fill_photos: false, fill_canvas: false, photo_gap_mm: null, background_color: null, slots: [],
       };
       const next = applyLayout(base, g.layout, project);
       next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
@@ -452,26 +477,40 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // ---- Undo / Redo (solo el documento de este álbum) ----
   const restore = useCallback((snap) => {
     const current = spreadsRef.current;
+    // 1) Cada id del snapshot se resuelve a su identidad ACTUAL (cadenas de remap).
+    // 2) Si esa identidad ya no existe en el servidor (borrado persistido por un
+    //    undo cuyo autosave llegó a correr — el caso normal entre ⌘Z y ⌘⇧Z), el
+    //    lienzo se RE-CREA con id nuevo: plantilla, fotos, transforms y
+    //    configuración local se conservan íntegras.
     const restored = snap.map((s) => {
-      const rid = remapRef.current.get(s.id);
-      return rid ? { ...s, id: rid } : s;
+      const id = resolveId(s.id);
+      let out = id === s.id ? s : { ...s, id };
+      if (goneRef.current.has(id)) {
+        const nid = tmpId();
+        remapRef.current.set(id, nid);
+        goneRef.current.delete(id);
+        out = { ...out, id: nid };
+      }
+      return out;
     });
     current.forEach((s) => {
       if (!restored.some((r) => r.id === s.id) && !String(s.id).startsWith("tmp_")) deletedRef.current.add(s.id);
       dirtyRef.current.delete(s.id);
     });
-    // CORRECCIÓN UNDO/REDO EXACTO: todo lienzo que VUELVE en el snapshot se
-    // "des-borra" (sale de deletedRef) y se marca sucio para persistir. Sin esto,
-    // rehacer (⌘⇧Z) una maquetación cuyos lienzos ya tenían ID real dejaba esos IDs
-    // en deletedRef → el siguiente guardado los borraba del servidor aunque se
-    // mostraban en pantalla (redo no persistía exactamente). Vale también para
-    // deshacer un borrado: el lienzo recuperado se re-crea/actualiza.
+    // Todo lienzo que VUELVE en el snapshot se "des-borra" (sale de deletedRef) y se
+    // marca sucio para persistir: rehacer una maquetación cuyos lienzos tenían id
+    // real o pendiente de borrar debe restaurarla EXACTAMENTE, sin borrados
+    // pendientes que el siguiente guardado ejecutaría por error.
     restored.forEach((s) => { deletedRef.current.delete(s.id); dirtyRef.current.set(s.id, s); });
     setSpreads(restored);
-    setSelectedSpreadId((cur) => (restored.some((r) => r.id === cur) ? cur : restored.length ? restored[0].id : null));
+    setSelectedSpreadId((cur) => {
+      const c = resolveId(cur);
+      const hit = restored.find((r) => r.id === c);
+      return hit ? hit.id : restored.length ? restored[0].id : null;
+    });
     setSelectedSlotId(null);
     scheduleSave();
-  }, [scheduleSave]);
+  }, [scheduleSave, resolveId]);
 
   const undo = useCallback(() => {
     const prev = undoRef.current.pop();

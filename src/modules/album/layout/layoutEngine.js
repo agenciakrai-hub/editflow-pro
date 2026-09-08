@@ -130,8 +130,17 @@ export function bestLayoutFor(album, photos) {
 // Corrección recorte: el ajuste AUTOMÁTICO inicial es FIT/CONTAIN — la foto se ve
 // COMPLETA, sin recortes, con su proporción original y centrada. El encuadre manual
 // del fotógrafo se conserva SOLO si el nuevo hueco mantiene la proporción del antiguo.
+// Fase 1 §4 — separación entre fotografías POR LIENZO (override opcional): si el
+// spread lleva photo_gap_mm propio se usa para resolver SU geometría; si es
+// null/undefined se usa la global del álbum (comportamiento existente). Nunca
+// afecta a otros lienzos ni a la configuración global.
+export function albumFor(album, spread) {
+  const g = spread?.photo_gap_mm;
+  return g == null ? album : { ...album, photo_gap_mm: g };
+}
+
 export function applyLayout(spread, layout, album) {
-  const geo = resolveSlots(layout, album);
+  const geo = resolveSlots(layout, albumFor(album, spread));
   const oldSlots = spread.slots || [];
   const photoIds = oldSlots.map((s) => s.photo_id).filter(Boolean);
   const oldByPhoto = new Map();

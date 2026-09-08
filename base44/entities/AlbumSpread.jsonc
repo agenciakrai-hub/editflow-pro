@@ -40,6 +40,10 @@
       "default": false,
       "description": "Fase Relleno completo del lienzo \u2014 POR LIENZO: true = la GEOMETR\u00cdA de la plantilla de ESTE lienzo se expande para ocupar todo el lienzo (o solo su p\u00e1gina en page_left/page_right), conservando exactamente la separaci\u00f3n entre fotos; false = geometr\u00eda base de la plantilla. Por defecto false: retrocompatible con \u00e1lbumes antiguos."
     },
+    "photo_gap_mm": {
+      "type": "number",
+      "description": "Fase 1 \u00a74 \u2014 separaci\u00f3n entre fotograf\u00edas PROPIA de ESTE lienzo (mm). null/vac\u00edo = se usa la global del \u00e1lbum (photo_gap_mm del AlbumProject), que sigue siendo la configuraci\u00f3n del \u00e1lbum. Override por lienzo: al resolver la geometr\u00eda de ESTE lienzo prevalece sobre la global; nunca afecta a otros lienzos."
+    },
     "ai_generated": {
       "type": "boolean",
       "default": false,
