@@ -430,7 +430,7 @@ const VISION_MODEL_PRIORITY = [
   "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4o-mini",
   "claude-3-opus", "claude-3.5-sonnet", "claude-3-sonnet", "claude-3-haiku",
   "qwen-vl-max", "qwen2.5-vl", "qwen3-vl", "qwen2-vl",
-  "gemini-2", "gemini-1.5",
+  "gemini-3", "gemini-2", "gemini-1.5",
   "llava", "vision", "vl", "visual", "image",
 ];
 export function pickBestVisionModel(models: string[]): string {

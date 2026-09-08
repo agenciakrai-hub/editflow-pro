@@ -10,7 +10,8 @@
 //
 // Proveedor: el activo para "ajustes" (gemini/qwen/nvidia). Las previews van como data
 // URLs directas — sin UploadFile ni InvokeLLM Base44 (los créditos de integración pueden
-// estar agotados). Si no hay proveedor externo configurado, se fuerza Qwen.
+// estar agotados). Si no hay proveedor externo configurado, se lanza un error claro:
+// sin sustituciones silenciosas.
 
 import { invokeVision, activeProviderFor } from "./aiProviderAdapter.ts";
 
@@ -84,12 +85,15 @@ Devuelve un JSON con las claves exactas listadas, mas "analysis" (frase corta de
   properties.confidence_score = { type: "number" };
   const schema = { type: "object", properties, required: [...PROFILE_KEYS, "analysis", "confidence_score"] };
 
-  // Proveedor externo segun active_ajustes (qwen/gemini/nvidia/proveedores propios
-  // custom:<id>); si no hay ninguno, se fuerza Qwen. Nunca cae a Base44/InvokeLLM: las
-  // previews van como data URLs directas.
-  let provider = await activeProviderFor(base44, "ajustes");
+  // Proveedor activo por herramienta AJUSTES (Proveedores IA): el modelo que el
+  // administrador eligió genera el perfil de sesión — SIEMPRE, sin sustitución
+  // silenciosa. Si no hay proveedor externo configurado se lanza un error claro (nunca
+  // cae a Qwen, Base44 ni InvokeLLM por su cuenta). Las previews van como data URLs directas.
+  const provider = await activeProviderFor(base44, "ajustes");
   const isExternal = provider === "qwen" || provider === "gemini" || provider === "nvidia" || String(provider).startsWith("custom:");
-  if (!isExternal) provider = "qwen";
+  if (!isExternal) {
+    throw new Error("No hay proveedor activo para Ajustes IA. Selecciona el 'Proveedor activo por herramienta — AJUSTES' en Proveedores IA: el modo Híbrido usa SIEMPRE ese modelo.");
+  }
   const result = await invokeVision(base44, {
     task: "ajustes",
     prompt,

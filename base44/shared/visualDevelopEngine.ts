@@ -2,7 +2,8 @@
 // Lightroom analizando el CONTENIDO de la foto (sujeto, luz, color, mood), no solo el
 // histograma. Sin baseline técnico acotado: la IA devuelve valores absolutos profesionales.
 //
-// Proveedor: Qwen (qwen3-vl-plus) vía invokeVision. Las previews se envían como data URLs
+// Proveedor: SIEMPRE el activo por herramienta AJUSTES (elegido en Proveedores IA), vía
+// invokeVision. Las previews se envían como data URLs
 // (data:image/jpeg;base64,...) directamente al endpoint OpenAI-compatible de DashScope —
 // SIN UploadFile (evita el bloqueo de créditos de integración Base44 y la subida de red).
 //
@@ -73,13 +74,15 @@ Devuelve un JSON con las claves exactas listadas mas confidence_score.`;
     required: [...VISUAL_PARAM_KEYS, "confidence_score"],
   };
 
-  // Proveedor externo segun active_ajustes (qwen/gemini/nvidia/proveedores propios
-  // custom:<id>); si la config no tiene uno externo, se fuerza Qwen. Nunca cae a
-  // Base44/InvokeLLM: la preview va como data URL directa y los creditos de integracion
-  // pueden estar agotados.
-  let provider = await activeProviderFor(base44, "ajustes");
+  // Proveedor activo por herramienta AJUSTES (Proveedores IA): el modelo que el
+  // administrador eligió analiza y edita la foto — SIEMPRE, sin sustitución silenciosa.
+  // Si no hay proveedor externo configurado se lanza un error claro (nunca cae a Qwen,
+  // Base44 ni InvokeLLM por su cuenta). La preview va como data URL directa.
+  const provider = await activeProviderFor(base44, "ajustes");
   const isExternal = provider === "qwen" || provider === "gemini" || provider === "nvidia" || String(provider).startsWith("custom:");
-  if (!isExternal) provider = "qwen";
+  if (!isExternal) {
+    throw new Error("No hay proveedor activo para Ajustes IA. Selecciona el 'Proveedor activo por herramienta — AJUSTES' en Proveedores IA: IA Visual usa SIEMPRE ese modelo.");
+  }
   const result = await invokeVision(base44, {
     task: "ajustes",
     prompt,

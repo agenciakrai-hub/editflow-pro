@@ -87,6 +87,27 @@ export default function AjustesIA() {
   const [cerebroStyles, setCerebroStyles] = useState([]);
   const [selectedStyle, setSelectedStyle] = useState(null);
   const [loadingStylePreset, setLoadingStylePreset] = useState(false);
+  // Proveedor activo por herramienta AJUSTES (Proveedores IA): el modelo que analiza y
+  // edita SIEMPRE en los modos IA Visual e Híbrido. Solo para las etiquetas de los modos.
+  const [ajustesProviderName, setAjustesProviderName] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const list = await base44.entities.AiProviderConfig.list();
+        const cfg = Array.isArray(list) && list.length ? list[0] : null;
+        const active = String(cfg?.active_ajustes || "").trim();
+        if (!active || active === "none") { setAjustesProviderName("sin proveedor"); return; }
+        if (active.startsWith("custom:")) {
+          const customs = await base44.entities.CustomAiProvider.list();
+          const rec = (Array.isArray(customs) ? customs : []).find((c) => c.id === active.slice("custom:".length));
+          setAjustesProviderName(rec?.name || "Proveedor activo");
+          return;
+        }
+        setAjustesProviderName({ qwen: "Qwen", gemini: "Google Gemini", nvidia: "NVIDIA", base44: "Base44" }[active] || "Proveedor activo");
+      } catch { setAjustesProviderName(""); }
+    })();
+  }, []);
 
   const enabledParams = useMemo(() => enabledKeys(config), [config]);
   const preferences = useMemo(() => preferencesFromConfig(config), [config]);
@@ -575,7 +596,7 @@ export default function AjustesIA() {
                 onClick={() => setMode("qwen")}
                 className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "qwen" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
               >
-                Revelado IA Visual — Qwen
+                Revelado IA Visual — {ajustesProviderName || "IA activa"}
               </button>
               <button
                 type="button"
@@ -743,10 +764,11 @@ export default function AjustesIA() {
               <>
                 <p className="mt-4 text-sm font-medium text-zinc-100">Revelado Híbrido — IA Económico</p>
                 <p className="mt-1 text-xs text-zinc-500">
-                  La IA analiza solo unas pocas fotos representativas (1 llamada) y genera un perfil de sesión con el
-                  look coherente. El motor local adapta ese perfil a cada foto corrigiendo exposición/luces/sombras
-                  según su histograma real. Muy económico: 1 llamada de IA para toda la sesión, no 1 por foto. Selecciona
-                  parámetros y preferencia (0 = sin desplazar).
+                  La IA que trabaja es SIEMPRE el proveedor activo por herramienta AJUSTES{ajustesProviderName ? ` (${ajustesProviderName})` : ""}: analiza
+                  solo unas pocas fotos representativas (1 llamada) y genera un perfil de sesión con el look coherente.
+                  El motor local adapta ese perfil a cada foto corrigiendo exposición/luces/sombras según su histograma
+                  real. Muy económico: 1 llamada de IA para toda la sesión, no 1 por foto. Selecciona parámetros y
+                  preferencia (0 = sin desplazar).
                 </p>
                 {editStyleMode === "preset" && (
                   <>
@@ -778,11 +800,10 @@ export default function AjustesIA() {
             )}
             {mode === "qwen" && (
               <>
-                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado IA Visual — Qwen</p>
+                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado IA Visual — {ajustesProviderName || "IA activa"}</p>
                 <p className="mt-1 text-xs text-zinc-500">
-                  La IA analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado
-                  completos, no solo el histograma. Selecciona qué parámetros aplicar; la preferencia es un
-                  desplazamiento que se suma a la decisión de la IA (0 = sin desplazar).
+                  {ajustesProviderName ? `Usa SIEMPRE el proveedor activo por herramienta AJUSTES (${ajustesProviderName}): ese modelo analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado completos, no solo el histograma. ` : "La IA analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado completos, no solo el histograma. "}
+                  Selecciona qué parámetros aplicar; la preferencia es un desplazamiento que se suma a la decisión de la IA (0 = sin desplazar).
                 </p>
                 <ParameterPanel config={config} onChange={setConfig} />
               </>
