@@ -544,6 +544,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         <div ref={trayWrapRef} style={trayH ? { height: trayH } : undefined} className="shrink-0 overflow-hidden">
         <PhotoBrowser
           photos={photos}
+          height={trayH}
         previews={thumbs}
         placedPhotoIds={placedPhotoIds}
         folders={project.photo_folders || []}

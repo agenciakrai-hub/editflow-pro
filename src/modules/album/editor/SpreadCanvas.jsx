@@ -51,7 +51,7 @@ export default function SpreadCanvas({ album, spread, photosById, zoomPct, guide
   };
 
   return (
-    <div ref={wrapRef} onMouseDown={canvasPanStart} style={{ cursor: HAND_WHITE }}
+    <div ref={wrapRef} onMouseDown={canvasPanStart} style={{ cursor: HAND_WHITE, scrollbarGutter: "stable" }}
       className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-secondary/40 p-3">
       <div className="relative mx-auto"
         style={{ width: px(W), height: px(H), backgroundColor: album.background_color || "#FFFFFF", boxShadow: "0 10px 30px rgba(0,0,0,0.18)" }}

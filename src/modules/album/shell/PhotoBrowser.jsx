@@ -13,7 +13,7 @@ const ALL = "__all__";
 // Colocación múltiple — selección con clic (individual), Ctrl/Cmd+clic (alternar) y
 // Shift+clic (rango), con estado visual claro (anillo + check). Arrastrar la selección
 // al lienzo crea automáticamente la plantilla adecuada. Doble clic = ampliada.
-export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder }) {
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, height }) {
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
@@ -66,7 +66,7 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
   const clearSelection = () => { setSelIds(new Set()); anchorRef.current = null; };
 
   return (
-    <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
+    <div style={{ height: height || undefined }} className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
       {/* Línea 1 — carpetas de organización */}
       <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
         <p className="shrink-0 text-xs font-semibold">Fotos <span className="font-normal text-muted-foreground">({photos.length})</span></p>
@@ -133,8 +133,10 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
         </label>
       </div>
 
-      {/* Área principal — miniaturas de la carpeta seleccionada */}
-      <div style={{ height: thumbSize + 24 }}>
+      {/* Área principal — miniaturas de la carpeta seleccionada. Con altura manual
+          (tirador de redimensionado) el área ocupa TODO el hueco restante del panel
+          (flex-1), de modo que las miniaturas crecen o menguan con él. */}
+      <div className={height ? "min-h-0 flex-1" : undefined} style={{ height: height ? undefined : thumbSize + 24 }}>
         <ThumbStrip photos={list} previews={previews} thumbSize={thumbSize}
           placedPhotoIds={placedPhotoIds} selectedIds={selIds}
           onPhotoClick={handlePhotoClick} onPhotoDoubleClick={openZoom}
