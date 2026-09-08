@@ -414,6 +414,18 @@ export function useAlbumStore(project, initialSpreads, photosById) {
           if (sl.slot_id !== slotId) return sl;
           const t = patch.transform ? { ...sl.transform, ...patch.transform } : sl.transform;
           const merged = { ...sl, ...patch, transform: t };
+          // Cambio de ajuste desde Propiedades: «Relleno» aplica el COVER inteligente
+          // (escala ≥ base cover con margen de reencuadre real: la foto sigue siendo
+          // AJUSTABLE y cubre siempre el contenedor); «Contener» restaura la foto
+          // completa, centrada (sin offsets huérfanos del otro modo).
+          if (patch.fit_mode && merged.photo_id) {
+            if (patch.fit_mode === "fill") {
+              const photo = photosByIdRef.current.get(merged.photo_id);
+              if (photo) { const f = smartFillSlot(merged, photo); merged.fit_mode = f.fit_mode; merged.transform = f.transform; }
+            } else {
+              merged.transform = freshTransform();
+            }
+          }
           // Al cambiar la geometría del contenedor: si la PROPORCIÓN del hueco cambia,
           // la foto se recoloca en FIT/CONTAIN (se ve completa, sin recorte, sin
           // desplazamientos inesperados); si la proporción se mantiene, no se toca
@@ -449,7 +461,10 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   const zoomSlotPhoto = useCallback((spreadId, slotId, factor) => {
     const s = spreadsRef.current.find((x) => x.id === spreadId);
     const sl = (s?.slots || []).find((x) => x.slot_id === slotId);
-    const next = Math.min(8, Math.max(0.3, (sl?.transform?.scale ?? 1) * factor));
+    // En modo RELLENO el suelo es la base COVER (1): por debajo el contenedor
+    // quedaría descubierto. En CONTENER se mantiene el rango 30 % – 800 %.
+    const min = s?.fit_mode === "fill" ? 1 : 0.3;
+    const next = Math.min(8, Math.max(min, (sl?.transform?.scale ?? 1) * factor));
     updateSlot(spreadId, slotId, { transform: { scale: Math.round(next * 100) / 100 } }, false);
   }, [updateSlot]);
 

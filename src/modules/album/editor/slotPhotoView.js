@@ -40,3 +40,21 @@ export function slotEffDpi(slot, photo) {
   if (dw <= 0 || dh <= 0) return null;
   return Math.min((25.4 * wp) / dw, (25.4 * hp) / dh);
 }
+
+// Reencuadre en modo RELLENO (cover): margen máximo (mm) que la foto puede
+// desplazarse en cada eje SIN dejar de cubrir el contenedor (jamás huecos).
+// Es la misma matemática de cobertura que smartFillTransform: (k·d − lado) / 2.
+// null si la foto o el hueco no tienen geometría utilizable.
+export function coverPanMargins(slot, photo) {
+  const wp = photo?.width_px;
+  const hp = photo?.height_px;
+  if (!(wp > 0) || !(hp > 0)) return null;
+  const sw = slot?.w_mm;
+  const sh = slot?.h_mm;
+  if (!(sw > 0) || !(sh > 0)) return null;
+  const r = wp / hp;
+  const dw = Math.max(sw, sh * r);
+  const dh = Math.max(sh, sw / r);
+  const k = slot?.transform?.scale ?? 1;
+  return { mx: Math.max(0, (k * dw - sw) / 2), my: Math.max(0, (k * dh - sh) / 2) };
+}
