@@ -2,6 +2,7 @@ import React from "react";
 import { Lock, RotateCcw, SlidersHorizontal, Unlock } from "lucide-react";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
 import { freshTransform } from "@/modules/album/layout/layoutEngine";
+import { slotEffDpi } from "@/modules/album/editor/slotPhotoView";
 import { mmToUnit, unitToMm } from "@/modules/album/lib/albumUnits";
 
 const GAP_PRESETS = [0, 1, 2, 3, 4, 5];
@@ -92,9 +93,28 @@ export default function PropertiesPanel({ album, spread, selectedSlot, onAlbumCo
                 <button className={btn + (selectedSlot.fit_mode === "fit" ? " bg-secondary" : "")} onClick={() => onSlotProp({ fit_mode: "fit" })}>Contener</button>
               </div>
               <label className="mt-2 block text-[11px] text-muted-foreground">Zoom: {Math.round((selectedSlot.transform?.scale ?? 1) * 100)}%</label>
-              <input type="range" min="30" max="400" value={Math.round((selectedSlot.transform?.scale ?? 1) * 100)}
+              <input type="range" min="30" max="800" value={Math.round((selectedSlot.transform?.scale ?? 1) * 100)}
                 onChange={(e) => onSlotProp({ transform: { scale: Number(e.target.value) / 100 } })}
                 className="w-full accent-foreground" />
+              {(() => {
+                // Aviso de calidad — resolución efectiva (ppp) de la foto en este
+                // hueco según su tamaño nativo y el zoom actual, frente al objetivo
+                // de impresión del álbum.
+                const eff = slotEffDpi(selectedSlot, selectedSlot.photo);
+                if (eff == null) return null;
+                const target = album.dpi || 300;
+                const ok = eff >= target;
+                const mid = eff >= target / 2;
+                return (
+                  <p className={"mt-1 text-[10px] leading-3 " + (ok ? "text-muted-foreground" : mid ? "text-amber-600" : "font-semibold text-destructive")}>
+                    {ok
+                      ? `Calidad óptima · ${Math.round(eff)} ppp (objetivo ${target})`
+                      : mid
+                        ? `⚠ Calidad reducida · ${Math.round(eff)} ppp (objetivo ${target})`
+                        : `⚠ Pérdida de calidad · ${Math.round(eff)} ppp — reduce el zoom para imprimir a ${target} ppp`}
+                  </p>
+                );
+              })()}
             </>
           )}
           {!spread.locked && (

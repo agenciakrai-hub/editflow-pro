@@ -60,7 +60,7 @@ export default function SpreadCanvas({ album, spread, photosById, zoomPct, guide
             style={{ left: px((W - gutter) / 2 + gutter / 2), top: 0, bottom: 0 }} />
         )}
         {(spread?.slots || []).map((sl) => (
-          <SlotFrame key={sl.slot_id} slot={sl} locked={locked} ppm={ppm} projectId={album.id}
+          <SlotFrame key={sl.slot_id} slot={sl} locked={locked} ppm={ppm} projectId={album.id} targetDpi={album.dpi || 300}
             selected={selectedSlotId === sl.slot_id}
             photo={sl.photo_id ? photosById.get(sl.photo_id) : null}
             mode={slotMode}

@@ -18,3 +18,25 @@ export function slotPhotoView(slot) {
     offsetYPct: slot?.h_mm > 0 ? ((t.offset_y_mm || 0) / slot.h_mm) * 100 : 0,
   };
 }
+
+// Aviso de calidad — resolución EFECTIVA (ppp) con la que la foto se imprimiría en
+// su hueco según su tamaño NATIVO (width_px/height_px), su ajuste (contain/cover) y
+// el zoom virtual (transform.scale). Se evalúa el EJE PEOR (ppp mínimos). null si
+// la foto no tiene dimensiones nativas registradas.
+export function slotEffDpi(slot, photo) {
+  const wp = photo?.width_px;
+  const hp = photo?.height_px;
+  if (!(wp > 0) || !(hp > 0)) return null;
+  const sw = slot?.w_mm;
+  const sh = slot?.h_mm;
+  if (!(sw > 0) || !(sh > 0)) return null;
+  const r = wp / hp;
+  const s = slot?.transform?.scale ?? 1;
+  const base = slot?.fit_mode === "fill"
+    ? { w: Math.max(sw, sh * r), h: Math.max(sh, sw / r) }
+    : { w: Math.min(sw, sh * r), h: Math.min(sh, sw / r) };
+  const dw = base.w * s;
+  const dh = base.h * s;
+  if (dw <= 0 || dh <= 0) return null;
+  return Math.min((25.4 * wp) / dw, (25.4 * hp) / dh);
+}

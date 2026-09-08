@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { Grip, ImageOff, Lock, Move } from "lucide-react";
+import { AlertTriangle, Grip, ImageOff, Lock, Move } from "lucide-react";
 import usePhotoPreview from "@/modules/album/hooks/usePhotoPreview";
-import { slotPhotoView } from "@/modules/album/editor/slotPhotoView";
+import { slotPhotoView, slotEffDpi } from "@/modules/album/editor/slotPhotoView";
 
 // Un hueco del spread con transformaciones VIRTUALES (no destructivas): pan (crop),
 // zoom, movimiento y redimensionado del marco. Todo se guarda en mm; el archivo
@@ -16,7 +16,7 @@ import { slotPhotoView } from "@/modules/album/editor/slotPhotoView";
 //   - "container" (DOBLE CLIC): se edita el CONTENEDOR (mover/redimensionar) con la
 //     foto congelada; al cambiar su geometría, el motor recalcula sola la foto (auto
 //     cover). Huecos SIN foto: el modo efectivo es siempre "container".
-export default function SlotFrame({ slot, photo, projectId, ppm, selected, locked, mode, onSelect, onEnterContainerMode, handlers }) {
+export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300, selected, locked, mode, onSelect, onEnterContainerMode, handlers }) {
   // Calidad dinámica del lienzo: resolución mínima que la foto necesita EN PANTALLA
   // (lado mayor del hueco × escala px/mm del zoom × densidad del dispositivo). El hook
   // carga la preview 1000 px inmediata y mejora desde el ORIGINAL si esta cifra la
@@ -32,6 +32,10 @@ export default function SlotFrame({ slot, photo, projectId, ppm, selected, locke
   // o COVER, misma transformación virtual. Sin interpretaciones locales.
   const view = slotPhotoView(slot);
   const effMode = slot.photo_id && mode !== "container" ? "photo" : "container";
+  // Aviso de calidad en el propio hueco: la foto por debajo del objetivo de
+  // impresión del álbum (ámbar) o de su mitad (rojo, pérdida evidente).
+  const effDpi = slot.photo_id ? slotEffDpi(slot, photo) : null;
+  const lowQuality = effDpi != null && effDpi < targetDpi;
   const wheelTs = useRef(0);
   const elRef = useRef(null);
 
@@ -142,6 +146,13 @@ export default function SlotFrame({ slot, photo, projectId, ppm, selected, locke
           </div>
         )}
       </div>
+      {lowQuality && (
+        <div title={`La foto rinde ${Math.round(effDpi)} ppp a esta ampliación (objetivo ${targetDpi} ppp): pierde calidad en impresión. Reduce el zoom o usa un contenedor menor.`}
+          className="pointer-events-none absolute bottom-1 right-1 z-20 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-semibold text-white shadow"
+          style={{ backgroundColor: effDpi < targetDpi / 2 ? "#dc2626" : "#d97706" }}>
+          <AlertTriangle className="h-3 w-3" /> {Math.round(effDpi)} ppp
+        </div>
+      )}
       {selected && locked && (
         <div className="absolute right-1 top-1 z-20 text-neutral-500"><Lock className="h-3.5 w-3.5" /></div>
       )}
