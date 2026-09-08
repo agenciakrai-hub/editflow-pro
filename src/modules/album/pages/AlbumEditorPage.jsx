@@ -9,6 +9,7 @@ import { loadHiResPreview } from "@/modules/album/lib/previewService";
 import { ingestFiles, filesFromFileList, importFromPickedFolder, cachePhotoPreviews } from "@/modules/album/import/folderImport";
 import { saveAlbumFile } from "@/modules/album/format/albumFileIO";
 import PhotoBrowser from "@/modules/album/shell/PhotoBrowser";
+import ResizeHandle from "@/modules/album/shell/ResizeHandle";
 import EditorTopbar from "@/modules/album/shell/EditorTopbar";
 import TemplateLibraryPanel from "@/modules/album/shell/TemplateLibraryPanel";
 import SpreadNavigator from "@/modules/album/shell/SpreadNavigator";
@@ -85,6 +86,13 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   const [panels, setPanels] = useState({ top: true, left: true, right: true, bottom: true });
   const togglePanel = (k) => setPanels((p) => ({ ...p, [k]: !p[k] }));
   const hideAllPanels = () => setPanels({ top: false, left: false, right: false, bottom: false });
+  // Altura manual de la barra superior y del navegador de fotos: null = altura
+  // natural; al arrastrar el tirador se fija en px (el primer arrastre parte de la
+  // altura REAL del panel, medida del propio elemento).
+  const [topH, setTopH] = useState(null);
+  const [trayH, setTrayH] = useState(null);
+  const topbarWrapRef = useRef(null);
+  const trayWrapRef = useRef(null);
   const photosById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos]);
   const store = useAlbumStore(project, spreads, photosById);
 
@@ -396,6 +404,8 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         </button>
       )}
       {panels.top && (
+        <>
+        <div ref={topbarWrapRef} style={topH ? { height: topH } : undefined} className="shrink-0 overflow-hidden">
         <EditorTopbar
           panels={panels}
           onTogglePanel={togglePanel}
@@ -418,6 +428,10 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         canvasFillDisabled={!spread || !!spread.locked || !spread.layout_id || spread.layout_id === "custom" || !(spread.slots || []).length}
         onToggleCanvasFill={() => store.setSpreadCanvasFill(spread.id, !spread.fill_canvas)}
         />
+        </div>
+        <ResizeHandle targetRef={topbarWrapRef} onChange={setTopH} min={44} max={220}
+          label="Arrastra para ajustar la altura de la barra superior" />
+        </>
       )}
 
       {store.saveError && (
@@ -524,6 +538,10 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         </button>
       )}
       {panels.bottom && (
+        <>
+        <ResizeHandle targetRef={trayWrapRef} onChange={setTrayH} min={80} max={440}
+          label="Arrastra para ajustar la altura del navegador de fotos" />
+        <div ref={trayWrapRef} style={trayH ? { height: trayH } : undefined} className="shrink-0 overflow-hidden">
         <PhotoBrowser
           photos={photos}
         previews={thumbs}
@@ -543,6 +561,8 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onAutoLayout={runAutoLayout}
         onAutoLayoutFolder={handleAutoLayoutFolder}
         />
+        </div>
+        </>
       )}
 
       {exporting && (
