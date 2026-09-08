@@ -1,5 +1,6 @@
 import React, { useRef } from "react";
 import { Copy, Lock, Plus, Trash2 } from "lucide-react";
+import { slotPhotoView } from "@/modules/album/editor/slotPhotoView";
 
 // Fase 5.2 — Navegador visual de spreads (franja superior del centro): miniaturas
 // con las fotos reales del spread, reordenar arrastrando, duplicar/eliminar al
@@ -29,11 +30,18 @@ export default function SpreadNavigator({ album, spreads, selectedId, thumbs, on
             <div className="relative overflow-hidden rounded bg-neutral-200" style={{ width: cardW, height: cardH }}>
               {(s.slots || []).map((sl) => {
                 const th = sl.photo_id ? thumbs?.get(sl.photo_id) : null;
+                // ÚNICA fuente de verdad: la miniatura interpreta fit_mode + transform
+                // EXACTAMENTE igual que el lienzo del editor (misma composición; solo
+                // cambia tamaño/resolución). Antes forzaba COVER e ignoraba ambos.
+                const view = slotPhotoView(sl);
                 return (
                   <div key={sl.slot_id}
                     className={"absolute overflow-hidden rounded-[1px] " + (sl.photo_id ? (th ? "" : "bg-primary/60") : "border border-dashed border-neutral-400")}
                     style={{ left: `${(sl.x_mm / W) * 100}%`, top: `${(sl.y_mm / H) * 100}%`, width: `${(sl.w_mm / W) * 100}%`, height: `${(sl.h_mm / H) * 100}%` }}>
-                    {th && <img src={th} draggable={false} alt="" className="h-full w-full object-cover" />}
+                    {th && (
+                      <img src={th} draggable={false} alt="" className="h-full w-full"
+                        style={{ objectFit: view.objectFit, transform: `translate(${view.offsetXPct}%, ${view.offsetYPct}%) scale(${view.scale})`, transformOrigin: "center" }} />
+                    )}
                   </div>
                 );
               })}

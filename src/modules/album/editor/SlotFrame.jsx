@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import { Grip, ImageOff, Lock, Move } from "lucide-react";
 import usePhotoPreview from "@/modules/album/hooks/usePhotoPreview";
+import { slotPhotoView } from "@/modules/album/editor/slotPhotoView";
 
 // Un hueco del spread con transformaciones VIRTUALES (no destructivas): pan (crop),
 // zoom, movimiento y redimensionado del marco. Todo se guarda en mm; el archivo
@@ -26,10 +27,10 @@ export default function SlotFrame({ slot, photo, projectId, ppm, selected, locke
   }, [slot.w_mm, slot.h_mm, ppm]);
   const previewUrl = usePhotoPreview(projectId, slot.photo_id, photo?.filename, requiredEdge, photo);
   const t = slot.transform || {};
-  const scale = t.scale ?? 1;
-  // Corrección recorte — FIT/CONTAIN por defecto: la foto se ve COMPLETA (sin recorte
-  // automático) manteniendo su proporción; "fill" (cover) queda solo como opción manual.
-  const fit = slot.fit_mode || "fit";
+  // ÚNICA fuente de verdad de la interpretación de fit_mode + transform (mismo módulo
+  // que usa la miniatura del navegador): mismo FIT/CONTAIN (foto completa, centrada)
+  // o COVER, misma transformación virtual. Sin interpretaciones locales.
+  const view = slotPhotoView(slot);
   const effMode = slot.photo_id && mode !== "container" ? "photo" : "container";
   const wheelTs = useRef(0);
   const elRef = useRef(null);
@@ -117,8 +118,8 @@ export default function SlotFrame({ slot, photo, projectId, ppm, selected, locke
             <img src={previewUrl} alt={photo?.filename || ""} draggable={false} onMouseDown={panStart}
               className="h-full w-full select-none"
               style={{
-                objectFit: fit === "fill" ? "cover" : "contain",
-                transform: `translate(${(t.offset_x_mm || 0) * ppm}px, ${(t.offset_y_mm || 0) * ppm}px) scale(${scale})`,
+                objectFit: view.objectFit,
+                transform: `translate(${(t.offset_x_mm || 0) * ppm}px, ${(t.offset_y_mm || 0) * ppm}px) scale(${view.scale})`,
                 transformOrigin: "center",
                 cursor: locked || effMode !== "photo" ? "default" : "grab",
               }} />
