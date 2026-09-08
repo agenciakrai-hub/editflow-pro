@@ -1,8 +1,22 @@
 import React, { useEffect, useMemo, useRef } from "react";
-import { AlertTriangle, Grip, ImageOff, Lock, Move } from "lucide-react";
+import { AlertTriangle, Grip, ImageOff, Lock } from "lucide-react";
 import usePhotoPreview from "@/modules/album/hooks/usePhotoPreview";
 import { slotPhotoView, slotEffDpi } from "@/modules/album/editor/slotPhotoView";
 import { HAND_BLACK, HAND_GREEN } from "@/modules/album/editor/cursors";
+
+// Tiradores del contenedor en modo mano negra: los 4 lados y las 4 esquinas.
+// Cada dir ancla el lado/corner OPUESTO; ⌘/Ctrl durante el arrastre conserva la
+// proporción del contenedor.
+const CONTAINER_HANDLES = [
+  { dir: "nw", cls: "-left-1.5 -top-1.5 cursor-nwse-resize" },
+  { dir: "n", cls: "left-1/2 -top-1.5 -translate-x-1/2 cursor-ns-resize" },
+  { dir: "ne", cls: "-right-1.5 -top-1.5 cursor-nesw-resize" },
+  { dir: "e", cls: "-right-1.5 top-1/2 -translate-y-1/2 cursor-ew-resize" },
+  { dir: "se", cls: "-right-1.5 -bottom-1.5 cursor-nwse-resize" },
+  { dir: "s", cls: "left-1/2 -bottom-1.5 -translate-x-1/2 cursor-ns-resize" },
+  { dir: "sw", cls: "-left-1.5 -bottom-1.5 cursor-nesw-resize" },
+  { dir: "w", cls: "-left-1.5 top-1/2 -translate-y-1/2 cursor-ew-resize" },
+];
 
 // Un hueco del spread con transformaciones VIRTUALES (no destructivas): pan (crop),
 // zoom, movimiento y redimensionado del marco. Todo se guarda en mm; el archivo
@@ -47,10 +61,12 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
 
   // P5 — un solo gesto activo; los listeners se limpian en mouseup Y al desmontar.
   const gestureCleanupRef = useRef(null);
+  // El tercer argumento de onMove es el evento, para leer ⌘/Ctrl EN VIVO durante
+  // el arrastre (proporción del contenedor conservada).
   const dragWindow = (e, onMove) => {
     const sx = e.clientX;
     const sy = e.clientY;
-    const move = (ev) => onMove(ev.clientX - sx, ev.clientY - sy);
+    const move = (ev) => onMove(ev.clientX - sx, ev.clientY - sy, ev);
     const up = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
@@ -72,23 +88,56 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
     dragWindow(e, (dx, dy) => handlers.onPan?.(slot.slot_id, bx + dx / ppm, by + dy / ppm));
   };
 
-  // Modo CONTENEDOR: la foto queda bloqueada (no se desplaza ni se zooma).
-  const moveStart = (e) => {
+  // Modo CONTENEDOR (mano negra): arrastrar desde el CENTRO del hueco desplaza el
+  // contenedor completo (la foto queda congelada dentro, sin deslizarse).
+  const containerMoveStart = (e) => {
     if (locked || effMode !== "container") return;
     e.preventDefault(); e.stopPropagation(); onSelect();
-    handlers.onGestureBegin?.();
+    let began = false;
     const bx = slot.x_mm;
     const by = slot.y_mm;
-    dragWindow(e, (dx, dy) => handlers.onMoveSlot?.(slot.slot_id, bx + dx / ppm, by + dy / ppm));
+    dragWindow(e, (dx, dy) => {
+      // Historial solo si hay arrastre real (un clic sin mover no genera undo).
+      if (!began && Math.abs(dx) + Math.abs(dy) > 2) { handlers.onGestureBegin?.(); began = true; }
+      handlers.onMoveSlot?.(slot.slot_id, bx + dx / ppm, by + dy / ppm);
+    });
   };
 
-  const resizeStart = (e) => {
+  // Redimensionado desde CUALQUIER lado o esquina ("n","s","e","w","ne","nw","se",
+  // "sw"): el lado opuesto queda anclado. Con ⌘/Ctrl pulsado la PROPORCIÓN se
+  // conserva (escala uniforme del hueco, anclada al lado opuesto o centrada).
+  const boxStart = (e, dir) => {
     if (locked || effMode !== "container") return;
     e.preventDefault(); e.stopPropagation(); onSelect();
     handlers.onGestureBegin?.();
-    const bw = slot.w_mm;
-    const bh = slot.h_mm;
-    dragWindow(e, (dx, dy) => handlers.onResizeSlot?.(slot.slot_id, bw + dx / ppm, bh + dy / ppm));
+    const b = { x: slot.x_mm, y: slot.y_mm, w: slot.w_mm, h: slot.h_mm };
+    const MIN = 15;
+    dragWindow(e, (dx0, dy0, ev) => {
+      const dx = dx0 / ppm;
+      const dy = dy0 / ppm;
+      const east = dir.includes("e"), west = dir.includes("w");
+      const south = dir.includes("s"), north = dir.includes("n");
+      if (ev && (ev.metaKey || ev.ctrlKey)) {
+        const kx = east ? (b.w + dx) / b.w : west ? (b.w - dx) / b.w : null;
+        const ky = south ? (b.h + dy) / b.h : north ? (b.h - dy) / b.h : null;
+        const k = kx != null && ky != null ? Math.max(kx, ky) : (kx ?? ky);
+        if (k == null) return;
+        const w = Math.max(MIN, b.w * k);
+        const h = Math.max(MIN, b.h * k);
+        handlers.onBoxSlot?.(slot.slot_id, {
+          w, h,
+          x: west ? b.x + b.w - w : east ? b.x : b.x - (w - b.w) / 2,
+          y: north ? b.y + b.h - h : south ? b.y : b.y - (h - b.h) / 2,
+        });
+        return;
+      }
+      let { x, y, w, h } = b;
+      if (east) w = Math.max(MIN, b.w + dx);
+      if (west) { w = Math.max(MIN, b.w - dx); x = b.x + (b.w - w); }
+      if (south) h = Math.max(MIN, b.h + dy);
+      if (north) { h = Math.max(MIN, b.h - dy); y = b.y + (b.h - h); }
+      handlers.onBoxSlot?.(slot.slot_id, { x, y, w, h });
+    });
   };
 
   // Wheel no pasivo (preventDefault) → listener manual. Solo en modo FOTO.
@@ -110,8 +159,9 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
 
   return (
     <div ref={elRef} className="absolute" style={{ left: slot.x_mm * ppm, top: slot.y_mm * ppm, width: slot.w_mm * ppm, height: slot.h_mm * ppm, zIndex: 10 + (slot.z_index || 0), cursor: effMode === "container" && !locked ? HAND_BLACK : "default" }}
+      onMouseDown={containerMoveStart}
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
-      onDoubleClick={(e) => { e.stopPropagation(); if (!locked && slot.photo_id) onEnterContainerMode?.(); }}
+      onDoubleClick={(e) => { e.stopPropagation(); if (!locked && slot.photo_id) handlers.onToggleContainerMode?.(slot.slot_id); }}
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         e.preventDefault();
@@ -166,7 +216,7 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
         <span className={"absolute -top-5 left-0 z-20 rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white shadow " + (effMode === "photo" ? "bg-emerald-600" : "bg-neutral-900")}
           title={effMode === "photo"
             ? "Mano VERDE — modo FOTO (un clic): arrastra para reencuadrar la foto, rueda para zoom · doble clic pasa a modo contenedor"
-            : "Mano NEGRA — modo CONTENEDOR (doble clic): mueve o redimensiona el hueco · la foto queda congelada · un clic vuelve a modo foto"}>
+            : "Mano NEGRA — modo CONTENEDOR (doble clic): arrastra desde el centro para mover el hueco · tiradores en lados y esquinas para redimensionar (⌘/Ctrl conserva la proporción) · la foto queda congelada · sale con un clic fuera o doble clic"}>
           {effMode === "photo" ? "Foto" : "Contenedor"}
         </span>
       )}
@@ -176,16 +226,11 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
           <Grip className="h-3 w-3" />
         </div>
       )}
-      {selected && !locked && effMode === "container" && (
-        <>
-          <div title="Mover hueco" onMouseDown={moveStart}
-            className="absolute -bottom-2.5 -left-2.5 z-20 flex h-5 w-5 cursor-move items-center justify-center rounded-full bg-primary text-primary-foreground shadow">
-            <Move className="h-3 w-3" />
-          </div>
-          <div title="Redimensionar hueco" onMouseDown={resizeStart}
-            className="absolute -bottom-1.5 -right-1.5 z-20 h-3.5 w-3.5 cursor-nwse-resize rounded-sm border border-background bg-primary shadow" />
-        </>
-      )}
+      {selected && !locked && effMode === "container" && CONTAINER_HANDLES.map((hnd) => (
+        <div key={hnd.dir} title="Arrastra para redimensionar el contenedor · ⌘/Ctrl conserva la proporción · arrastra desde el centro para moverlo"
+          onMouseDown={(e) => boxStart(e, hnd.dir)}
+          className={"absolute z-20 h-3 w-3 rounded-sm border border-background bg-primary shadow " + hnd.cls} />
+      ))}
     </div>
   );
 }

@@ -386,6 +386,13 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       onZoomPhoto: (slotId, factor) => store.zoomSlotPhoto(spreadId, slotId, factor),
       onMoveSlot: (slotId, x, y) => store.updateSlot(spreadId, slotId, { x_mm: Math.round(x), y_mm: Math.round(y) }, false),
       onResizeSlot: (slotId, w, h) => store.updateSlot(spreadId, slotId, { w_mm: Math.max(15, Math.round(w)), h_mm: Math.max(15, Math.round(h)) }, false),
+      // Mano negra — redimensionado desde CUALQUIER lado/esquina (x,y,w,h juntos:
+      // el lado opuesto queda anclado) y conmutación del modo por doble clic.
+      onBoxSlot: (slotId, box) => store.updateSlot(spreadId, slotId, {
+        x_mm: Math.round(box.x), y_mm: Math.round(box.y),
+        w_mm: Math.max(15, Math.round(box.w)), h_mm: Math.max(15, Math.round(box.h)),
+      }, false),
+      onToggleContainerMode: (slotId) => store.toggleSlotContainerMode(slotId),
       onDropPhoto: (slotId, photoId) => store.assignPhotoToSlot(spreadId, slotId, photoId),
       onSlotDrop: (slotId, fromSlotId) => store.movePhotoBetweenSlots(spreadId, fromSlotId, slotId),
       onGestureBegin: () => store.gestureBegin(),

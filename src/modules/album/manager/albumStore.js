@@ -27,6 +27,11 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // Rellenar contenedor — acceso a las fotos (proporciones reales + caras cacheadas).
   const photosByIdRef = useRef(photosById);
   photosByIdRef.current = photosById;
+  // Mano negra — refs del hueco seleccionado y su modo (reglas de activación/salida).
+  const selSlotIdRef = useRef(selectedSlotId);
+  selSlotIdRef.current = selectedSlotId;
+  const slotModeRef = useRef(slotMode);
+  slotModeRef.current = slotMode;
   const undoRef = useRef([]);
   const redoRef = useRef([]);
   const dirtyRef = useRef(new Map());
@@ -448,7 +453,11 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     updateSlot(spreadId, slotId, { transform: { scale: Math.round(next * 100) / 100 } }, false);
   }, [updateSlot]);
 
+  // Mano negra persistente: un clic sobre el MISMO hueco en modo contenedor NO lo
+  // desactiva (la foto no cambia). Solo se sale con clic FUERA del hueco o con
+  // doble clic en el propio hueco.
   const selectSlot = useCallback((slotId) => {
+    if (slotId && selSlotIdRef.current === slotId && slotModeRef.current === "container") return;
     setSelectedSlotId(slotId);
     if (slotId) setSlotMode("photo");
   }, []);
@@ -456,6 +465,12 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     setSelectedSlotId(slotId);
     if (slotId) setSlotMode("container");
   }, []);
+  // Doble clic sobre el hueco: activa el modo contenedor (mano negra) o, si YA está
+  // activo en este hueco, vuelve al modo foto (mano verde).
+  const toggleSlotContainerMode = useCallback((slotId) => {
+    if (slotId && selSlotIdRef.current === slotId && slotModeRef.current === "container") setSlotMode("photo");
+    else selectSlotContainer(slotId);
+  }, [selectSlotContainer]);
 
   // AJUSTE INICIAL AUTOMÁTICO al entrar la foto en el contenedor: FIT/CONTAIN
   // (escala 1, centrada) — la foto completa es visible, sin recorte automático, con su
@@ -583,7 +598,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
 
   return {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
-    selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer,
+    selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer, toggleSlotContainerMode,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
     setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, fillEmptySlotsWithPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
     updateSlot, zoomSlotPhoto, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
