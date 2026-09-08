@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { EyeOff, Lock, RefreshCw, Star, Undo2, X } from "lucide-react";
+import { Check, EyeOff, Loader2, Lock, RefreshCw, Star, Undo2, X } from "lucide-react";
 import { getTierPreview } from "@/modules/album/lib/previewStore";
 
 // Bloque 10 — resultados con EXPLICACIONES y control del fotógrafo. La IA solo
@@ -13,7 +13,7 @@ const OVERRIDES = [
   { action: "block", label: "Bloquear", icon: Lock },
 ];
 
-export default function ResultsPanel({ project, selectionJob, photos, onOverride }) {
+export default function ResultsPanel({ project, selectionJob, photos, onOverride, onAcceptAll, acceptAllBusy }) {
   const [thumbs, setThumbs] = useState({});
   const photosById = new Map(photos.map((p) => [p.id, p]));
   const entries = selectionJob?.selection || [];
@@ -49,6 +49,13 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
               IA: {selectionJob.stats.provider_used}
             </span>
           )}
+          <button
+            onClick={() => onAcceptAll?.()}
+            disabled={acceptAllBusy || !entries.length}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground disabled:opacity-40"
+          >
+            {acceptAllBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Aceptar todas
+          </button>
         </div>
         {funnel.coverage && <p className="mt-1 text-muted-foreground">Cobertura: {funnel.coverage}</p>}
         {funnel.notes && <p className="mt-1 text-muted-foreground">{funnel.notes}</p>}

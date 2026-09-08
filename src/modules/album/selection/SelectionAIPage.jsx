@@ -88,6 +88,28 @@ function SelectionInner({ project, photos: initialPhotos }) {
     }
   };
 
+  // Aceptar todas las fotos de la propuesta de una vez.
+  const [acceptingAll, setAcceptingAll] = useState(false);
+  const handleAcceptAll = async () => {
+    const entries = selection?.selection || [];
+    if (!entries.length || acceptingAll) return;
+    setAcceptingAll(true);
+    try {
+      await Promise.all(
+        entries.map((s) => {
+          const photo = photos.find((p) => p.id === s.photo_id);
+          return photo ? override(photo, "accept") : Promise.resolve(null);
+        })
+      );
+      const ids = new Set(entries.map((s) => s.photo_id));
+      setPhotos((prev) => prev.map((p) => (ids.has(p.id) ? { ...p, ai_state: "recommended" } : p)));
+      toast({ title: "Todas aceptadas", description: `${entries.length} fotografías de la propuesta marcadas como aceptadas.` });
+    } catch (e) {
+      toast({ title: "No se pudo aplicar", description: e?.message || String(e), variant: "destructive" });
+    }
+    setAcceptingAll(false);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -127,6 +149,8 @@ function SelectionInner({ project, photos: initialPhotos }) {
           selectionJob={selection}
           photos={photos}
           onOverride={handleOverride}
+          onAcceptAll={handleAcceptAll}
+          acceptAllBusy={acceptingAll}
         />
       )}
 
