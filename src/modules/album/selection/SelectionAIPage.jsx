@@ -7,6 +7,7 @@ import ConsentPanel from "@/modules/album/selection/components/ConsentPanel";
 import ProgressPanel from "@/modules/album/selection/components/ProgressPanel";
 import ResultsPanel from "@/modules/album/selection/components/ResultsPanel";
 import ProvidersPanel from "@/modules/album/selection/components/ProvidersPanel";
+import { useToast } from "@/components/ui/use-toast";
 
 const STAGE_LABEL = {
   e2: "Métricas locales",
@@ -54,7 +55,9 @@ export default function SelectionAIPage({ projectId }) {
   return <SelectionInner key={projectId} {...data} />;
 }
 
-function SelectionInner({ project, photos }) {
+function SelectionInner({ project, photos: initialPhotos }) {
+  const [photos, setPhotos] = useState(initialPhotos);
+  const { toast } = useToast();
   const { config, needsConsent, selection, progress, running, error, acceptConsent, revoke, start, cancel, override } = useAiSelection(project, photos);
 
   const estimates = useMemo(() => {
@@ -71,6 +74,18 @@ function SelectionInner({ project, photos }) {
   const handleAccept = async ({ save }) => {
     await acceptConsent({ save });
     await start();
+  };
+
+  // Aplica la decisión del fotógrafo, refresca la foto EN PANTALLA y da feedback.
+  // Antes el guardado funcionaba pero la UI no reflejaba nada: parecía roto.
+  const handleOverride = async (photo, action) => {
+    try {
+      const updated = await override(photo, action);
+      setPhotos((prev) => prev.map((p) => (p.id === photo.id ? { ...p, ...(updated || {}) } : p)));
+      toast({ title: "Decisión aplicada", description: `${photo.filename}: tu decisión manual está guardada y prevalece sobre la IA.` });
+    } catch (e) {
+      toast({ title: "No se pudo aplicar la decisión", description: e?.message || String(e), variant: "destructive" });
+    }
   };
 
   return (
@@ -111,7 +126,7 @@ function SelectionInner({ project, photos }) {
           project={project}
           selectionJob={selection}
           photos={photos}
-          onOverride={(photo, action) => override(photo, action)}
+          onOverride={handleOverride}
         />
       )}
 

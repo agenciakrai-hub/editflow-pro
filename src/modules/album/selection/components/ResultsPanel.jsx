@@ -73,7 +73,7 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
           const state = photo?.ai_state || "unreviewed";
           const isOverride = photo?.ai_override === "forced" || photo?.ai_override === "blocked";
           return (
-            <div key={s.photo_id} className="overflow-hidden rounded-lg border border-border bg-card">
+            <div key={s.photo_id} className={`overflow-hidden rounded-lg border border-border bg-card ${state === "discarded" ? "opacity-60" : ""}`}>
               <div className="relative aspect-4/3 bg-neutral-200">
                 {thumbs[s.photo_id] ? (
                   <img src={thumbs[s.photo_id]} alt={photo?.filename || ""} className="h-full w-full object-cover" />
@@ -86,7 +86,12 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
                 {isOverride && <span className="absolute right-1 top-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">override</span>}
               </div>
               <div className="space-y-1 p-2">
-                <p className="truncate text-[11px] font-medium">{photo?.filename || "Foto"}</p>
+                <div className="flex items-center justify-between gap-1">
+                  <p className="truncate text-[11px] font-medium">{photo?.filename || "Foto"}</p>
+                  {state === "recommended" && <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-700">aceptada</span>}
+                  {state === "considered" && <span className="shrink-0 rounded-full bg-secondary px-1.5 py-0.5 text-[9px] font-semibold text-secondary-foreground">recuperada</span>}
+                  {state === "discarded" && <span className="shrink-0 rounded-full bg-destructive/15 px-1.5 py-0.5 text-[9px] font-semibold text-destructive">descartada</span>}
+                </div>
                 {s.moment && <p className="truncate text-[10px] text-muted-foreground">{s.moment}</p>}
                 {s.reasons && <p className="line-clamp-2 text-[10px] text-muted-foreground">{s.reasons}</p>}
                 <div className="flex flex-wrap gap-1 pt-1">
