@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createSpread, deleteSpread, updateSpread, updateAlbum } from "@/modules/album/hooks/useAlbumProject";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
-import { applyLayout, expandSlotsToCanvas, freshTransform, makeCustomSlot, sameRatio } from "@/modules/album/layout/layoutEngine";
+import { applyLayout, expandSlotsToCanvas, freshTransform, makeCustomSlot, photoRatio, sameRatio } from "@/modules/album/layout/layoutEngine";
 import { planAutoLayout } from "@/modules/album/layout/autoPlanner";
 import { applySmartFillToSpread, ensureFaces, retunePhotoSlots, smartFillSlot } from "@/modules/album/editor/smartFill";
 
@@ -289,6 +289,44 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     };
   }, [apply, project]);
 
+  // Regla de colocación (arrastre de varias fotos sobre un lienzo CON huecos
+  // vacíos): llena SOLO los huecos vacíos del lienzo actual, emparejando fotos y
+  // huecos por proporción (verticales con verticales, horizontales con
+  // horizontales — mismo criterio determinista del motor), SIN cambiar la
+  // plantilla, sin crear lienzos y sin tocar las fotos ya colocadas ni otros
+  // lienzos. Ajuste inicial según la herramienta de ESTE lienzo: FIT/CONTAIN
+  // (foto completa, centrada) o COVER inteligente con prioridad de caras si
+  // «Rellenar contenedor» está activo. UNA operación atómica (⌘Z deshace todo).
+  const fillEmptySlotsWithPhotos = useCallback(async (spreadId, photoIds) => {
+    const s = spreadsRef.current.find((x) => x.id === spreadId);
+    if (!s || s.locked) return null;
+    const photos = (photoIds || []).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
+    const empty = (s.slots || []).filter((sl) => !sl.photo_id && sl.w_mm > 0 && sl.h_mm > 0);
+    if (!photos.length || !empty.length) return null;
+    // «Rellenar contenedor» activo: prepara las caras (detección LOCAL sobre
+    // previews, con caché) para el mejor encuadre COVER antes de asignar.
+    if (s.fill_photos) await Promise.all(photos.map((p) => ensureFaces(project.id, p)));
+    const slotsSorted = empty.map((sl) => ({ sl, ratio: sl.w_mm / sl.h_mm })).sort((a, b) => a.ratio - b.ratio);
+    const photosSorted = photos.map((p) => ({ p, ratio: photoRatio(p) })).sort((a, b) => a.ratio - b.ratio);
+    const bySlot = new Map();
+    const n = Math.min(slotsSorted.length, photosSorted.length);
+    for (let k = 0; k < n; k++) bySlot.set(slotsSorted[k].sl.slot_id, photosSorted[k].p);
+    const next = {
+      ...s,
+      slots: (s.slots || []).map((sl) => {
+        const photo = bySlot.get(sl.slot_id);
+        if (!photo) return sl;
+        if (s.fill_photos) {
+          const f = smartFillSlot(sl, photo);
+          return { ...sl, photo_id: photo.id, fit_mode: f.fit_mode, transform: f.transform };
+        }
+        return { ...sl, photo_id: photo.id, fit_mode: "fit", transform: freshTransform() };
+      }),
+    };
+    apply(spreadsRef.current.map((x) => (x.id === spreadId ? next : x)), [spreadId]);
+    return { placed: n, unplaced: photos.length - n };
+  }, [apply, project.id]);
+
   const setLocked = useCallback((id, locked) => {
     apply(spreadsRef.current.map((x) => (x.id === id ? { ...x, locked } : x)), [id]);
   }, [apply]);
@@ -535,7 +573,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
     selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
-    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
+    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, fillEmptySlotsWithPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
     updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,

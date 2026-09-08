@@ -211,24 +211,47 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     else store.addSlotWithPhoto(spread.id, photoId);
   };
 
-  // Colocación múltiple — al soltar varias fotos en el lienzo se elige
-  // automáticamente la plantilla que mejor encaja con su número y proporciones
-  // (determinista: matching fotos↔huecos por ratio, sin IA) y se colocan en
-  // FIT/CONTAIN (foto completa, sin recorte automático). Si el lienzo actual ya tiene
-  // fotos, se crea un lienzo nuevo con la plantilla.
-  const dropPhotosOnCanvas = (photoIds) => {
+  // Regla de colocación — arrastrar VARIAS fotos sobre el lienzo actual:
+  //   1) Lienzo con huecos VACÍOS → las fotos entran en ESOS huecos (emparejamiento
+  //      determinista por proporción y orientación; ajuste FIT o COVER según la
+  //      herramienta del lienzo), SIN cambiar la plantilla, sin crear otro lienzo y
+  //      sin mover las fotos ya colocadas.
+  //   2) Lienzo SIN plantilla ni huecos → selección automática de la plantilla más
+  //      compatible con su número y proporciones (determinista, sin IA).
+  //   3) Lienzo completo → NADA cambia automáticamente: crear lienzos nuevos es la
+  //      acción explícita «Maquetar automáticamente».
+  const dropPhotosOnCanvas = async (photoIds) => {
     if (!spread || !Array.isArray(photoIds) || photoIds.length < 2) return;
+    if (spread.locked) { toast({ title: "Lienzo bloqueado", description: "Desbloquéalo para colocar fotos." }); return; }
     const objs = photoIds.map((id) => photosById.get(id)).filter(Boolean);
     if (!objs.length) return;
-    const pick = bestLayoutFor(project, objs);
-    if (!pick) {
-      toast({ title: "Sin plantilla compatible", description: `No hay plantilla para ${objs.length} fotos en un lienzo; suelta menos fotos o repártelas en varios lienzos.`, variant: "destructive" });
+
+    const emptyCount = (spread.slots || []).filter((sl) => !sl.photo_id).length;
+    if (emptyCount > 0) {
+      const res = await store.fillEmptySlotsWithPhotos(spread.id, photoIds);
+      if (res) {
+        toast({
+          title: res.unplaced > 0 ? "Huecos insuficientes" : "Fotos añadidas a la plantilla",
+          description: res.unplaced > 0
+            ? `${res.placed} colocada(s) en los huecos vacíos · ${res.unplaced} sin espacio en este lienzo (quedan sin colocar). Usa «Maquetar automáticamente» para lienzos nuevos.`
+            : `${res.placed} foto(s) en los contenedores vacíos de la plantilla actual, sin cambiarla (⌘Z deshace).`,
+        });
+        return;
+      }
+    }
+
+    if ((spread.slots || []).length === 0) {
+      const pick = bestLayoutFor(project, objs);
+      if (!pick) {
+        toast({ title: "Sin plantilla compatible", description: `No hay plantilla para ${objs.length} fotos en un lienzo; suelta menos fotos o repártelas en varios lienzos.`, variant: "destructive" });
+        return;
+      }
+      store.applyAutoLayout(spread.id, pick.layout.id, pick.assignment);
+      toast({ title: "Plantilla aplicada automáticamente", description: `${objs.length} foto(s) colocadas en «${pick.layout.id}», completas y sin recorte.` });
       return;
     }
-    const hasPhotos = (spread.slots || []).some((sl) => sl.photo_id);
-    if (hasPhotos) store.addSpreadWithAutoLayout(pick.layout.id, pick.assignment);
-    else store.applyAutoLayout(spread.id, pick.layout.id, pick.assignment);
-    toast({ title: "Plantilla aplicada automáticamente", description: `${objs.length} foto(s) colocadas en «${pick.layout.id}», completas y sin recorte.` });
+
+    toast({ title: "El lienzo no tiene huecos libres", description: "Todas sus fotos ya están colocadas. Usa «Maquetar automáticamente» para crear lienzos nuevos." });
   };
 
   // Fase Lienzos — configuración global del álbum (fondo + espacio entre fotos).
