@@ -225,6 +225,19 @@ Responde SOLO JSON válido:
 Representativas: ${reps.map((r) => `${r.alias} (${r.group_kind})`).join(" | ")}`;
 }
 
+function visualProfilePrompt(batch) {
+  return `Eres un asistente de maquetación de álbumes fotográficos profesionales. Analiza CADA foto (por su alias, en el orden dado) para AYUDAR a elegir la mejor plantilla — NO decides la maquetación, solo describes el contenido visual. Para cada foto da:
+- subjectType: portrait | couple | group | landscape | architecture | detail | documentary | other
+- visualImportance (0-100): cuánto "pesa" visualmente la foto (merece contenedor grande si >66, mediano 33-66, pequeño <33)
+- facesCount (entero >=0), peopleCount (entero >=0)
+- focalPoint: {x (0-1), y (0-1)} centro de interés visual
+- composition: {negativeSpace (0-1), balance (0-1 equilibrada), complexity (0-1)}
+- preferredSlot: {size: "large"|"medium"|"small", orientation: "landscape"|"portrait"|"square"}
+Si no estás seguro de algún campo, da un valor neutro razonable. Responde SOLO JSON válido, sin texto extra:
+{"profiles":[{"alias":"...","subjectType":"...","visualImportance":0,"facesCount":0,"peopleCount":0,"focalPoint":{"x":0.5,"y":0.5},"composition":{"negativeSpace":0.5,"balance":0.5,"complexity":0.5},"preferredSlot":{"size":"medium","orientation":"landscape"}}]}
+Fotos: ${batch.map((p) => p.alias).join(" | ")}`;
+}
+
 function e7Prompt(eventType, target, descriptors, forced, blocked) {
   return `Eres el asistente de selección final de un fotógrafo profesional de ${eventType}. Conforma la SELECCIÓN final del álbum con los descriptores de fotos pre-aprobadas (ya filtradas por grupos y momentos). Objetivo aproximado: ${target.total} fotos (${target.per_spread} por doble página, ~${target.spreads} dobles).
 Reglas del fotógrafo (JERARQUÍA MÁXIMA): INCLUIR SIEMPRE: ${forced.length ? forced.join(", ") : "(ninguna)"}. EXCLUIR SIEMPRE: ${blocked.length ? blocked.join(", ") : "(ninguna)"}.
@@ -337,6 +350,18 @@ async function actionE6(base44, body) {
   return json(200, { action: "e6-moments", moments, provider: out.provider, model: out.model, latency_ms: out.latency_ms });
 }
 
+async function actionVisualProfile(base44, body) {
+  const batch = Array.isArray(body.batch) ? body.batch : [];
+  if (!batch.length || batch.length > MAX_IMAGES) throw new Error("visual-profile: lote de 1-24 fotos requerido");
+  assertImageDataUrls(batch.map((p) => p.thumb), "visual-profile");
+  const aliases = batch.map((p) => p.alias);
+  const out = await invokeAlbumVision(base44, "visual-profile", visualProfilePrompt(batch), batch.map((p) => p.thumb), body.skip, true);
+  const byAlias = new Map((out.result?.profiles || []).map((pr) => [pr.alias, pr]));
+  // Perfiles faltantes → valor neutro (la Fase 1 sigue válida sin ellos).
+  const profiles = aliases.map((alias) => byAlias.get(alias) || { alias, visualImportance: 50, facesCount: 0, peopleCount: 0, preferredSlot: { size: "medium" } });
+  return json(200, { action: "visual-profile", profiles, provider: out.provider, model: out.model, latency_ms: out.latency_ms });
+}
+
 async function actionE7(base44, body) {
   const descriptors = Array.isArray(body.descriptors) ? body.descriptors : [];
   if (!descriptors.length) throw new Error("e7-assembly: descriptores requeridos");
@@ -376,6 +401,7 @@ export default async function(req: Request): Promise<Response> {
     if (action === "e4-triage") return await actionE4(base44, body);
     if (action === "e5-group") return await actionE5(base44, body);
     if (action === "e6-moments") return await actionE6(base44, body);
+    if (action === "visual-profile") return await actionVisualProfile(base44, body);
     if (action === "e7-assembly") return await actionE7(base44, body);
     return json(400, { error: "unknown_action", action: action || null });
   } catch (error) {

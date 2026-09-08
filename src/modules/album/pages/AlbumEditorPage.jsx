@@ -293,21 +293,22 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   // (⌘Z deshace toda la maquetación). Desde una carpeta solo se usan fotos SIN
   // COLOCAR; las ya utilizadas permanecen intactas. El editor salta al primer
   // lienzo nuevo para revisarlo.
-  const runAutoLayout = (ids) => {
+  const runAutoLayout = async (ids) => {
     const idSet = new Set(ids);
     const ordered = photos.filter((p) => idSet.has(p.id)).map((p) => p.id);
     if (!ordered.length) {
       toast({ title: "Nada que maquetar", description: "Selecciona fotos o una carpeta con fotos sin colocar." });
       return;
     }
-    const res = store.autoLayoutPhotos(ordered);
+    toast({ title: "Maquetando…", description: "Preparando la distribución automática de las fotos." });
+    const res = await store.autoLayoutPhotos(ordered);
     if (!res) {
       toast({ title: "Sin plantillas compatibles", description: "No hay combinación de plantillas para estas fotos con la configuración actual del álbum.", variant: "destructive" });
       return;
     }
     toast({
       title: "Maquetación completada",
-      description: `${res.total} seleccionada(s) · ${res.placed} colocada(s) · ${res.leftover} sin colocar · ${res.spreadCount} lienzo(s) creado(s) al final del álbum. Revisa los lienzos nuevos (⌘Z deshace toda la maquetación).`,
+      description: `${res.total} seleccionada(s) · ${res.placed} colocada(s) · ${res.leftover} sin colocar · ${res.spreadCount} lienzo(s) creado(s) al final del álbum${res.usedAi ? " · con mejora visual IA" : ""}. Revisa los lienzos nuevos (⌘Z deshace toda la maquetación).`,
     });
   };
   const handleAutoLayoutFolder = (folder) => {

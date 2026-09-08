@@ -17,31 +17,40 @@
 //      vertical en hueco horizontal penaliza al máximo; el cuadrado es vecino neutro.
 //   3. RATIO — |log(ratio_hueco / ratio_foto)|: la proporción más cercana gana.
 //   4. APROVECHAMIENTO — coste fijo por lienzo creado: menos lienzos y más llenos.
-import { compatibleLayouts, resolveSlots, photoRatio } from "@/modules/album/layout/layoutEngine";
+import { compatibleLayouts, resolveSlots, photoRatio, orientationOf } from "@/modules/album/layout/layoutEngine";
+import { slotSizeClass, faceCropRisk, sizeRank } from "@/modules/album/layout/visualProfile";
+
+// Re-exportado por compatibilidad (otros módulos lo importaban desde aquí).
+export { orientationOf } from "@/modules/album/layout/layoutEngine";
 
 const CANVAS_COST = 1.2;     // PRIORIDAD 4 — cada lienzo penaliza: prefiere lienzos llenos
 const RATIO_W = 1.0;         // PRIORIDAD 3 — distancia logarítmica de proporciones
 const ORIENT_ADJACENT = 0.5; // PRIORIDAD 2 — cuadrada↔horizontal / cuadrada↔vertical
 const ORIENT_OPPOSITE = 2.0; // PRIORIDAD 2 — horizontal↔vertical (peor caso)
 
-// Orientación derivada del ratio (umbral neutro: >1.15 horizontal, <0.87 vertical).
-export function orientationOf(ratio) {
-  if (ratio > 1.15) return "landscape";
-  if (ratio < 0.87) return "portrait";
-  return "square";
-}
+// ---- Fase 2 — PESOS VISUALES IA (siempre menores que los deterministas) ----
+// A. Tamaño del contenedor: foto importante → hueco grande.
+// B. Caras: penaliza combinaciones con riesgo de recorte problemático.
+// C. Compatibilidad: bonificación leve cuando la orientación preferida coincide.
+// D. Coherencia del grupo: un "héroe" claro en un layout con hueco grande.
+const SIZE_W = 0.20;
+const FACE_W = 0.15;
+const COMP_W = 0.08;
+const HERO_BONUS = 0.08;
 
 // Puntúa UNA plantilla contra un grupo de fotos y calcula la asignación
 // determinista foto↔hueco (mismo emparejamiento por proporción del motor: verticales
 // con verticales, horizontales con horizontales). Devuelve { assignment, cost }.
 // assignment alinea cada photo_id con el orden de slots del layout.
-function scoreGroup(album, layout, photos) {
+function scoreGroup(album, layout, photos, profiles) {
   const geo = resolveSlots(layout, album);
   if (geo.length !== photos.length) return null;
-  const slots = geo.map((g, i) => ({ i, ratio: g.w_mm / g.h_mm })).sort((a, b) => a.ratio - b.ratio);
+  const maxArea = geo.reduce((m, g) => Math.max(m, g.w_mm * g.h_mm), 0);
+  const slots = geo.map((g, i) => ({ i, ratio: g.w_mm / g.h_mm, sizeClass: slotSizeClass(g, maxArea) })).sort((a, b) => a.ratio - b.ratio);
   const ph = photos.map((p) => ({ id: p.id, ratio: photoRatio(p) })).sort((a, b) => a.ratio - b.ratio);
   const assignment = new Array(geo.length).fill(null);
   let cost = CANVAS_COST;
+  let visual = 0;
   ph.forEach((p, k) => {
     const s = slots[k];
     assignment[s.i] = p.id;
@@ -49,8 +58,26 @@ function scoreGroup(album, layout, photos) {
     const so = orientationOf(s.ratio);
     const po = orientationOf(p.ratio);
     if (so !== po) cost += (so === "square" || po === "square") ? ORIENT_ADJACENT : ORIENT_OPPOSITE;
+    // ---- Fase 2 — VISUAL AI SCORE (pesos pequeños: nunca superan al determinista) ----
+    const prof = profiles?.get(p.id);
+    if (prof) {
+      // A. Tamaño del contenedor: foto importante → hueco grande.
+      visual += SIZE_W * Math.abs((sizeRank[prof.preferredSlot.size] ?? 1) - (sizeRank[s.sizeClass] ?? 1));
+      // B. Caras: penaliza combinaciones con riesgo de recorte problemático.
+      visual += FACE_W * faceCropRisk(prof, s.ratio, p.ratio, s.sizeClass);
+      // C. Compatibilidad: bonificación leve cuando la orientación preferida coincide.
+      if (prof.preferredSlot.orientation && prof.preferredSlot.orientation === so) visual -= COMP_W * 0.5;
+    }
   });
-  return { assignment, cost };
+  // D. Combinación entre fotos: un "héroe" claro en un layout con hueco grande (sin
+  //    alterar el orden: el planificador ya consume bloques consecutivos).
+  if (profiles?.size) {
+    const imps = photos.map((p) => profiles.get(p.id)?.visualImportance ?? 0).sort((a, b) => b - a);
+    if (imps.length >= 2 && imps[0] >= 60 && imps[0] - imps[1] >= 25 && slots.some((s) => s.sizeClass === "large")) {
+      visual -= HERO_BONUS;
+    }
+  }
+  return { assignment, cost: cost + visual };
 }
 
 // PLAN DE MAQUETACIÓN para un conjunto ORDENADO de fotos: DP sobre prefijos.
@@ -59,7 +86,7 @@ function scoreGroup(album, layout, photos) {
 // de las fotos JAMÁS se mezcla: los lienzos consumen bloques consecutivos.
 // Las fotos que no entran en ninguna combinación vuelven como `leftover` — el
 // llamador las deja SIN COLOCAR (no se pierden, no se marcan como usadas).
-export function planAutoLayout(album, photos) {
+export function planAutoLayout(album, photos, profiles) {
   const n = photos.length;
   if (!n) return { groups: [], leftover: [] };
   const cap = Number(album.max_photos_per_spread) > 0 ? Number(album.max_photos_per_spread) : 6;
@@ -72,7 +99,7 @@ export function planAutoLayout(album, photos) {
     for (const l of usable) {
       const k = l.count;
       if (k > i || !dp[i - k]) continue;
-      const sc = scoreGroup(album, l, photos.slice(i - k, i));
+      const sc = scoreGroup(album, l, photos.slice(i - k, i), profiles);
       if (!sc) continue;
       const cost = dp[i - k].cost + sc.cost;
       if (!dp[i] || cost < dp[i].cost) {

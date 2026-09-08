@@ -96,6 +96,15 @@ export function photoRatio(photo) {
   return 3 / 2;
 }
 
+// Orientación derivada del ratio (umbral neutro: >1.15 horizontal, <0.87 vertical).
+// Helper de geometría neutro: lo usan el planificador (Fase 1) y el perfil visual
+// (Fase 2) sin crear dependencias cíclicas entre módulos.
+export function orientationOf(ratio) {
+  if (ratio > 1.15) return "landscape";
+  if (ratio < 0.87) return "portrait";
+  return "square";
+}
+
 // Colocación múltiple — SELECCIÓN INTELIGENTE determinista (sin IA): entre las
 // plantillas compatibles con el número de fotos, elige la de menor penalización
 // |log(ratio_hueco / ratio_foto)| emparejando fotos y huecos por proporción

@@ -5,6 +5,7 @@ import { createSpread, deleteSpread, updateSpread, updateAlbum } from "@/modules
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
 import { applyLayout, expandSlotsToCanvas, freshTransform, makeCustomSlot, photoRatio, sameRatio } from "@/modules/album/layout/layoutEngine";
 import { planAutoLayout } from "@/modules/album/layout/autoPlanner";
+import { analyzePhotosForLayout } from "@/modules/album/layout/visualAi";
 import { applySmartFillToSpread, ensureFaces, retunePhotoSlots, smartFillSlot } from "@/modules/album/editor/smartFill";
 
 const HISTORY_LIMIT = 50;
@@ -262,10 +263,17 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // applyLayout) y las mismas reglas que la creación manual (nuevo lienzo: ajuste
   // FIT inicial, herramientas de relleno desactivadas por defecto). Las fotos
   // sobrantes permanecen sin colocar; las existentes no se tocan.
-  const autoLayoutPhotos = useCallback((photoIds) => {
+  // Fase 2 — la maquetación automática ahora analiza las fotos con IA visual (si hay
+  // consentimiento Album AI guardado) y pasa los perfiles al planificador determinista
+  // como PESOS adicionales. Si el análisis falla o no hay consentimiento, profiles
+  // queda vacío y planAutoLayout funciona EXACTAMENTE como la Fase 1. La creación de
+  // lienzos, el undo/redo atómico y el autosave NO se tocan.
+  const autoLayoutPhotos = useCallback(async (photoIds) => {
     const ordered = (photoIds || []).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
     if (!ordered.length) return null;
-    const plan = planAutoLayout(project, ordered);
+    let profiles = new Map();
+    try { profiles = await analyzePhotosForLayout(project.id, ordered); } catch { profiles = new Map(); }
+    const plan = planAutoLayout(project, ordered, profiles);
     if (!plan.groups.length) return null;
     const list = [...spreadsRef.current];
     const created = [];
@@ -291,6 +299,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       placed: ordered.length - plan.leftover.length,
       leftover: plan.leftover.length,
       spreadCount: created.length,
+      usedAi: profiles.size > 0,
     };
   }, [apply, project]);
 
