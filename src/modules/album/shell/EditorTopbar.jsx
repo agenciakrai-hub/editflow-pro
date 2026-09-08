@@ -1,13 +1,16 @@
 import React from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Expand, FileDown, Frame, Redo2, Save, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowLeft, Expand, FileDown, Frame, Maximize2, PanelBottom, PanelLeft, PanelRight, PanelTop, Redo2, Save, Sparkles, Undo2, ZoomIn, ZoomOut } from "lucide-react";
 import { albumSizeLabel, STATUS_LABEL } from "@/modules/album/lib/albumUnits";
 
 // Fase 5.2 — Topbar profesional: identidad del álbum, guardado, historial, zoom,
 // guías y acciones primarias en una sola barra compacta.
 const GUIDE_DEFS = [["bleed", "Sangrado"], ["margins", "Márgenes"], ["safe", "Zona segura"], ["gutter", "Gutter"]];
+// Paneles — visibilidad manual de las franjas del editor (Barra superior,
+// Plantillas, Propiedades, Fotos) + «Solo lienzo» (oculta todo).
+const PANEL_DEFS = [["top", PanelTop, "Barra superior"], ["left", PanelLeft, "Plantillas"], ["right", PanelRight, "Propiedades"], ["bottom", PanelBottom, "Fotos"]];
 
-export default function EditorTopbar({ album, saving, canUndo, canRedo, onUndo, onRedo, zoomPct, onZoom, onFit, guides, onToggleGuide, onDownload, onExport, fillPhotos, onToggleFillPhotos, fillDisabled, canvasFill, onToggleCanvasFill, canvasFillDisabled }) {
+export default function EditorTopbar({ album, saving, canUndo, canRedo, onUndo, onRedo, zoomPct, onZoom, onFit, guides, onToggleGuide, onDownload, onExport, fillPhotos, onToggleFillPhotos, fillDisabled, canvasFill, onToggleCanvasFill, canvasFillDisabled, panels, onTogglePanel, onHideAllPanels }) {
   const iconBtn = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border hover:bg-secondary disabled:opacity-40";
   return (
     <header className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card px-3 py-2">
@@ -40,6 +43,20 @@ export default function EditorTopbar({ album, saving, canUndo, canRedo, onUndo, 
               {label}
             </label>
           ))}
+        </div>
+        <div className="flex items-center gap-1 rounded-lg border border-border px-1.5 py-1">
+          <span className="hidden text-[11px] font-medium text-muted-foreground xl:inline">Paneles</span>
+          {PANEL_DEFS.map(([k, Icon, label]) => (
+            <button key={k} onClick={() => onTogglePanel(k)} title={`${panels[k] ? "Ocultar" : "Mostrar"}: ${label}`}
+              className={"inline-flex h-6 w-6 items-center justify-center rounded-md border " + (panels[k] ? "border-primary bg-secondary text-foreground" : "border-border text-muted-foreground hover:bg-secondary")}>
+              <Icon className="h-3.5 w-3.5" />
+            </button>
+          ))}
+          <button onClick={onHideAllPanels}
+            title="Ocultar todo — deja solo el lienzo del álbum a pantalla completa (restáuralo con los botones flotantes)"
+            className="inline-flex h-6 items-center gap-1 rounded-md border border-border px-1.5 text-[10px] font-medium text-muted-foreground hover:bg-secondary">
+            <Maximize2 className="h-3.5 w-3.5" /> Solo lienzo
+          </button>
         </div>
         <button onClick={onToggleCanvasFill} disabled={canvasFillDisabled} aria-pressed={!!canvasFill}
           title={canvasFill

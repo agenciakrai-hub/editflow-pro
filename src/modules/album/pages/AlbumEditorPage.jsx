@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, PanelBottom, PanelLeft, PanelRight, PanelTop } from "lucide-react";
 import { getAlbum, listPhotos, listSpreads, addPhotos, updateAlbum, bulkUpdatePhotos } from "@/modules/album/hooks/useAlbumProject";
 import { useAlbumStore } from "@/modules/album/manager/albumStore";
 import { bestLayoutFor } from "@/modules/album/layout/layoutEngine";
@@ -78,6 +78,13 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   const [progress, setProgress] = useState(null);
   const [relocating, setRelocating] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Paneles — visibilidad manual: barra superior, plantillas (izq), propiedades
+  // (der) y navegador de fotos (abajo). «Solo lienzo» de la barra los oculta todos
+  // para trabajar con el álbum a pantalla completa; cada franja se restaura desde
+  // su botón flotante.
+  const [panels, setPanels] = useState({ top: true, left: true, right: true, bottom: true });
+  const togglePanel = (k) => setPanels((p) => ({ ...p, [k]: !p[k] }));
+  const hideAllPanels = () => setPanels({ top: false, left: false, right: false, bottom: false });
   const photosById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos]);
   const store = useAlbumStore(project, spreads, photosById);
 
@@ -382,8 +389,18 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
 
   return (
     <div className="flex h-[calc(100vh-8rem)] min-h-[620px] flex-col gap-2">
-      <EditorTopbar
-        album={project}
+      {!panels.top && (
+        <button onClick={() => togglePanel("top")} title="Mostrar barra superior"
+          className="flex h-7 w-fit shrink-0 items-center gap-1.5 self-start rounded-lg border border-border bg-card px-3 text-[10px] font-medium hover:bg-secondary">
+          <PanelTop className="h-3.5 w-3.5" /> Barra superior
+        </button>
+      )}
+      {panels.top && (
+        <EditorTopbar
+          panels={panels}
+          onTogglePanel={togglePanel}
+          onHideAllPanels={hideAllPanels}
+          album={project}
         saving={store.saving || savingFile}
         canUndo={store.canUndo} canRedo={store.canRedo}
         onUndo={store.undo} onRedo={store.redo}
@@ -400,7 +417,8 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         canvasFill={!!spread?.fill_canvas}
         canvasFillDisabled={!spread || !!spread.locked || !spread.layout_id || spread.layout_id === "custom" || !(spread.slots || []).length}
         onToggleCanvasFill={() => store.setSpreadCanvasFill(spread.id, !spread.fill_canvas)}
-      />
+        />
+      )}
 
       {store.saveError && (
         <div className="flex shrink-0 items-center gap-3 rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -412,11 +430,19 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       )}
 
       <div className="flex min-h-0 flex-1 gap-2">
-        <TemplateLibraryPanel
-          album={project}
-          spread={spread}
-          onApplyLayout={(layoutId) => spreadId && store.setSpreadLayoutById(spreadId, layoutId)}
-        />
+        {panels.left && (
+          <TemplateLibraryPanel
+            album={project}
+            spread={spread}
+            onApplyLayout={(layoutId) => spreadId && store.setSpreadLayoutById(spreadId, layoutId)}
+          />
+        )}
+        {!panels.left && (
+          <button onClick={() => togglePanel("left")} title="Mostrar plantillas"
+            className="flex h-16 w-7 shrink-0 items-center justify-center self-center rounded-lg border border-border bg-card hover:bg-secondary">
+            <PanelLeft className="h-3.5 w-3.5" />
+          </button>
+        )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
           <SpreadNavigator
@@ -471,20 +497,35 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
           />
         </div>
 
-        <PropertiesPanel
-          album={project}
-          spread={spread}
-          onAlbumConfig={updateAlbumConfig}
-          selectedSlot={selectedSlotWithPhoto}
-          onToggleLock={() => store.setLocked(spreadId, !locked)}
-          onSlotProp={(patch) => store.updateSlot(spreadId, selectedSlot.slot_id, patch)}
-          onRemovePhoto={() => store.removePhotoFromSlot(spreadId, selectedSlot.slot_id)}
-          onRemoveSlot={() => store.removeSlot(spreadId, selectedSlot.slot_id)}
-        />
+        {panels.right && (
+          <PropertiesPanel
+            album={project}
+            spread={spread}
+            onAlbumConfig={updateAlbumConfig}
+            selectedSlot={selectedSlotWithPhoto}
+            onToggleLock={() => store.setLocked(spreadId, !locked)}
+            onSlotProp={(patch) => store.updateSlot(spreadId, selectedSlot.slot_id, patch)}
+            onRemovePhoto={() => store.removePhotoFromSlot(spreadId, selectedSlot.slot_id)}
+            onRemoveSlot={() => store.removeSlot(spreadId, selectedSlot.slot_id)}
+          />
+        )}
+        {!panels.right && (
+          <button onClick={() => togglePanel("right")} title="Mostrar propiedades"
+            className="flex h-16 w-7 shrink-0 items-center justify-center self-center rounded-lg border border-border bg-card hover:bg-secondary">
+            <PanelRight className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
-      <PhotoBrowser
-        photos={photos}
+      {!panels.bottom && (
+        <button onClick={() => togglePanel("bottom")} title="Mostrar fotos"
+          className="mx-auto flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-[10px] font-medium hover:bg-secondary">
+          <PanelBottom className="h-3.5 w-3.5" /> Fotos
+        </button>
+      )}
+      {panels.bottom && (
+        <PhotoBrowser
+          photos={photos}
         previews={thumbs}
         placedPhotoIds={placedPhotoIds}
         folders={project.photo_folders || []}
@@ -501,7 +542,8 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         relocateCount={missingPhotos.length}
         onAutoLayout={runAutoLayout}
         onAutoLayoutFolder={handleAutoLayoutFolder}
-      />
+        />
+      )}
 
       {exporting && (
         <ExportDialog
