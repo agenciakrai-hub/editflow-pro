@@ -17,17 +17,29 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
+  const [onlyAccepted, setOnlyAccepted] = useState(false);
   const [thumbSize, setThumbSize] = useState(96);
   const [zoomIndex, setZoomIndex] = useState(null);
   const [selIds, setSelIds] = useState(() => new Set());
   const anchorRef = useRef(null);
   const inputRef = useRef(null);
 
+  // Selección IA → Editor: fotos ACEPTADAS por el fotógrafo en la Selección IA
+  // (ai_state = "recommended", persistido en cada foto). Se recuperan al entrar
+  // en el editor y alimentan directamente la maquetación automática existente.
+  const acceptedIds = useMemo(() => photos.filter((p) => p.ai_state === "recommended").map((p) => p.id), [photos]);
+  const acceptedUnplaced = useMemo(
+    () => acceptedIds.filter((id) => !placedPhotoIds?.has(id)),
+    [acceptedIds, placedPhotoIds]
+  );
+
   const matchesQ = (p) => !q || p.filename.toLowerCase().includes(q.toLowerCase());
-  // La carpeta seleccionada filtra la lista; "Sin colocar" se aplica dentro de ella.
+  // La carpeta seleccionada filtra la lista; "Sin colocar" y "Selección IA" se
+  // aplican dentro de ella.
   const list = photos.filter((p) =>
     (folder === ALL || p.folder === folder) &&
     (!onlyUnplaced || !placedPhotoIds?.has(p.id)) &&
+    (!onlyAccepted || p.ai_state === "recommended") &&
     matchesQ(p)
   );
   const counts = useMemo(() => {
@@ -104,6 +116,19 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
           className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (onlyUnplaced ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
           Sin colocar ({placedPhotoIds ? photos.length - placedPhotoIds.size : photos.length})
         </button>
+        {acceptedIds.length > 0 && (
+          <button onClick={() => setOnlyAccepted((v) => !v)} title="Muestra solo las fotos aceptadas en la Selección IA"
+            className={"rounded-full px-2 py-0.5 text-[10px] font-medium " + (onlyAccepted ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary")}>
+            Selección IA ({acceptedIds.length})
+          </button>
+        )}
+        {onAutoLayout && acceptedUnplaced.length > 0 && (
+          <button onClick={() => onAutoLayout(acceptedUnplaced)}
+            title="Maqueta automáticamente en lienzos nuevos las fotos ACEPTADAS en la Selección IA que aún no están colocadas (⌘Z deshace toda la maquetación)"
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-2.5 text-[11px] font-semibold text-primary hover:bg-primary/20">
+            <Wand2 className="h-3 w-3" /> Maquetar selección IA ({acceptedUnplaced.length})
+          </button>
+        )}
         {selIds.size > 0 && (
           <button onClick={clearSelection} title="Arrastra la selección al lienzo para crear la plantilla automática"
             className="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-semibold text-primary-foreground">
