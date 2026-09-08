@@ -363,6 +363,10 @@ export default async function(req: Request): Promise<Response> {
       const patch: any = {};
       if (typeof body.active_seleccion === 'string' && body.active_seleccion.trim()) patch.active_seleccion = body.active_seleccion.trim();
       if (typeof body.active_ajustes === 'string' && body.active_ajustes.trim()) patch.active_ajustes = body.active_ajustes.trim();
+      // Modelo EXACTO por tarea: se acepta cadena vacía ("Auto") para volver al modo
+      // automático, por eso se comprueba undefined y no trim.
+      if (body.active_model_seleccion !== undefined && typeof body.active_model_seleccion === 'string') patch.active_model_seleccion = body.active_model_seleccion.trim();
+      if (body.active_model_ajustes !== undefined && typeof body.active_model_ajustes === 'string') patch.active_model_ajustes = body.active_model_ajustes.trim();
       const existing = await getConfigRecord(base44);
       let cfg;
       if (existing) {
@@ -406,8 +410,8 @@ export default async function(req: Request): Promise<Response> {
         const cfg = await getConfigRecord(base44);
         if (cfg) {
           const patch: any = {};
-          if (cfg.active_seleccion === `custom:${id}`) patch.active_seleccion = 'base44';
-          if (cfg.active_ajustes === `custom:${id}`) patch.active_ajustes = 'base44';
+          if (cfg.active_seleccion === `custom:${id}`) { patch.active_seleccion = 'base44'; patch.active_model_seleccion = ''; }
+          if (cfg.active_ajustes === `custom:${id}`) { patch.active_ajustes = 'base44'; patch.active_model_ajustes = ''; }
           if (Object.keys(patch).length) await base44.asServiceRole.entities.AiProviderConfig.update(cfg.id, patch);
         }
       } catch {}

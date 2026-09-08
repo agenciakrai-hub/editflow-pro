@@ -58,6 +58,14 @@
       "default": "base44",
       "description": "Proveedor activo para Ajustes IA. Uno de: custom:<id>, o valores legados (base44, qwen, nvidia, gemini, none)."
     },
+    "active_model_seleccion": {
+      "type": "string",
+      "description": "Modelo EXACTO para Selecci\u00f3n IA dentro del proveedor activo (custom:<id>): los motores lo usan SIEMPRE, sin heur\u00edstica. Debe pertenecer a la lista marcada (seleccion_models) del proveedor activo. Vac\u00edo = autom\u00e1tico (mejor modelo marcado)."
+    },
+    "active_model_ajustes": {
+      "type": "string",
+      "description": "Modelo EXACTO para Ajustes IA (IA Visual e H\u00edbrido) dentro del proveedor activo (custom:<id>): ambos modos lo usan SIEMPRE, sin heur\u00edstica ni sustituciones. Debe pertenecer a la lista marcada (ajustes_models) del proveedor activo. Vac\u00edo = autom\u00e1tico (mejor modelo marcado)."
+    },
     "builtin_migrated": {
       "type": "boolean",
       "default": false,

@@ -15,7 +15,7 @@ export default function AIProviders() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [providers, setProviders] = useState([]);
-  const [active, setActive] = useState({ active_seleccion: "base44", active_ajustes: "" });
+  const [active, setActive] = useState({ active_seleccion: "base44", active_ajustes: "", active_model_seleccion: "", active_model_ajustes: "" });
   const [adding, setAdding] = useState(false);
   const [addResult, setAddResult] = useState(null);
   const [busyAction, setBusyAction] = useState(null);
@@ -32,6 +32,8 @@ export default function AIProviders() {
       setActive({
         active_seleccion: cfg?.active_seleccion || "base44",
         active_ajustes: cfg?.active_ajustes || "",
+        active_model_seleccion: cfg?.active_model_seleccion || "",
+        active_model_ajustes: cfg?.active_model_ajustes || "",
       });
     } catch (e) {
       toast({ title: "Error al cargar", description: e.message, variant: "destructive" });
@@ -112,6 +114,8 @@ export default function AIProviders() {
       setActive((a) => ({
         active_seleccion: a.active_seleccion === `custom:${id}` ? "base44" : a.active_seleccion,
         active_ajustes: a.active_ajustes === `custom:${id}` ? "" : a.active_ajustes,
+        active_model_seleccion: a.active_seleccion === `custom:${id}` ? "" : a.active_model_seleccion,
+        active_model_ajustes: a.active_ajustes === `custom:${id}` ? "" : a.active_model_ajustes,
       }));
       toast({ title: "Proveedor eliminado" });
     } catch (e) {
@@ -172,6 +176,32 @@ export default function AIProviders() {
   const providerOptions = providers.map((p) => ({ value: `custom:${p.id}`, label: p.name }));
   const seleccionCovered = ["base44", "none", ...providerOptions.map((o) => o.value)].includes(active.active_seleccion);
   const ajustesCovered = providerOptions.some((o) => o.value === active.active_ajustes);
+  // Modelos marcados del proveedor activo de cada tarea (para elegir el modelo EXACTO).
+  const markedModelsOf = (task) => {
+    const val = task === "ajustes" ? active.active_ajustes : active.active_seleccion;
+    const p = providers.find((c) => `custom:${c.id}` === val);
+    const marked = task === "ajustes" ? p?.ajustes_models : p?.seleccion_models;
+    return Array.isArray(marked) ? marked : [];
+  };
+  const seleccionModelOptions = markedModelsOf("seleccion");
+  const ajustesModelOptions = markedModelsOf("ajustes");
+  // Cambia el proveedor activo de una tarea y LIMPIA el modelo exacto si deja de
+  // pertenecer a la lista marcada del nuevo proveedor.
+  const setTaskProvider = (task, value) => {
+    setActive((a) => {
+      const providerKey = task === "ajustes" ? "active_ajustes" : "active_seleccion";
+      const modelKey = task === "ajustes" ? "active_model_ajustes" : "active_model_seleccion";
+      const next = { ...a, [providerKey]: value };
+      if (!String(value).startsWith("custom:")) {
+        next[modelKey] = "";
+      } else {
+        const p = providers.find((c) => `custom:${c.id}` === value);
+        const marked = task === "ajustes" ? p?.ajustes_models : p?.seleccion_models;
+        if (!Array.isArray(marked) || !marked.includes(a[modelKey])) next[modelKey] = "";
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -212,7 +242,7 @@ export default function AIProviders() {
         <p className="text-sm font-semibold">Proveedor activo por herramienta</p>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Selección IA</label>
-          <select value={active.active_seleccion} onChange={(e) => setActive((a) => ({ ...a, active_seleccion: e.target.value }))}
+          <select value={active.active_seleccion} onChange={(e) => setTaskProvider("seleccion", e.target.value)}
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
             <option value="base44">Base44 (InvokeLLM)</option>
             {providerOptions.map((o) => (
@@ -225,10 +255,20 @@ export default function AIProviders() {
               <option value={active.active_seleccion}>Sin proveedor válido — elige uno</option>
             )}
           </select>
+          {seleccionModelOptions.length > 0 && (
+            <div className="space-y-1.5 pt-1">
+              <label className="text-sm font-medium">Modelo exacto para Selección IA</label>
+              <select value={active.active_model_seleccion || ""} onChange={(e) => setActive((a) => ({ ...a, active_model_seleccion: e.target.value }))}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm">
+                <option value="">Auto — mejor modelo marcado</option>
+                {seleccionModelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          )}
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Ajustes IA</label>
-          <select value={active.active_ajustes} onChange={(e) => setActive((a) => ({ ...a, active_ajustes: e.target.value }))}
+          <select value={active.active_ajustes} onChange={(e) => setTaskProvider("ajustes", e.target.value)}
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
             <option value="">— elige un proveedor —</option>
             {providerOptions.map((o) => (
@@ -240,8 +280,21 @@ export default function AIProviders() {
               <option value={active.active_ajustes}>Sin proveedor válido — elige uno</option>
             )}
           </select>
+          {ajustesModelOptions.length > 0 && (
+            <div className="space-y-1.5 pt-1">
+              <label className="text-sm font-medium">Modelo exacto para Ajustes IA</label>
+              <select value={active.active_model_ajustes || ""} onChange={(e) => setActive((a) => ({ ...a, active_model_ajustes: e.target.value }))}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm">
+                <option value="">Auto — mejor modelo marcado</option>
+                {ajustesModelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                IA Visual y el modo Híbrido usan SIEMPRE este modelo exacto — sin heurística ni sustituciones. Con «Auto» se usa el mejor de los marcados.
+              </p>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
-            Cada proveedor usa los modelos que marcaste para cada tarea (o el mejor modelo marcado si hay varios).
+            Marca los modelos de cada proveedor y elige el modelo exacto de cada tarea. Sin modelo exacto se usa el mejor marcado.
           </p>
         </div>
         <p className="text-xs text-muted-foreground">

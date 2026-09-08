@@ -366,7 +366,18 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   if (!marked.length && !legacy) {
     throw new Error(`El proveedor "${rec.name}" no tiene modelos marcados para ${opts.task === "ajustes" ? "Ajustes IA" : "Selección IA"} (márcalos en Proveedores IA)`);
   }
-  const model = marked.length ? pickBestVisionModel(marked) : legacy;
+  // Modelo EXACTO por tarea: el que el administrador eligió en Proveedores IA →
+  // "Modelo exacto". Se usa SIEMPRE que pertenezca a la lista marcada del proveedor;
+  // si está vacío o desactualizado, se usa el automático (mejor modelo marcado).
+  let exactModel = "";
+  try {
+    const cfg = await getConfig(base44);
+    const exactRaw = opts.task === "ajustes" ? cfg?.active_model_ajustes : cfg?.active_model_seleccion;
+    exactModel = String(exactRaw || "").trim();
+  } catch {}
+  const useExact = exactModel && marked.includes(exactModel);
+  const model = useExact ? exactModel : (marked.length ? pickBestVisionModel(marked) : legacy);
+  console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${useExact ? "exacto" : marked.length ? "auto" : "legado"})`);
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
   const content: any[] = [{ type: "text", text: opts.prompt }];
   for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
