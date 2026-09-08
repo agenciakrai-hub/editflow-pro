@@ -86,12 +86,12 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   const [panels, setPanels] = useState({ top: true, left: true, right: true, bottom: true });
   const togglePanel = (k) => setPanels((p) => ({ ...p, [k]: !p[k] }));
   const hideAllPanels = () => setPanels({ top: false, left: false, right: false, bottom: false });
-  // Altura manual de la barra superior y del navegador de fotos: null = altura
-  // natural; al arrastrar el tirador se fija en px (el primer arrastre parte de la
-  // altura REAL del panel, medida del propio elemento).
-  const [topH, setTopH] = useState(null);
+  // Altura manual del navegador de lienzos (tira superior del centro) y del
+  // navegador de fotos: null = altura natural; al arrastrar el tirador se fija en
+  // px (el primer arrastre parte de la altura REAL del panel).
+  const [navH, setNavH] = useState(null);
   const [trayH, setTrayH] = useState(null);
-  const topbarWrapRef = useRef(null);
+  const navWrapRef = useRef(null);
   const trayWrapRef = useRef(null);
   const photosById = useMemo(() => new Map(photos.map((p) => [p.id, p])), [photos]);
   const store = useAlbumStore(project, spreads, photosById);
@@ -412,7 +412,6 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       )}
       {panels.top && (
         <>
-        <div ref={topbarWrapRef} style={topH ? { height: topH } : undefined} className="shrink-0 overflow-hidden">
         <EditorTopbar
           panels={panels}
           onTogglePanel={togglePanel}
@@ -435,9 +434,6 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         canvasFillDisabled={!spread || !!spread.locked || !spread.layout_id || spread.layout_id === "custom" || !(spread.slots || []).length}
         onToggleCanvasFill={() => store.setSpreadCanvasFill(spread.id, !spread.fill_canvas)}
         />
-        </div>
-        <ResizeHandle targetRef={topbarWrapRef} onChange={setTopH} min={44} max={220}
-          label="Arrastra para ajustar la altura de la barra superior" />
         </>
       )}
 
@@ -466,7 +462,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         )}
 
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+          <div ref={navWrapRef} style={navH ? { height: navH } : undefined} className="shrink-0 overflow-hidden">
           <SpreadNavigator
+            height={navH}
             album={project}
             spreads={store.spreads}
             selectedId={store.selectedSpreadId}
@@ -477,6 +475,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
             onDelete={store.deleteSpreadById}
             onReorder={store.reorderSpreads}
           />
+          </div>
+          <ResizeHandle targetRef={navWrapRef} onChange={setNavH} min={72} max={360}
+            label="Arrastra para ajustar la altura del navegador de lienzos" />
           {spread ? (
             <SpreadCanvas
               album={project}

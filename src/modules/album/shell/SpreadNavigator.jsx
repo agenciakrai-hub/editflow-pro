@@ -5,15 +5,18 @@ import { slotPhotoView } from "@/modules/album/editor/slotPhotoView";
 // Fase 5.2 — Navegador visual de spreads (franja superior del centro): miniaturas
 // con las fotos reales del spread, reordenar arrastrando, duplicar/eliminar al
 // vuelo y crear nuevos spreads.
-export default function SpreadNavigator({ album, spreads, selectedId, thumbs, onSelect, onAdd, onDuplicate, onDelete, onReorder }) {
+export default function SpreadNavigator({ album, spreads, selectedId, thumbs, onSelect, onAdd, onDuplicate, onDelete, onReorder, height }) {
   const W = album.width_mm;
   const H = album.height_mm;
-  const cardW = 108;
-  const cardH = Math.max(44, Math.round((cardW * H) / W));
   const dragId = useRef(null);
+  // Tirador negro — la altura de la tira manda: las miniaturas se derivan del ALTO
+  // disponible (altura − relleno − etiquetas), así crecen y menguan con el panel.
+  const stripH = height || 136;
+  const cardH = Math.max(36, stripH - 38);
+  const cardW = Math.max(36, Math.round((cardH * W) / H));
 
   return (
-    <div className="flex h-[136px] shrink-0 items-center gap-2 overflow-x-auto rounded-xl border border-border bg-card p-2 scrollbar-hide">
+    <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto rounded-xl border border-border bg-card p-2 scrollbar-hide" style={{ height: stripH }}>
       {spreads.map((s, i) => {
         const count = (s.slots || []).filter((x) => x.photo_id).length;
         return (
