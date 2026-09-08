@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from "react";
 import { AlertTriangle, Grip, ImageOff, Lock, Move } from "lucide-react";
 import usePhotoPreview from "@/modules/album/hooks/usePhotoPreview";
 import { slotPhotoView, slotEffDpi } from "@/modules/album/editor/slotPhotoView";
+import { HAND_BLACK, HAND_GREEN } from "@/modules/album/editor/cursors";
 
 // Un hueco del spread con transformaciones VIRTUALES (no destructivas): pan (crop),
 // zoom, movimiento y redimensionado del marco. Todo se guarda en mm; el archivo
@@ -31,7 +32,12 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
   // que usa la miniatura del navegador): mismo FIT/CONTAIN (foto completa, centrada)
   // o COVER, misma transformación virtual. Sin interpretaciones locales.
   const view = slotPhotoView(slot);
-  const effMode = slot.photo_id && mode !== "container" ? "photo" : "container";
+  // TRES estados de interacción (mano blanca/verde/negra). Sin clic la foto está
+  // INACTIVA (solo panea el lienzo): jamás se mueve por accidente. UN CLIC
+  // selecciona y activa el modo FOTO (mano verde). DOBLE CLIC activa el modo
+  // CONTENEDOR (mano negra: hueco libre con la foto congelada). Huecos VACÍOS:
+  // contenedor directo (no hay foto que deslizar).
+  const effMode = !slot.photo_id ? "container" : selected ? mode : "inactive";
   // Aviso de calidad en el propio hueco: la foto por debajo del objetivo de
   // impresión del álbum (ámbar) o de su mitad (rojo, pérdida evidente).
   const effDpi = slot.photo_id ? slotEffDpi(slot, photo) : null;
@@ -103,7 +109,7 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
   }, [slot, locked, handlers, effMode]);
 
   return (
-    <div ref={elRef} className="absolute" style={{ left: slot.x_mm * ppm, top: slot.y_mm * ppm, width: slot.w_mm * ppm, height: slot.h_mm * ppm, zIndex: 10 + (slot.z_index || 0) }}
+    <div ref={elRef} className="absolute" style={{ left: slot.x_mm * ppm, top: slot.y_mm * ppm, width: slot.w_mm * ppm, height: slot.h_mm * ppm, zIndex: 10 + (slot.z_index || 0), cursor: effMode === "container" && !locked ? HAND_BLACK : "default" }}
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
       onDoubleClick={(e) => { e.stopPropagation(); if (!locked && slot.photo_id) onEnterContainerMode?.(); }}
       onDragOver={(e) => e.preventDefault()}
@@ -130,7 +136,7 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
                 objectFit: view.objectFit,
                 transform: `translate(${(t.offset_x_mm || 0) * ppm}px, ${(t.offset_y_mm || 0) * ppm}px) scale(${view.scale})`,
                 transformOrigin: "center",
-                cursor: locked || effMode !== "photo" ? "default" : "grab",
+                cursor: effMode === "photo" ? HAND_GREEN : "default",
               }} />
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-1 text-neutral-400">
@@ -157,10 +163,10 @@ export default function SlotFrame({ slot, photo, projectId, ppm, targetDpi = 300
         <div className="absolute right-1 top-1 z-20 text-neutral-500"><Lock className="h-3.5 w-3.5" /></div>
       )}
       {selected && !locked && slot.photo_id && (
-        <span className="absolute -top-5 left-0 z-20 rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold text-primary-foreground shadow"
+        <span className={"absolute -top-5 left-0 z-20 rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white shadow " + (effMode === "photo" ? "bg-emerald-600" : "bg-neutral-900")}
           title={effMode === "photo"
-            ? "Modo FOTO: arrastra para reencuadrar, rueda para zoom · doble clic para editar el contenedor"
-            : "Modo CONTENEDOR: mueve o redimensiona · la foto queda congelada y se reajusta automáticamente"}>
+            ? "Mano VERDE — modo FOTO (un clic): arrastra para reencuadrar la foto, rueda para zoom · doble clic pasa a modo contenedor"
+            : "Mano NEGRA — modo CONTENEDOR (doble clic): mueve o redimensiona el hueco · la foto queda congelada · un clic vuelve a modo foto"}>
           {effMode === "photo" ? "Foto" : "Contenedor"}
         </span>
       )}

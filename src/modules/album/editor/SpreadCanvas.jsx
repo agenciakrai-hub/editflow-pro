@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import SlotFrame from "@/modules/album/editor/SlotFrame";
+import { HAND_WHITE } from "@/modules/album/editor/cursors";
 
 // Lienzo del spread (wireframe E, Fase 1 §9): mm → px según zoom, guías de sangrado,
 // márgenes, zona segura y gutter. Soltar una foto sobre el lienzo crea un hueco libre.
@@ -23,8 +24,35 @@ export default function SpreadCanvas({ album, spread, photosById, zoomPct, guide
   const ppm = Math.max(0.05, ((Math.max(avail, 200) - 24) / (W + bleed * 2)) * (zoomPct / 100));
   const px = (mm) => mm * ppm;
 
+  // Mano BLANCA — paneo del lienzo completo: arrastrar el fondo desplaza la vista y
+  // NUNCA interviene en fotos ni contenedores (la foto requiere un clic y el
+  // contenedor un doble clic para activarse). Un arrastre no cuenta como clic:
+  // no deselecciona el hueco activo.
+  const panRef = useRef(null);
+  const suppressClickRef = useRef(false);
+  const canvasPanStart = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const el = wrapRef.current;
+    panRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+    const move = (ev) => {
+      if (!panRef.current) return;
+      if (Math.abs(ev.clientX - panRef.current.x) + Math.abs(ev.clientY - panRef.current.y) > 4) suppressClickRef.current = true;
+      el.scrollLeft = panRef.current.sl - (ev.clientX - panRef.current.x);
+      el.scrollTop = panRef.current.st - (ev.clientY - panRef.current.y);
+    };
+    const up = () => {
+      panRef.current = null;
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   return (
-    <div ref={wrapRef} className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-secondary/40 p-3">
+    <div ref={wrapRef} onMouseDown={canvasPanStart} style={{ cursor: HAND_WHITE }}
+      className="min-h-0 flex-1 overflow-auto rounded-xl border border-border bg-secondary/40 p-3">
       <div className="relative mx-auto"
         style={{ width: px(W), height: px(H), backgroundColor: album.background_color || "#FFFFFF", boxShadow: "0 10px 30px rgba(0,0,0,0.18)" }}
         onDragOver={(e) => e.preventDefault()}
@@ -42,7 +70,10 @@ export default function SpreadCanvas({ album, spread, photosById, zoomPct, guide
           const pid = e.dataTransfer.getData("text/album-photo");
           if (pid) onDropPhotoOnCanvas(pid);
         }}
-        onClick={() => onSelectSlot(null)}>
+        onClick={() => {
+          if (suppressClickRef.current) { suppressClickRef.current = false; return; }
+          onSelectSlot(null);
+        }}>
         {guides.bleed && (
           <div className="pointer-events-none absolute border-2 border-dashed border-red-400"
             style={{ left: -px(bleed), top: -px(bleed), right: -px(bleed), bottom: -px(bleed) }} />
