@@ -74,7 +74,16 @@ function parseJsonContent(content: any): any {
   if (start === -1 || end === -1 || end <= start) {
     throw new Error("Proveedor: no se encontro JSON en la respuesta");
   }
-  return JSON.parse(txt.slice(start, end + 1));
+  // Deslices habituales de los modelos que producen JSON invalido pero sin perder
+  // el analisis: numeros con signo "+18" y comas finales ", }".
+  let json = txt.slice(start, end + 1)
+    .replace(/([:\[,\s])\+(?=\d)/g, "$1")
+    .replace(/,\s*([}\]])/g, "$1");
+  try {
+    return JSON.parse(json);
+  } catch (e: any) {
+    throw new Error(`Proveedor: JSON invalido (${String(e?.message || e).slice(0, 120)}) :: ${json.slice(0, 200)}`);
+  }
 }
 
 // fetch con timeout: evita que una llamada de proveedor colgada (sin respuesta) bloquee
