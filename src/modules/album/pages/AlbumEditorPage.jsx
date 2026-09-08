@@ -368,11 +368,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     if (!spreadId || locked) return {};
     return {
       onPan: (slotId, x, y) => store.updateSlot(spreadId, slotId, { transform: { offset_x_mm: x, offset_y_mm: y } }, false),
-      onZoomPhoto: (slotId, factor) => {
-        const sl = (store.selectedSpread?.slots || []).find((s) => s.slot_id === slotId);
-        const next = Math.min(5, Math.max(0.3, (sl?.transform?.scale ?? 1) * factor));
-        store.updateSlot(spreadId, slotId, { transform: { scale: Math.round(next * 100) / 100 } }, false);
-      },
+      onZoomPhoto: (slotId, factor) => store.zoomSlotPhoto(spreadId, slotId, factor),
       onMoveSlot: (slotId, x, y) => store.updateSlot(spreadId, slotId, { x_mm: Math.round(x), y_mm: Math.round(y) }, false),
       onResizeSlot: (slotId, w, h) => store.updateSlot(spreadId, slotId, { w_mm: Math.max(15, Math.round(w)), h_mm: Math.max(15, Math.round(h)) }, false),
       onDropPhoto: (slotId, photoId) => store.assignPhotoToSlot(spreadId, slotId, photoId),

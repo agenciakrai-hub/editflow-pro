@@ -436,6 +436,18 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     apply(list, [spreadId], history);
   }, [apply]);
 
+  // Zoom de la FOTO de un hueco (rueda del lienzo): lee la escala del estado VIVO
+  // (ref), nunca de un snapshot antiguo del render — antes el closure capturaba la
+  // escala inicial y la rueda se quedaba clavada en un solo paso, pisando además el
+  // valor del slider. Mismos límites que el slider de propiedades (30 % – 400 %):
+  // ambos controles quedan sincronizados sobre el mismo transform.scale.
+  const zoomSlotPhoto = useCallback((spreadId, slotId, factor) => {
+    const s = spreadsRef.current.find((x) => x.id === spreadId);
+    const sl = (s?.slots || []).find((x) => x.slot_id === slotId);
+    const next = Math.min(4, Math.max(0.3, (sl?.transform?.scale ?? 1) * factor));
+    updateSlot(spreadId, slotId, { transform: { scale: Math.round(next * 100) / 100 } }, false);
+  }, [updateSlot]);
+
   const selectSlot = useCallback((slotId) => {
     setSelectedSlotId(slotId);
     if (slotId) setSlotMode("photo");
@@ -574,7 +586,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
     setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, fillEmptySlotsWithPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
-    updateSlot, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
+    updateSlot, zoomSlotPhoto, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,
   };
