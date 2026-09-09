@@ -4,6 +4,7 @@ import { FolderOpen, FileText, Loader2, ArrowLeft } from "lucide-react";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
+import { selectBursts } from "@/lib/ai/aiGateway";
 import { computeFingerprint, statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { saveHandle, getHandleRecord } from "./lib/idbHandles";
 import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, getCatalogBinding, listFingerprints, updateProject, updateCatalogBinding, deleteFingerprintsByProject } from "./hooks/useProjectStore";
@@ -30,6 +31,10 @@ export default function NuevoProyectoPage() {
   // Acción en curso («save», «seleccion», «editar», «album»): SOLO el botón
   // pulsado muestra su spinner; el resto queda deshabilitado pero sin girar.
   const [busyAction, setBusyAction] = useState(null);
+  // Selección IA EN LA MISMA PÁGINA: corre SOLO sobre las fotos marcadas (checkbox).
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiDone, setAiDone] = useState(0);
+  const [aiTotal, setAiTotal] = useState(0);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [phase, setPhase] = useState("extracting");
   // Selección múltiple para eliminar + densidad del grid.
@@ -88,6 +93,7 @@ export default function NuevoProyectoPage() {
           id: f.id,
           file: { name: f.filename },
           status: f.selection_status || "REVIEW",
+          rating: f.rating || 0, // estrellas guardadas (apagadas si no se tocó)
           fingerprint: f,
           preview: previewByHash.has(f.fingerprint_hash) ? { dataUrl: previewByHash.get(f.fingerprint_hash) } : null,
         }));
@@ -141,6 +147,7 @@ export default function NuevoProyectoPage() {
       withFingerprint.push({
         ...p,
         status: "REVIEW",
+        rating: 0, // las 5 estrellas nacen apagadas
         fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
       });
       setProgress({ done: count + i + 1, total });
@@ -170,6 +177,13 @@ export default function NuevoProyectoPage() {
   const cycleStatus = (id) => {
     record();
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: SELECTION_CYCLE[it.status] || "REVIEW" } : it)));
+  };
+
+  // Estrellas por foto: nacen apagadas (0); pulsar la n-ésima la enciende y pulsar la
+  // misma de nuevo la apaga. Se guarda con el proyecto y viaja al XMP (xmp:Rating).
+  const setRating = (id, rating) => {
+    record();
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, rating } : it)));
   };
 
   const toggleSelect = (id) => {
@@ -229,7 +243,7 @@ export default function NuevoProyectoPage() {
 
       // La SELECCIÓN que se guarda son las fotos MARCADAS (checkbox): al crear el
       // proyecto están todas marcadas por defecto, así que se guardan todas. Las
-      // marcadas sin curar (REVIEW) suben a SELECT (5 estrellas + etiqueta verde);
+      // marcadas sin curar (REVIEW) suben a SELECT (etiqueta verde, sin forzar estrellas);
       // la curación manual del botón «A revisar» siempre prevalece si existe.
       // La marca (checkbox) es LA selección: las marcadas sin curar suben a SELECT;
       // las DESMARCADAS que estaban en SELECT vuelven a REVIEW (la curación manual
@@ -293,7 +307,7 @@ export default function NuevoProyectoPage() {
           // La marca (checkbox) de cada foto se persiste: al reabrir el proyecto
           // aparecen marcadas/desmarcadas exactamente como se dejaron al guardar.
           marked: selectedIds.has(it.id),
-          ...statusMeta(effStatus(it)),
+          ...statusMeta(effStatus(it), it.rating || 0),
         }))
       );
 
@@ -327,10 +341,64 @@ export default function NuevoProyectoPage() {
     setBusyAction("save");
     try { await save(); } finally { setBusyAction(null); }
   };
-  const goSeleccion = async () => {
+  // SELECCIÓN IA EN LA MISMA PÁGINA: analiza únicamente las fotos MARCADAS (checkbox).
+  // Las elegidas por la IA quedan con las 5 estrellas ACTIVAS; las que la IA envía a
+  // revisión pasan su cuadrado/borde a AMARILLO. No navega a otra pantalla: el proceso
+  // completo ocurre aquí. Guardar persiste el resultado (5★ + verde viaja al XMP).
+  const runAiSelection = async () => {
+    const marked = items.filter((it) => selectedIds.has(it.id));
+    if (!marked.length) {
+      toast({ title: "Marca al menos una foto para la selección IA", variant: "destructive" });
+      return;
+    }
+    record();
     setBusyAction("seleccion");
-    const id = await save().finally(() => setBusyAction(null));
-    if (id) navigate(`/dashboard?project=${id}`);
+    setAiRunning(true);
+    setAiDone(0);
+    setAiTotal(marked.length);
+    try {
+      const aiItems = marked.map((it) => {
+        const dataUrl = it.preview?.dataUrl;
+        const preview = it.preview?.base64
+          ? it.preview
+          : dataUrl
+            ? { dataUrl, base64: dataUrl.split(",")[1] || "", isPlaceholder: false }
+            : null;
+        return {
+          id: it.id,
+          file: it.file,
+          preview,
+          // phash restaurado del fingerprint guardado (proyectos reabiertos): sin él la
+          // agrupación de ráfagas degrada a solo-temporal.
+          phash: it.phash || (it.fingerprint?.fingerprint_hash ? BigInt("0x" + it.fingerprint.fingerprint_hash) : null),
+          captureTime: it.captureTime ?? it.fingerprint?.capture_time ?? null,
+          cameraInfo: it.cameraInfo || { make: it.fingerprint?.camera_make, model: it.fingerprint?.camera_model },
+          technical: it.technical || { sharpness: 0, exposureScore: 0.5, corrupt: false },
+        };
+      });
+      const { keep, meta } = await selectBursts(aiItems, (d, t) => {
+        setAiDone(d);
+        if (typeof t === "number") setAiTotal(t);
+      });
+      setItems((prev) => prev.map((it) => {
+        if (!selectedIds.has(it.id)) return it; // solo participan las marcadas
+        const m = meta.get(it.id);
+        if (!m) return it;
+        const status = m.status || (keep.has(it.id) ? "SELECT" : "REVIEW");
+        const aiSelected = status === "SELECT" || status === "TOP_PICK";
+        return {
+          ...it,
+          status,
+          rating: aiSelected ? 5 : 0,
+          aiReview: !aiSelected && status !== "REJECT",
+        };
+      }));
+      toast({ title: "Selección IA completada" });
+    } catch (e) {
+      toast({ title: "No se pudo ejecutar la selección IA", description: e?.message, variant: "destructive" });
+    }
+    setAiRunning(false);
+    setBusyAction(null);
   };
   const goEditar = async () => {
     setBusyAction("editar");
@@ -409,12 +477,30 @@ export default function NuevoProyectoPage() {
         </div>
       )}
 
+      {aiRunning && (
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="inline-flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Analizando ráfagas con IA…
+            </span>
+            <span className="font-mono font-semibold tabular-nums">
+              {aiDone} / {aiTotal}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            La selección se ejecuta en esta página, solo sobre las fotos marcadas.
+          </p>
+        </div>
+      )}
+
       {!extracting && items.length > 0 && (
         <ProjectPhotoWorkspace
           items={items.map((it) => ({
             id: it.id,
             filename: it.file.name,
             status: it.status,
+            rating: it.rating || 0,
+            aiReview: !!it.aiReview,
             previewUrl: it.preview?.dataUrl,
             // Datos para ordenar: hora de captura (epoch ms) y cámara (marca + modelo).
             captureTime: it.fingerprint?.capture_time,
@@ -435,7 +521,8 @@ export default function NuevoProyectoPage() {
           saving={saving}
           busyAction={busyAction}
           onSave={handleSave}
-          onGoSeleccion={goSeleccion}
+          onGoSeleccion={runAiSelection}
+          aiRunning={aiRunning}
           onGoEditar={goEditar}
           onGoAlbum={goAlbum}
         />

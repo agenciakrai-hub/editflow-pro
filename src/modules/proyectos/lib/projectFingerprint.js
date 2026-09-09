@@ -29,10 +29,14 @@ export async function computeFingerprint({ file, bytes, preview, relativePath })
 export const SELECTION_CYCLE = { REVIEW: "SELECT", SELECT: "TOP_PICK", TOP_PICK: "REJECT", REJECT: "REVIEW" };
 
 // Deriva rating/color_label a partir del selection_status — misma convención en creación
-// y re-edición: TOP_PICK/SELECT llevan 5 estrellas + etiqueta verde (Lightroom), el resto no.
-export function statusMeta(status) {
+// y re-edición. Las 5 estrellas nacen APAGADAS (rating 0): seleccionar una foto solo
+// añade la etiqueta VERDE que Lightroom lee del XMP (xmp:Label="Green"), nunca fuerza
+// xmp:Rating=5. `rating` = estrellas del fotógrafo (o de la selección IA, que sí enciende
+// las 5 estrellas de las elegidas).
+export function statusMeta(status, rating = 0) {
   const selected = status === "TOP_PICK" || status === "SELECT";
-  return { rating: selected ? 5 : 0, color_label: selected ? "green" : "none" };
+  const n = Number(rating);
+  return { rating: Number.isFinite(n) ? n : 0, color_label: selected ? "green" : "none" };
 }
 
 const PHASH_MATCH_THRESHOLD = 8; // distancia Hamming máxima para considerar coincidencia visual

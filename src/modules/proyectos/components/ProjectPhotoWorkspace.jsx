@@ -13,6 +13,7 @@ import PreviewLightbox from "./PreviewLightbox";
 export default function ProjectPhotoWorkspace({
   items, selectedIds, onToggleSelect, onToggleSelectMany, onToggleSelectAll, onDeleteSelected,
   onCycleStatus, onSetRating, gridCols, onGridCols, saving, busyAction, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
+  aiRunning,
   onUndo, onRedo, canUndo, canRedo,
 }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
@@ -144,13 +145,16 @@ export default function ProjectPhotoWorkspace({
         >
           {displayed.map((item, i) => {
             const checked = selectedIds.has(item.id);
+            // Amarillo = la IA envió esta foto a revisión (aunque siga marcada);
+            // verde = seleccionada; sin borde = sin marcar.
+            const review = !!item.aiReview;
             return (
-              <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${checked ? "border-green-500 ring-1 ring-green-500" : "border-border"}`}>
+              <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${review ? "border-yellow-400 ring-1 ring-yellow-400" : checked ? "border-green-500 ring-1 ring-green-500" : "border-border"}`}>
                 <div className="absolute left-1.5 top-1.5 z-10">
                   <button
                     type="button"
                     onClick={() => onToggleSelect(item.id)}
-                    className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? "border-green-500 bg-green-500 text-white" : "border-white/70 bg-black/40 text-transparent hover:bg-black/60"}`}
+                    className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? (review ? "border-yellow-400 bg-yellow-400 text-black" : "border-green-500 bg-green-500 text-white") : "border-white/70 bg-black/40 text-transparent hover:bg-black/60"}`}
                   >
                     {checked ? <span className="text-[11px] font-bold leading-none">✓</span> : null}
                   </button>
@@ -211,7 +215,7 @@ export default function ProjectPhotoWorkspace({
           <p className="text-xs font-semibold text-muted-foreground">Acciones</p>
           <button
             onClick={onSave}
-            disabled={saving}
+            disabled={saving || aiRunning}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground disabled:opacity-40"
           >
             {busyAction === "save" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -219,7 +223,7 @@ export default function ProjectPhotoWorkspace({
           </button>
           <button
             onClick={onGoSeleccion}
-            disabled={saving}
+            disabled={saving || aiRunning}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary disabled:opacity-40"
           >
             {busyAction === "seleccion" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -242,7 +246,7 @@ export default function ProjectPhotoWorkspace({
             Maquetar álbum
           </button>
           <p className="text-[11px] leading-tight text-muted-foreground">
-            «Selección», «Editar» y «Maquetar álbum» guardan el proyecto y abren la herramienta correspondiente.
+            «Selección» ejecuta la selección IA sobre las fotos marcadas en esta misma página. «Editar» y «Maquetar álbum» guardan el proyecto y abren la herramienta correspondiente.
           </p>
         </div>
       </aside>
