@@ -192,7 +192,9 @@ export default function NuevoProyectoPage() {
   // marcada. Cuenta como un paso de deshacer.
   const validatePhoto = (id) => {
     record();
-    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, aiReview: false, status: it.status === "REVIEW" ? "SELECT" : it.status } : it)));
+    // Validar (⌘+clic) saca la foto de revisión: deja de ser amarilla y pasa a verde.
+    // Si tenía las 3 estrellas de la revisión, sube a 5 (validada).
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, aiReview: false, rating: it.rating === 3 ? 5 : it.rating, status: it.status === "REVIEW" ? "SELECT" : it.status } : it)));
     setSelectedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
   };
 
@@ -260,9 +262,9 @@ export default function NuevoProyectoPage() {
       // TOP_PICK/REJECT se conserva). Así, al reabrir el proyecto, solo aparecen
       // como seleccionadas las fotos que el fotógrafo dejó realmente marcadas.
       const effStatus = (it) => {
-        // La IA envió esta foto a revisión: se mantiene en REVIEW (amarillo), nunca
-        // se promueve a SELECT aunque siga marcada con el checkbox.
-        if (it.aiReview) return "REVIEW";
+        // La IA envió esta foto a revisión (o el fotógrafo le dio 3 estrellas): se
+        // mantiene en REVIEW (amarillo), nunca se promueve a SELECT aunque siga marcada.
+        if (it.aiReview || it.rating === 3) return "REVIEW";
         if (selectedIds.has(it.id)) return it.status === "REVIEW" ? "SELECT" : it.status;
         return it.status === "TOP_PICK" || it.status === "REJECT" ? it.status : "REVIEW";
       };
@@ -321,9 +323,9 @@ export default function NuevoProyectoPage() {
           // aparecen marcadas/desmarcadas exactamente como se dejaron al guardar.
           marked: selectedIds.has(it.id),
           ...statusMeta(effStatus(it), it.rating || 0),
-          // La IA envió esta foto a revisión → XMP con 3 ESTRELLAS + etiqueta AMARILLA
-          // (xmp:Rating=3 + xmp:Label="Yellow"), detectable por Lightroom al importar.
-          ...(it.aiReview ? { rating: 3, color_label: "yellow" } : {}),
+          // Revisión (la IA la envió a revisar o tiene 3 estrellas) → XMP con 3 ESTRELLAS +
+          // etiqueta AMARILLA (xmp:Rating=3 + xmp:Label="Yellow"), detectable por Lightroom.
+          ...(it.aiReview || it.rating === 3 ? { rating: 3, color_label: "yellow" } : {}),
         }))
       );
 
@@ -427,7 +429,7 @@ export default function NuevoProyectoPage() {
     // así que NO vuelve a pedir la carpeta RAW — el módulo arranca con las fotos
     // del proyecto ya cargadas.
     const effStatus = (it) => {
-      if (it.aiReview) return "REVIEW";
+      if (it.aiReview || it.rating === 3) return "REVIEW";
       if (selectedIds.has(it.id)) return it.status === "REVIEW" ? "SELECT" : it.status;
       return it.status === "TOP_PICK" || it.status === "REJECT" ? it.status : "REVIEW";
     };

@@ -55,8 +55,10 @@ export default function ProjectPhotoWorkspace({
   const allSelected = items.length > 0 && selectedIds.size === items.length;
   // Contadores en vivo por color: verdes = validadas (SELECT/TOP_PICK de la IA o del
   // fotógrafo), amarillas = enviadas a revisar por la selección IA.
-  const validadasCount = items.filter((it) => !it.aiReview && (it.status === "SELECT" || it.status === "TOP_PICK")).length;
-  const reviewCount = items.filter((it) => it.aiReview).length;
+  const validadasCount = items.filter(
+    (it) => it.rating === 5 || (!it.aiReview && it.rating !== 3 && (it.status === "SELECT" || it.status === "TOP_PICK"))
+  ).length;
+  const reviewCount = items.filter((it) => it.aiReview || it.rating === 3).length;
   const cols = Math.max(2, Math.min(12, gridCols));
   // Slider invertido: separar el control de "Tamaño" (izquierda) aumenta el tamaño
   // de las fotos → menos columnas. valor alto del slider = menos columnas = más grande.
@@ -186,11 +188,12 @@ export default function ProjectPhotoWorkspace({
         >
           {displayed.map((item, i) => {
             const checked = selectedIds.has(item.id);
-            // Amarillo = la IA envió esta foto a revisión (aunque siga marcada);
-            // verde = seleccionada; sin borde = sin marcar.
-            const review = !!item.aiReview;
+            // Amarillo = revisión (la IA la envió a revisar O tiene 3 estrellas);
+            // verde = validada (5 estrellas) o marcada; sin borde = sin marcar.
+            const review = !!item.aiReview || item.rating === 3;
+            const green = item.rating === 5 || checked;
             return (
-              <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${review ? "border-yellow-400 ring-1 ring-yellow-400" : checked ? "border-green-500 ring-1 ring-green-500" : "border-border"}`}>
+              <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${review ? "border-yellow-400 ring-1 ring-yellow-400" : green ? "border-green-500 ring-1 ring-green-500" : "border-border"}`}>
                 <div className="absolute left-1.5 top-1.5 z-10">
                   <button
                     type="button"
