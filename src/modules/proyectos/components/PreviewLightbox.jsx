@@ -16,10 +16,13 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowLeft") onIndex((i) => (i > 0 ? i - 1 : i));
       else if (e.key === "ArrowRight") onIndex((i) => (i < items.length - 1 ? i + 1 : i));
+      // Pulsar ⌘/Ctrl (sin clic del ratón) marca la foto grande; pulsarla de nuevo
+      // la desmarca. e.repeat evita disparos múltiples al mantener la tecla.
+      else if ((e.key === "Meta" || e.key === "Control") && !e.repeat) onToggleSelect(items[index]?.id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onIndex, items.length]);
+  }, [onClose, onIndex, items, index, onToggleSelect]);
 
   // Mantiene la miniatura de la foto actual visible y centrada en la tira.
   useEffect(() => {
@@ -31,12 +34,8 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
   const item = items[index];
 
   const handleThumbClick = (e, id, i) => {
-    if (e.metaKey || e.ctrlKey) {
-      e.stopPropagation();
-      onToggleSelect(id);
-    } else {
-      onIndex(i);
-    }
+    e.stopPropagation();
+    onIndex(i);
   };
 
   return (
@@ -70,10 +69,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
             src={item.previewUrl}
             alt={item.filename}
             className="max-h-full max-w-full object-contain"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (e.metaKey || e.ctrlKey) onToggleSelect(item.id);
-            }}
+            onClick={(e) => e.stopPropagation()}
           />
         ) : (
           <div className="flex h-40 w-64 items-center justify-center rounded-lg bg-white/5 text-xs text-white/50">
