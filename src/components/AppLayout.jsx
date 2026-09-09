@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Bell, X, Home, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound, FolderHeart, Brain, History } from "lucide-react";
+import { Menu, Bell, X, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound, FolderHeart, Brain, History } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const navItems = [
   { to: "/herramientas", label: "Herramientas", icon: LayoutGrid },
+  { to: "/flujo-v2", label: "Flujo IA V2", icon: Sparkles },
   { to: "/proyectos", label: "Proyectos", icon: FolderHeart },
   { to: "/cerebro", label: "Cerebro", icon: Brain },
   { to: "/preset-xmp", label: "Preset XMP", icon: FileImage },
@@ -32,7 +33,7 @@ export default function AppLayout() {
   const [user, setUser] = useState(null);
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const isFull = pathname === "/dashboard" || pathname === "/ajustes-ia" || pathname === "/preset-xmp" || pathname === "/proyectos/nuevo" || pathname === "/album";
+  const isFull = pathname === "/dashboard" || pathname === "/ajustes-ia" || pathname === "/preset-xmp" || pathname === "/proyectos/nuevo" || pathname === "/album" || pathname === "/flujo-v2";
 
   useEffect(() => {
     base44.auth.me().then(setUser).catch(() => {});
