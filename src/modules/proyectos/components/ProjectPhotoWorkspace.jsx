@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
 import PreviewLightbox from "./PreviewLightbox";
@@ -21,6 +21,23 @@ export default function ProjectPhotoWorkspace({
   // de las fotos → menos columnas. valor alto del slider = menos columnas = más grande.
   const MIN = 2, MAX = 12;
   const sliderValue = MIN + MAX - cols;
+  // Ancla de la última foto marcada con un clic normal: Shift+clic marca de golpe
+  // todas las fotos entre el ancla y la foto pulsada (rango inclusive).
+  const lastClickRef = useRef(null);
+
+  const handlePhotoClick = (e, item, i) => {
+    if (e.shiftKey && lastClickRef.current != null) {
+      e.preventDefault();
+      const from = Math.min(lastClickRef.current, i);
+      const to = Math.max(lastClickRef.current, i);
+      items.slice(from, to + 1).forEach((it) => {
+        if (!selectedIds.has(it.id)) onToggleSelect(it.id);
+      });
+      return;
+    }
+    lastClickRef.current = i;
+    onToggleSelect(item.id);
+  };
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
@@ -76,8 +93,8 @@ export default function ProjectPhotoWorkspace({
                 {item.previewUrl ? (
                   <div
                     className="aspect-square w-full cursor-pointer bg-black/5"
-                    title="Un clic marca/desmarca · doble clic abre la vista previa"
-                    onClick={() => onToggleSelect(item.id)}
+                    title="Un clic marca/desmarca · Mayús+clic marca un rango · doble clic abre la vista previa"
+                    onClick={(e) => handlePhotoClick(e, item, i)}
                     onDoubleClick={() => setLightboxIndex(i)}
                   >
                     <img src={item.previewUrl} alt={item.filename} className="h-full w-full object-contain" />
