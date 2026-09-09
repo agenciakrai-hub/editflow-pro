@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen, ArrowDownUp } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
 import PreviewLightbox from "./PreviewLightbox";
 
@@ -15,6 +15,28 @@ export default function ProjectPhotoWorkspace({
   onCycleStatus, gridCols, onGridCols, saving, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
 }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
+  // Orden/visor de la galería. Por defecto las fotos se ordenan por HORA DE CAPTURA.
+  // «Seleccionadas»/«No seleccionadas» actúan de filtro (manteniendo el orden temporal);
+  // «Cámara» agrupa por modelo y «Nombre» ordena alfabéticamente.
+  const [viewMode, setViewMode] = useState("capture");
+  const VIEW_MODES = [
+    { value: "capture", label: "Hora de captura" },
+    { value: "selected", label: "Fotos seleccionadas" },
+    { value: "unselected", label: "Fotos no seleccionadas" },
+    { value: "camera", label: "Cámara" },
+    { value: "name", label: "Nombre de la foto" },
+  ];
+  const displayed = useMemo(() => {
+    let list = [...items];
+    if (viewMode === "selected") list = list.filter((it) => selectedIds.has(it.id));
+    else if (viewMode === "unselected") list = list.filter((it) => !selectedIds.has(it.id));
+    const byTime = (a, b) => (a.captureTime || 0) - (b.captureTime || 0);
+    if (viewMode === "name") list.sort((a, b) => a.filename.localeCompare(b.filename, "es", { numeric: true }));
+    else if (viewMode === "camera")
+      list.sort((a, b) => (a.camera || "").localeCompare(b.camera || "") || byTime(a, b));
+    else list.sort(byTime);
+    return list;
+  }, [items, selectedIds, viewMode]);
   const allSelected = items.length > 0 && selectedIds.size === items.length;
   const cols = Math.max(2, Math.min(12, gridCols));
   // Slider invertido: separar el control de "Tamaño" (izquierda) aumenta el tamaño
@@ -55,6 +77,18 @@ export default function ProjectPhotoWorkspace({
           <span className="text-xs text-muted-foreground">
             {items.length} fotos · {selectedIds.size} seleccionadas
           </span>
+          <div className="flex items-center gap-1.5">
+            <ArrowDownUp className="h-3.5 w-3.5 text-muted-foreground" />
+            <select
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value)}
+              className="rounded-md border border-border bg-background px-2 py-1.5 text-xs font-medium"
+            >
+              {VIEW_MODES.map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </div>
           <button
             type="button"
             onClick={onDeleteSelected}
@@ -77,7 +111,7 @@ export default function ProjectPhotoWorkspace({
           className="mt-3 grid gap-2"
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
         >
-          {items.map((item, i) => {
+          {displayed.map((item, i) => {
             const checked = selectedIds.has(item.id);
             return (
               <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${checked ? "border-accent ring-1 ring-accent" : "border-border"}`}>
@@ -162,7 +196,7 @@ export default function ProjectPhotoWorkspace({
 
       {lightboxIndex != null && (
         <PreviewLightbox
-          items={items}
+          items={displayed}
           index={lightboxIndex}
           onIndex={setLightboxIndex}
           onClose={() => setLightboxIndex(null)}

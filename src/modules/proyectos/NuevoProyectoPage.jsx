@@ -365,7 +365,15 @@ export default function NuevoProyectoPage() {
 
       {!extracting && items.length > 0 && (
         <ProjectPhotoWorkspace
-          items={items.map((it) => ({ id: it.id, filename: it.file.name, status: it.status, previewUrl: it.preview?.dataUrl }))}
+          items={items.map((it) => ({
+            id: it.id,
+            filename: it.file.name,
+            status: it.status,
+            previewUrl: it.preview?.dataUrl,
+            // Datos para ordenar: hora de captura (epoch ms) y cámara (marca + modelo).
+            captureTime: it.fingerprint?.capture_time,
+            camera: [it.fingerprint?.camera_make, it.fingerprint?.camera_model].filter(Boolean).join(" "),
+          }))}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
