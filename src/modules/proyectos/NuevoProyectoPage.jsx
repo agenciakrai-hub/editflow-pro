@@ -271,7 +271,10 @@ export default function NuevoProyectoPage() {
           status: effStatus(it),
         }))
       );
-      toast({ title: "Proyecto guardado", description: `${items.length} fotos · ${selCount} seleccionadas` });
+      toast({
+        title: "Proyecto guardado",
+        description: `${items.length} fotos guardadas · ${selectedIds.size} seleccionadas`,
+      });
       return savedId;
     } catch (e) {
       toast({ title: "No se pudo guardar", description: e?.message, variant: "destructive" });

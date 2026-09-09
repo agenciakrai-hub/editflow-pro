@@ -53,7 +53,7 @@ export default function ProjectPhotoWorkspace({
             {allSelected ? "Quitar selección" : "Seleccionar todas"}
           </button>
           <span className="text-xs text-muted-foreground">
-            {items.length} fotos · {selectedIds.size} marcadas
+            {items.length} fotos · {selectedIds.size} seleccionadas
           </span>
           <button
             type="button"

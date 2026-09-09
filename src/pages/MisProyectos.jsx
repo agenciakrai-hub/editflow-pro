@@ -108,7 +108,7 @@ export default function MisProyectos() {
         <div className="space-y-3">
           {projects.map((p) => {
             const fps = fpByProject[p.id] || [];
-            const selCount = fps.filter((f) => f.selection_status === "TOP_PICK" || f.selection_status === "SELECT").length;
+            const selCount = fps.filter((f) => f.marked !== false).length;
             const topCount = fps.filter((f) => f.selection_status === "TOP_PICK").length;
             const isOpen = !!open[p.id];
             return (
