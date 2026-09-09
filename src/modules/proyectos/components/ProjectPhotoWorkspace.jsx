@@ -76,6 +76,8 @@ export default function ProjectPhotoWorkspace({
                 {item.previewUrl ? (
                   <div
                     className="aspect-square w-full cursor-pointer bg-black/5"
+                    title="Un clic marca/desmarca · doble clic abre la vista previa"
+                    onClick={() => onToggleSelect(item.id)}
                     onDoubleClick={() => setLightboxIndex(i)}
                   >
                     <img src={item.previewUrl} alt={item.filename} className="h-full w-full object-contain" />
