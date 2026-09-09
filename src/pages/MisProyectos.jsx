@@ -124,7 +124,7 @@ export default function MisProyectos() {
                     </div>
                   </button>
                   <span className="flex items-center gap-2">
-                    <Link to={`/proyectos/${p.id}`} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary">
+                    <Link to={`/proyectos/nuevo?project=${p.id}`} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary">
                       Abrir
                     </Link>
                     <button onClick={() => remove(p.id)} disabled={deleting === p.id}

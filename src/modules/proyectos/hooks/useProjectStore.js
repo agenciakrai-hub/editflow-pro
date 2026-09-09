@@ -54,3 +54,9 @@ export async function bulkUpdateFingerprints(rows) {
   }
   return out;
 }
+
+// Reemplaza todos los fingerprints del proyecto por el estado actual del espacio de
+// trabajo (fotos eliminadas y cambios de estado incluidos). Filtra por project_id.
+export async function deleteFingerprintsByProject(projectId) {
+  return base44.entities.ProjectPhotoFingerprint.deleteMany({ project_id: projectId });
+}
