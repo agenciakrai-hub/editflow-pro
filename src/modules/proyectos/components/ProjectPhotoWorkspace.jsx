@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen, ArrowDownUp, Undo2, Redo2, Star } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
 import PreviewLightbox from "./PreviewLightbox";
@@ -63,6 +63,11 @@ export default function ProjectPhotoWorkspace({
   // todas las fotos entre el ancla y la foto pulsada (rango inclusive).
   const lastClickRef = useRef(null);
 
+  // Doble clic sin perder la selección: el clic simple espera unos ms antes de
+  // alternar la marca; si llega un segundo clic (doble clic), se cancela la
+  // alternancia y se abre el visor con las fotos marcadas intactas.
+  const clickTimerRef = useRef(null);
+  useEffect(() => () => { if (clickTimerRef.current) clearTimeout(clickTimerRef.current); }, []);
   const handlePhotoClick = (e, item, i) => {
     if (e.shiftKey && lastClickRef.current != null) {
       e.preventDefault();
@@ -73,8 +78,26 @@ export default function ProjectPhotoWorkspace({
       if (markIds.length) onToggleSelectMany(markIds, true);
       return;
     }
+    if (clickTimerRef.current) {
+      // Segundo clic de un doble clic: el visor lo abre onDoubleClick.
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+      return;
+    }
     lastClickRef.current = i;
-    onToggleSelect(item.id);
+    const id = item.id;
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null;
+      onToggleSelect(id);
+    }, 220);
+  };
+
+  const handlePhotoDoubleClick = (i) => {
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    setLightboxIndex(i);
   };
 
   return (
@@ -179,7 +202,7 @@ export default function ProjectPhotoWorkspace({
                     className="aspect-square w-full cursor-pointer bg-black/5"
                     title="Un clic marca/desmarca · Mayús+clic marca un rango · doble clic abre la vista previa"
                     onClick={(e) => handlePhotoClick(e, item, i)}
-                    onDoubleClick={() => setLightboxIndex(i)}
+                    onDoubleClick={() => handlePhotoDoubleClick(i)}
                   >
                     <img src={item.previewUrl} alt={item.filename} className="h-full w-full object-contain" />
                   </div>
