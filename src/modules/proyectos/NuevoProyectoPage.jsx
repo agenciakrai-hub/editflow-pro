@@ -94,6 +94,7 @@ export default function NuevoProyectoPage() {
           file: { name: f.filename },
           status: f.selection_status || "REVIEW",
           rating: f.rating || 0, // estrellas guardadas (apagadas si no se tocó)
+          aiReview: f.color_label === "yellow", // restaura el amarillo de la IA
           fingerprint: f,
           preview: previewByHash.has(f.fingerprint_hash) ? { dataUrl: previewByHash.get(f.fingerprint_hash) } : null,
         }));
@@ -250,6 +251,9 @@ export default function NuevoProyectoPage() {
       // TOP_PICK/REJECT se conserva). Así, al reabrir el proyecto, solo aparecen
       // como seleccionadas las fotos que el fotógrafo dejó realmente marcadas.
       const effStatus = (it) => {
+        // La IA envió esta foto a revisión: se mantiene en REVIEW (amarillo), nunca
+        // se promueve a SELECT aunque siga marcada con el checkbox.
+        if (it.aiReview) return "REVIEW";
         if (selectedIds.has(it.id)) return it.status === "REVIEW" ? "SELECT" : it.status;
         return it.status === "TOP_PICK" || it.status === "REJECT" ? it.status : "REVIEW";
       };
@@ -308,6 +312,9 @@ export default function NuevoProyectoPage() {
           // aparecen marcadas/desmarcadas exactamente como se dejaron al guardar.
           marked: selectedIds.has(it.id),
           ...statusMeta(effStatus(it), it.rating || 0),
+          // La IA envió esta foto a revisión → XMP con 3 ESTRELLAS + etiqueta AMARILLA
+          // (xmp:Rating=3 + xmp:Label="Yellow"), detectable por Lightroom al importar.
+          ...(it.aiReview ? { rating: 3, color_label: "yellow" } : {}),
         }))
       );
 
