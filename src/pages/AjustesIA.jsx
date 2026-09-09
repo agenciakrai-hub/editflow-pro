@@ -499,39 +499,39 @@ export default function AjustesIA() {
   };
 
   return (
-    <div className="min-h-[calc(100vh-4rem)] rounded-xl bg-[#0a0a0a] p-4 sm:p-6 text-zinc-100">
+    <div className="min-h-[calc(100vh-4rem)] rounded-xl bg-background p-4 sm:p-6">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-zinc-500">Ajustes IA</p>
+          <p className="text-sm text-muted-foreground">Ajustes IA</p>
           <h1 className="mt-1 text-2xl font-semibold">Revelado IA independiente</h1>
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-muted-foreground">
             Plantilla mínima. Sin preset ni selección previa.
             {fromSession ? ` ${photos.length} fotos desde la sesión.` : ""}
           </p>
         </div>
         <button
           onClick={() => navigate("/herramientas")}
-          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary"
         >
           <ArrowLeft className="h-3.5 w-3.5" /> Herramientas
         </button>
       </div>
 
       {photos.length === 0 && !extracting && (
-        <div className="mt-6 rounded-xl border border-dashed border-zinc-700 bg-[#141414] p-10 text-center">
+        <div className="mt-6 rounded-xl border border-dashed border-border bg-card p-10 text-center">
           {session.photos?.length ? (
             <div className="space-y-3">
-              <p className="text-sm text-zinc-400">
+              <p className="text-sm text-muted-foreground">
                 Hay {session.photos.length} fotos en la sesión (flujo combinado).
               </p>
               <button
                 onClick={loadSessionPhotos}
-                className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black"
+                className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground"
               >
                 <Sparkles className="h-4 w-4" /> Usar {session.photos.length} fotos de la sesión
               </button>
-              <p className="text-xs text-zinc-500">o carga tu propia carpeta:</p>
-              <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:bg-zinc-800">
+              <p className="text-xs text-muted-foreground">o carga tu propia carpeta:</p>
+              <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-secondary">
                 <FolderOpen className="h-4 w-4" /> Seleccionar carpeta
                 <input
                   type="file"
@@ -545,9 +545,9 @@ export default function AjustesIA() {
             </div>
           ) : (
             <div>
-              <FolderOpen className="mx-auto h-8 w-8 text-zinc-500" />
-              <p className="mt-3 text-sm text-zinc-400">Selecciona la carpeta de RAW</p>
-              <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black">
+              <FolderOpen className="mx-auto h-8 w-8 text-muted-foreground" />
+              <p className="mt-3 text-sm text-muted-foreground">Selecciona la carpeta de RAW</p>
+              <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground">
                 <FolderOpen className="h-4 w-4" /> Seleccionar carpeta
                 <input
                   type="file"
@@ -564,9 +564,9 @@ export default function AjustesIA() {
       )}
 
       {extracting && (
-        <div className="mt-6 rounded-xl border border-zinc-800 bg-[#141414] p-6">
+        <div className="mt-6 rounded-xl border border-border bg-card p-6">
           <p className="text-sm font-medium">Leyendo previews embebidas</p>
-          <p className="mt-3 flex items-center gap-2 text-xs text-zinc-500">
+          <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" /> {extDone} procesadas
           </p>
         </div>
@@ -575,7 +575,7 @@ export default function AjustesIA() {
       {photos.length > 0 && !extracting && (
         <div className="mt-6 space-y-4">
           <div className="flex items-center justify-between">
-            <p className="text-xs text-emerald-400">
+            <p className="text-xs text-emerald-600">
               {photos.length} fotos cargadas{fromSession ? " (sesión)" : ""}
             </p>
             <button
@@ -584,38 +584,38 @@ export default function AjustesIA() {
                 setResults([]);
                 setProfile(null);
               }}
-              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary"
             >
               <ArrowLeft className="h-3.5 w-3.5" /> Cambiar carpeta
             </button>
           </div>
 
-          <div className="rounded-xl border border-zinc-800 bg-[#141414] p-6">
+          <div className="rounded-xl border border-border bg-card p-6">
             <div className="mb-4 flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => setMode("free")}
-                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "free" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "free" ? "bg-accent text-accent-foreground" : "border border-border text-foreground hover:bg-secondary"}`}
               >
                 Auto Ajustes Básicos Pro — GRATIS
               </button>
               <button
                 type="button"
                 onClick={() => setMode("qwen")}
-                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "qwen" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "qwen" ? "bg-accent text-accent-foreground" : "border border-border text-foreground hover:bg-secondary"}`}
               >
                 Revelado IA Visual — {ajustesProviderName || "IA activa"}
               </button>
               <button
                 type="button"
                 onClick={() => setMode("hybrid")}
-                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "hybrid" ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "hybrid" ? "bg-accent text-accent-foreground" : "border border-border text-foreground hover:bg-secondary"}`}
               >
                 Híbrido — IA Económico
               </button>
             </div>
             <div className="mt-4">
-              <p className="mb-2 text-xs font-medium text-zinc-400">Estilo de edición</p>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Estilo de edición</p>
               <div className="flex items-center gap-2">
                 {[
                   { id: "none", label: "Sin estilo" },
@@ -626,7 +626,7 @@ export default function AjustesIA() {
                     key={opt.id}
                     type="button"
                     onClick={() => chooseEditStyle(opt.id)}
-                    className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${editStyleMode === opt.id ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+                    className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${editStyleMode === opt.id ? "bg-accent text-accent-foreground" : "border border-border text-foreground hover:bg-secondary"}`}
                   >
                     {opt.label}
                   </button>
@@ -635,7 +635,7 @@ export default function AjustesIA() {
               <button
                 type="button"
                 onClick={() => chooseEditStyle("mis-estilos")}
-                className={`mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${editStyleMode === "mis-estilos" ? "bg-emerald-500 text-black" : "border border-emerald-600 text-emerald-400 hover:bg-emerald-950/40"}`}
+                className={`mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${editStyleMode === "mis-estilos" ? "bg-emerald-600 text-white" : "border border-emerald-600 text-emerald-700 hover:bg-emerald-50"}`}
               >
                 <Brain className="h-3.5 w-3.5" /> ✨ Mis Estilos
               </button>
@@ -643,30 +643,30 @@ export default function AjustesIA() {
                 <div className="mt-2 space-y-2">
                   {cerebroPresets.length > 0 && (
                     <div>
-                      <p className="text-xs text-zinc-500">Presets registrados en Cerebro:</p>
+                      <p className="text-xs text-muted-foreground">Presets registrados en Cerebro:</p>
                       <select
                         value={selectedCerebroPreset?.id || ""}
                         onChange={(e) => {
                           const p = cerebroPresets.find((x) => x.id === e.target.value);
                           if (p) selectCerebroPreset(p);
                         }}
-                        className="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200"
+                        className="mt-1 w-full rounded-md border border-border bg-secondary px-3 py-2 text-xs text-foreground"
                       >
                         <option value="">Selecciona un preset…</option>
                         {cerebroPresets.map((p) => (
                           <option key={p.id} value={p.id}>{p.name}{p.version ? ` (${p.version})` : ""}</option>
                         ))}
                       </select>
-                      {loadingStylePreset && <p className="mt-1 text-xs text-zinc-500">Cargando preset…</p>}
+                      {loadingStylePreset && <p className="mt-1 text-xs text-muted-foreground">Cargando preset…</p>}
                     </div>
                   )}
-                  <p className="text-xs text-zinc-500">o carga un preset .xmp local en el bloque de abajo.</p>
+                  <p className="text-xs text-muted-foreground">o carga un preset .xmp local en el bloque de abajo.</p>
                 </div>
               )}
               {editStyleMode === "profile" && (
                 <div className="mt-2">
                   {profiles.length === 0 ? (
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-muted-foreground">
                       No tienes perfiles guardados. Crea uno en{" "}
                       <button onClick={() => navigate("/estilos")} className="text-accent underline">Creador de estilos</button>.
                     </p>
@@ -677,7 +677,7 @@ export default function AjustesIA() {
                         const p = profiles.find((x) => x.id === e.target.value);
                         if (p) chooseProfile(p);
                       }}
-                      className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-200"
+                      className="w-full rounded-md border border-border bg-secondary px-3 py-2 text-xs text-foreground"
                     >
                       <option value="">Selecciona un perfil…</option>
                       {profiles.map((p) => (
@@ -690,7 +690,7 @@ export default function AjustesIA() {
               {editStyleMode === "mis-estilos" && (
                 <div className="mt-2">
                   {cerebroStyles.length === 0 ? (
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-xs text-muted-foreground">
                       No tienes estilos guardados. Procesa fotos con un preset de Cerebro para crear uno automáticamente.
                     </p>
                   ) : (
@@ -700,10 +700,10 @@ export default function AjustesIA() {
                           key={s.id}
                           type="button"
                           onClick={() => selectCerebroStyle(s)}
-                          className={`w-full rounded-md border px-3 py-2 text-left text-xs transition-colors ${selectedStyle?.id === s.id ? "border-emerald-500 bg-emerald-950/40" : "border-zinc-700 hover:bg-zinc-800"}`}
+                          className={`w-full rounded-md border px-3 py-2 text-left text-xs transition-colors ${selectedStyle?.id === s.id ? "border-emerald-600 bg-emerald-50" : "border-border hover:bg-secondary"}`}
                         >
-                          <p className="font-semibold text-zinc-200">{s.name}</p>
-                          <p className="mt-0.5 text-zinc-500">
+                          <p className="font-semibold text-foreground">{s.name}</p>
+                          <p className="mt-0.5 text-muted-foreground">
                             {s.photos_processed || 0} fotos · {s.learning_percentage || 0}% aprendizaje · {s.correction_count || 0} correcciones
                           </p>
                         </button>
@@ -711,7 +711,7 @@ export default function AjustesIA() {
                     </div>
                   )}
                   {selectedStyle && (
-                    <p className="mt-2 text-xs text-emerald-400">
+                    <p className="mt-2 text-xs text-emerald-600">
                       Configuración automática aplicada: preset «{selectedStyle.preset_name}» cargado como plantilla de entrada.
                     </p>
                   )}
@@ -720,7 +720,7 @@ export default function AjustesIA() {
             </div>
             <PrecisionModeSelector value={precisionMode} onChange={setPrecisionMode} />
             <div className="mt-3">
-              <p className="mb-2 text-xs font-medium text-zinc-400">Tratamiento</p>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Tratamiento</p>
               <div className="flex items-center gap-2">
                 {[
                   { id: "auto", label: "Automático" },
@@ -731,19 +731,19 @@ export default function AjustesIA() {
                     key={opt.id}
                     type="button"
                     onClick={() => setTreatment(opt.id)}
-                    className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${treatment === opt.id ? "bg-white text-black" : "border border-zinc-700 text-zinc-300 hover:bg-zinc-800"}`}
+                    className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${treatment === opt.id ? "bg-accent text-accent-foreground" : "border border-border text-foreground hover:bg-secondary"}`}
                   >
                     {opt.label}
                   </button>
                 ))}
               </div>
-              <p className="mt-2 text-xs text-zinc-500">
+              <p className="mt-2 text-xs text-muted-foreground">
                 Automático respeta el sensor (color→Color, monocromo→B/N). Color fuerza color. Monocromo conserva B/N.
               </p>
             </div>
             {mode === "free" && (
               <>
-                <p className="mt-4 text-xs text-zinc-500">
+                <p className="mt-4 text-xs text-muted-foreground">
                   Motor matemático local 100 % determinista. Sin IA, sin créditos y sin subida de imágenes. Analiza
                   histograma RGB por canal + luminancia, clipping de altas luces y sombras, distribución tonal y contraste
                   global para calcular los 6 básicos: Exposure, Contrast, Highlights, Shadows, Whites y Blacks.
@@ -754,15 +754,15 @@ export default function AjustesIA() {
                       presetFile={presetFile}
                       onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
                     />
-                    <p className="mt-2 text-xs text-zinc-500">
+                    <p className="mt-2 text-xs text-muted-foreground">
                       Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…); el motor local
                       solo rellena los 6 básicos sobre él. Sin preset se usa una plantilla mínima.
                     </p>
                   </>
                 )}
                 {editStyleMode === "profile" && selectedProfile && (
-                  <p className="mt-2 text-xs text-zinc-500">
-                    Aplicando el perfil <span className="text-zinc-300">{selectedProfile.name}</span> como capa creativa.
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Aplicando el perfil <span className="text-foreground">{selectedProfile.name}</span> como capa creativa.
                     Los 6 básicos y el WB se calculan por foto.
                   </p>
                 )}
@@ -770,8 +770,8 @@ export default function AjustesIA() {
             )}
             {mode === "hybrid" && (
               <>
-                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado Híbrido — IA Económico</p>
-                <p className="mt-1 text-xs text-zinc-500">
+                <p className="mt-4 text-sm font-medium text-foreground">Revelado Híbrido — IA Económico</p>
+                <p className="mt-1 text-xs text-muted-foreground">
                   La IA que trabaja es SIEMPRE el proveedor activo por herramienta AJUSTES{ajustesProviderName ? ` (${ajustesProviderName})` : ""}: analiza
                   solo unas pocas fotos representativas (1 llamada) y genera un perfil de sesión con el look coherente.
                   El motor local adapta ese perfil a cada foto corrigiendo exposición/luces/sombras según su histograma
@@ -784,32 +784,32 @@ export default function AjustesIA() {
                       presetFile={presetFile}
                       onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
                     />
-                    <p className="mt-2 text-xs text-zinc-500">
+                    <p className="mt-2 text-xs text-muted-foreground">
                       Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…) como plantilla
                       base; la IA solo rellena los básicos sobre él. No afecta al cálculo del revelado IA.
                     </p>
                   </>
                 )}
                 {editStyleMode === "profile" && selectedProfile && (
-                  <p className="mt-2 text-xs text-zinc-500">
-                    Aplicando el perfil <span className="text-zinc-300">{selectedProfile.name}</span> como capa creativa.
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Aplicando el perfil <span className="text-foreground">{selectedProfile.name}</span> como capa creativa.
                     Los básicos y el WB se calculan por foto.
                   </p>
                 )}
                 <ParameterPanel config={config} onChange={setConfig} />
                 {profile && (
-                  <div className="mt-3 rounded-md border border-zinc-700 bg-zinc-900 p-3">
-                    <p className="text-xs font-medium text-zinc-200">Perfil de sesión generado</p>
-                    <p className="mt-1 text-xs text-zinc-500">{profile.analysis || "Sin descripción"}</p>
-                    <p className="mt-1 text-xs text-zinc-500">Confianza: {profile.confidence ?? "—"}</p>
+                  <div className="mt-3 rounded-md border border-border bg-secondary p-3">
+                    <p className="text-xs font-medium text-foreground">Perfil de sesión generado</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{profile.analysis || "Sin descripción"}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Confianza: {profile.confidence ?? "—"}</p>
                   </div>
                 )}
               </>
             )}
             {mode === "qwen" && (
               <>
-                <p className="mt-4 text-sm font-medium text-zinc-100">Revelado IA Visual — {ajustesProviderName || "IA activa"}</p>
-                <p className="mt-1 text-xs text-zinc-500">
+                <p className="mt-4 text-sm font-medium text-foreground">Revelado IA Visual — {ajustesProviderName || "IA activa"}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
                   {ajustesProviderName ? `Usa SIEMPRE el proveedor activo por herramienta AJUSTES (${ajustesProviderName}): ese modelo analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado completos, no solo el histograma. ` : "La IA analiza el contenido de cada foto (sujeto, luz, color, mood) y decide los ajustes de revelado completos, no solo el histograma. "}
                   Selecciona qué parámetros aplicar; la preferencia es un desplazamiento que se suma a la decisión de la IA (0 = sin desplazar).
                 </p>
@@ -821,7 +821,7 @@ export default function AjustesIA() {
           <button
             onClick={processAll}
             disabled={busy || awaitingConfirm}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-white px-4 py-3 text-sm font-semibold text-black disabled:opacity-40"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground disabled:opacity-40"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             {busy
@@ -846,23 +846,23 @@ export default function AjustesIA() {
           )}
 
           {results.length > 0 && !busy && (
-            <div className="rounded-xl border border-emerald-800 bg-emerald-950/40 p-5 space-y-4">
-              <div className="flex items-center gap-2 text-emerald-400">
+            <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-5 space-y-4">
+              <div className="flex items-center gap-2 text-emerald-600">
                 <CheckCircle2 className="h-5 w-5" />
                 <p className="text-sm font-semibold">{results.length} XMP generados. Elige cómo exportarlos:</p>
               </div>
-              <p className="text-xs text-zinc-400">
+              <p className="text-xs text-muted-foreground">
                 Validación: {results.filter((r) => r.needsCorrection).length} fotos con corrección aplicada ·{" "}
                 {results.filter((r) => !r.needsCorrection).length} ya equilibradas (sin ajuste).
               </p>
               <PerformanceMetrics metrics={metrics} />
               {results.some((r) => r.wb) && (
-                <div className="rounded-md border border-zinc-800 bg-[#141414] p-3 space-y-1.5">
-                  <p className="text-xs font-medium text-zinc-300">Balance de blancos por foto</p>
+                <div className="rounded-md border border-border bg-card p-3 space-y-1.5">
+                  <p className="text-xs font-medium text-foreground">Balance de blancos por foto</p>
                   <div className="max-h-48 overflow-y-auto space-y-1.5 scrollbar-hide">
                     {results.map((r) => (
                       <div key={r.filename} className="flex flex-col gap-0.5">
-                        <span className="text-[10px] text-zinc-500 truncate">{r.filename}</span>
+                        <span className="text-[10px] text-muted-foreground truncate">{r.filename}</span>
                         <WbBreakdown wb={r.wb} />
                       </div>
                     ))}
@@ -873,7 +873,7 @@ export default function AjustesIA() {
                 <button
                   onClick={downloadZip}
                   disabled={zipping}
-                  className="inline-flex items-center justify-center gap-2 rounded-md bg-white px-4 py-3 text-sm font-semibold text-black hover:bg-zinc-200 disabled:opacity-40"
+                  className="inline-flex items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground hover:opacity-90 disabled:opacity-40"
                 >
                   {zipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />} Descargar ZIP completo
                 </button>
@@ -889,14 +889,14 @@ export default function AjustesIA() {
                     <button
                       onClick={syncToLightroom}
                       disabled={syncing}
-                      className="inline-flex items-center justify-center gap-2 rounded-md border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm font-semibold text-white hover:bg-zinc-800 disabled:opacity-40"
+                      className="inline-flex items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-3 text-sm font-semibold text-foreground hover:bg-secondary disabled:opacity-40"
                     >
                       {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />} Sincronizar con Lightroom
                     </button>
                   ))}
               </div>
               {!fromSession && (
-                <p className="text-xs text-zinc-500">
+                <p className="text-xs text-muted-foreground">
                   Lightroom solo está disponible en el flujo combinado (fotos desde la sesión).
                 </p>
               )}
