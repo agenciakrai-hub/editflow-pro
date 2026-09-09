@@ -69,10 +69,19 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
         {item.previewUrl ? (
           <div
             className={
-              "inline-flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-md border-4 transition-colors " +
-              (selectedIds.has(item.id) ? "border-green-500" : "border-transparent")
+              "relative inline-flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-md border-4 transition-colors " +
+              (item.aiReview ? "border-yellow-400" : selectedIds.has(item.id) ? "border-green-500" : "border-transparent")
             }
           >
+            {(item.aiReview || selectedIds.has(item.id)) && (
+              <span
+                className={
+                  "absolute right-2 top-2 z-10 h-3.5 w-3.5 rounded-full ring-2 ring-black/50 " +
+                  (item.aiReview ? "bg-yellow-400" : "bg-green-500")
+                }
+                title={item.aiReview ? "A revisar" : "Seleccionada"}
+              />
+            )}
             <img
               src={item.previewUrl}
               alt={item.filename}
@@ -124,6 +133,8 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
       >
         {items.map((it, i) => {
           const marked = selectedIds.has(it.id);
+          // Punto/marco de color: amarillo = a revisar (prevalece), verde = seleccionada.
+          const review = !!it.aiReview;
           return (
             <div
               key={it.id}
@@ -132,15 +143,27 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
               className={
                 "relative shrink-0 cursor-pointer overflow-hidden rounded-md border transition-opacity " +
                 (i === index
-                  ? marked
-                    ? "border-green-500 ring-2 ring-green-500"
-                    : "border-white ring-2 ring-white"
-                  : marked
-                    ? "border-green-500"
-                    : "border-white/10")
+                  ? review
+                    ? "border-yellow-400 ring-2 ring-yellow-400"
+                    : marked
+                      ? "border-green-500 ring-2 ring-green-500"
+                      : "border-white ring-2 ring-white"
+                  : review
+                    ? "border-yellow-400"
+                    : marked
+                      ? "border-green-500"
+                      : "border-white/10")
               }
               title={it.filename}
             >
+              {(review || marked) && (
+                <span
+                  className={
+                    "absolute right-1 top-1 z-10 h-2.5 w-2.5 rounded-full ring-1 ring-black/50 " +
+                    (review ? "bg-yellow-400" : "bg-green-500")
+                  }
+                />
+              )}
               {it.previewUrl ? (
                 <img
                   src={it.previewUrl}
