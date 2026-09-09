@@ -202,6 +202,10 @@ export default function NuevoProyectoPage() {
     const id = await save();
     if (id) navigate("/ajustes-ia");
   };
+  const goAlbum = async () => {
+    const id = await save();
+    if (id) navigate("/album");
+  };
 
   return (
     <div className="space-y-6">
@@ -283,6 +287,7 @@ export default function NuevoProyectoPage() {
           onSave={save}
           onGoSeleccion={goSeleccion}
           onGoEditar={goEditar}
+          onGoAlbum={goAlbum}
         />
       )}
     </div>

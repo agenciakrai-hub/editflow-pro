@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2 } from "lucide-react";
+import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
 import Lightbox from "@/components/Lightbox";
 
@@ -12,7 +12,7 @@ import Lightbox from "@/components/Lightbox";
 //  - Barra lateral derecha con Guardar, Selección y Editar (con sus rutas).
 export default function ProjectPhotoWorkspace({
   items, selectedIds, onToggleSelect, onToggleSelectAll, onDeleteSelected,
-  onCycleStatus, gridCols, onGridCols, saving, onSave, onGoSeleccion, onGoEditar,
+  onCycleStatus, gridCols, onGridCols, saving, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
 }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const allSelected = items.length > 0 && selectedIds.size === items.length;
@@ -128,8 +128,16 @@ export default function ProjectPhotoWorkspace({
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
             Editar
           </button>
+          <button
+            onClick={onGoAlbum}
+            disabled={saving}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary disabled:opacity-40"
+          >
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
+            Maquetar álbum
+          </button>
           <p className="text-[11px] leading-tight text-muted-foreground">
-            «Selección» y «Editar» guardan el proyecto y abren la herramienta correspondiente.
+            «Selección», «Editar» y «Maquetar álbum» guardan el proyecto y abren la herramienta correspondiente.
           </p>
         </div>
       </aside>
