@@ -393,11 +393,13 @@ export default function NuevoProyectoPage() {
         if (!m) return it;
         const status = m.status || (keep.has(it.id) ? "SELECT" : "REVIEW");
         const aiSelected = status === "SELECT" || status === "TOP_PICK";
+        const review = !aiSelected && status !== "REJECT";
         return {
           ...it,
           status,
-          rating: aiSelected ? 5 : 0,
-          aiReview: !aiSelected && status !== "REJECT",
+          // Elegidas por la IA: 5★ · enviadas a revisar: 3★ (amarillo) · descartadas: 0★.
+          rating: aiSelected ? 5 : review ? 3 : 0,
+          aiReview: review,
         };
       }));
       toast({ title: "Selección IA completada" });

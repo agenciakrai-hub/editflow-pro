@@ -50,6 +50,10 @@ export default function ProjectPhotoWorkspace({
     return list;
   }, [items, selectedIds, viewMode]);
   const allSelected = items.length > 0 && selectedIds.size === items.length;
+  // Contadores en vivo por color: verdes = validadas (SELECT/TOP_PICK de la IA o del
+  // fotógrafo), amarillas = enviadas a revisar por la selección IA.
+  const validadasCount = items.filter((it) => !it.aiReview && (it.status === "SELECT" || it.status === "TOP_PICK")).length;
+  const reviewCount = items.filter((it) => it.aiReview).length;
   const cols = Math.max(2, Math.min(12, gridCols));
   // Slider invertido: separar el control de "Tamaño" (izquierda) aumenta el tamaño
   // de las fotos → menos columnas. valor alto del slider = menos columnas = más grande.
@@ -89,6 +93,17 @@ export default function ProjectPhotoWorkspace({
           <span className="text-xs text-muted-foreground">
             {items.length} fotos · {selectedIds.size} seleccionadas
           </span>
+          <div className="flex items-center gap-2 rounded-full bg-foreground px-3 py-1.5 text-xs font-medium">
+            <span className="inline-flex items-center gap-1.5 text-green-400">
+              <span className="h-2 w-2 rounded-full bg-green-400" />
+              {validadasCount} validadas
+            </span>
+            <span className="text-background/40">·</span>
+            <span className="inline-flex items-center gap-1.5 text-yellow-400">
+              <span className="h-2 w-2 rounded-full bg-yellow-400" />
+              {reviewCount} a revisar
+            </span>
+          </div>
           <div className="flex items-center gap-1.5">
             <ArrowDownUp className="h-3.5 w-3.5 text-muted-foreground" />
             <select
