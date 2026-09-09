@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen, ArrowDownUp } from "lucide-react";
+import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen, ArrowDownUp, Undo2, Redo2 } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
 import PreviewLightbox from "./PreviewLightbox";
 
@@ -11,8 +11,9 @@ import PreviewLightbox from "./PreviewLightbox";
 //  - Selección múltiple (Seleccionar todas / individual) + botón Eliminar.
 //  - Barra lateral derecha con Guardar, Selección y Editar (con sus rutas).
 export default function ProjectPhotoWorkspace({
-  items, selectedIds, onToggleSelect, onToggleSelectAll, onDeleteSelected,
+  items, selectedIds, onToggleSelect, onToggleSelectMany, onToggleSelectAll, onDeleteSelected,
   onCycleStatus, gridCols, onGridCols, saving, busyAction, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
+  onUndo, onRedo, canUndo, canRedo,
 }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
   // Orden/visor de la galería. Por defecto las fotos se ordenan por HORA DE CAPTURA.
@@ -62,9 +63,9 @@ export default function ProjectPhotoWorkspace({
       e.preventDefault();
       const from = Math.min(lastClickRef.current, i);
       const to = Math.max(lastClickRef.current, i);
-      items.slice(from, to + 1).forEach((it) => {
-        if (!selectedIds.has(it.id)) onToggleSelect(it.id);
-      });
+      // El rango entero cuenta como UN solo paso de deshacer (⌘Z lo revierte de golpe).
+      const markIds = items.slice(from, to + 1).filter((it) => !selectedIds.has(it.id)).map((it) => it.id);
+      if (markIds.length) onToggleSelectMany(markIds, true);
       return;
     }
     lastClickRef.current = i;
@@ -107,6 +108,26 @@ export default function ProjectPhotoWorkspace({
           >
             <Trash2 className="h-3.5 w-3.5" /> Eliminar
           </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
+              title="Deshacer (⌘Z)"
+              className="inline-flex items-center rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40"
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={onRedo}
+              disabled={!canRedo}
+              title="Rehacer (⌘Y)"
+              className="inline-flex items-center rounded-md border border-border px-2 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40"
+            >
+              <Redo2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
           <div className="ml-auto flex items-center gap-2">
             <span className="text-xs text-muted-foreground">Tamaño</span>
             <input

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, FileText, Loader2, ArrowLeft } from "lucide-react";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
@@ -9,6 +9,7 @@ import { saveHandle, getHandleRecord } from "./lib/idbHandles";
 import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, getCatalogBinding, listFingerprints, updateProject, updateCatalogBinding, deleteFingerprintsByProject } from "./hooks/useProjectStore";
 import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
 import { useToast } from "@/components/ui/use-toast";
+import useUndoRedo from "@/hooks/useUndoRedo";
 import { setPendingProjectPreviews } from "@/lib/rawaistudio/localSession";
 import { cachePreviews, getCachedPreviews } from "./lib/previewCache";
 
@@ -34,6 +35,14 @@ export default function NuevoProyectoPage() {
   // Selección múltiple para eliminar + densidad del grid.
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [gridCols, setGridCols] = useState(5);
+  // Historial deshacer/rehacer (⌘Z / ⌘Y) de los cambios en la galería: selección
+  // (individual, rango con Mayús, todas), estados y eliminaciones. Cada acción
+  // registra un paso ANTES de aplicarse. El guardado no se deshace.
+  const itemsRef = useRef(items); itemsRef.current = items;
+  const selectedRef = useRef(selectedIds); selectedRef.current = selectedIds;
+  const getSnapshot = useCallback(() => ({ items: itemsRef.current, selectedIds: selectedRef.current }), []);
+  const applySnapshot = useCallback((s) => { setItems(s.items); setSelectedIds(s.selectedIds); }, []);
+  const { record, reset, undo, redo, canUndo, canRedo } = useUndoRedo({ getSnapshot, applySnapshot });
   // Reabrir un proyecto existente: «Abrir» (Mis proyectos) llega con ?project=<id> y
   // carga en ESTA MISMA página los datos guardados — nombre, fecha, catálogo/carpeta
   // y las fotos con sus estados — para continuar exactamente donde se dejó.
@@ -144,6 +153,7 @@ export default function NuevoProyectoPage() {
     // Por defecto TODAS las fotos quedan marcadas (checkbox) al subir la carpeta:
     // el fotógrafo parte de la selección completa y desmarca solo lo que no quiera.
     setSelectedIds(new Set(withFingerprint.map((p) => p.id)));
+    reset(); // historial nuevo para la carpeta recién importada
     setExtracting(false);
   };
 
@@ -158,21 +168,38 @@ export default function NuevoProyectoPage() {
   };
 
   const cycleStatus = (id) => {
+    record();
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: SELECTION_CYCLE[it.status] || "REVIEW" } : it)));
   };
 
-  const toggleSelect = (id) =>
+  const toggleSelect = (id) => {
+    record();
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+  };
 
-  const toggleSelectAll = () =>
+  // Marca/desmarca varias fotos a la vez (rango con Mayús) como UN solo paso.
+  const toggleSelectMany = (ids, mark) => {
+    if (!ids.length) return;
+    record();
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => (mark ? next.add(id) : next.delete(id)));
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    record();
     setSelectedIds((prev) => (prev.size === items.length ? new Set() : new Set(items.map((it) => it.id))));
+  };
 
   const deleteSelected = () => {
     if (selectedIds.size === 0) return;
+    record();
     setItems((prev) => prev.filter((it) => !selectedIds.has(it.id)));
     setSelectedIds(new Set());
   };
@@ -395,7 +422,12 @@ export default function NuevoProyectoPage() {
           }))}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
+          onToggleSelectMany={toggleSelectMany}
           onToggleSelectAll={toggleSelectAll}
+          onUndo={undo}
+          onRedo={redo}
+          canUndo={canUndo}
+          canRedo={canRedo}
           onDeleteSelected={deleteSelected}
           onCycleStatus={cycleStatus}
           gridCols={gridCols}

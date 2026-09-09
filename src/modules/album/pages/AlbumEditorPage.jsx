@@ -441,6 +441,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         e.preventDefault();
         if (e.shiftKey) shortcutsRef.current.redo?.();
         else shortcutsRef.current.undo?.();
+      } else if (k === "y") {
+        e.preventDefault();
+        shortcutsRef.current.redo?.();
       } else if (k === "s") {
         e.preventDefault();
         shortcutsRef.current.save?.();

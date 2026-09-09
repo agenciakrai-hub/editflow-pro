@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, Loader2, Save } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Undo2, Redo2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { getProject, getCatalogBinding, listFingerprints, updateProject, updateCatalogBinding, bulkUpdateFingerprints } from "./hooks/useProjectStore";
 import { useFileSync } from "./hooks/useFileSync";
@@ -14,6 +14,7 @@ import LocationNotFoundModal from "./components/LocationNotFoundModal";
 import SelectionSummary from "./components/SelectionSummary";
 import PhotoFingerprintGrid from "./components/PhotoFingerprintGrid";
 import { useToast } from "@/components/ui/use-toast";
+import useUndoRedo from "@/hooks/useUndoRedo";
 import { takePendingProjectPreviews } from "@/lib/rawaistudio/localSession";
 import { getCachedPreviews } from "./lib/previewCache";
 
@@ -40,6 +41,12 @@ export default function DetalleProyectoPage() {
   const [resyncing, setResyncing] = useState(false);
   const [mode, setMode] = useState("select"); // "select" | "summary"
   const [statusDraft, setStatusDraft] = useState({});
+  // Historial de cambios de estado de las fotos: ⌘Z deshace, ⌘Y rehace.
+  const statusDraftRef = useRef(statusDraft); statusDraftRef.current = statusDraft;
+  const { record, undo, redo, canUndo, canRedo } = useUndoRedo({
+    getSnapshot: () => statusDraftRef.current,
+    applySnapshot: (s) => setStatusDraft(s),
+  });
   const [saving, setSaving] = useState(false);
   const [previewByHash, setPreviewByHash] = useState(new Map());
 
@@ -179,6 +186,7 @@ export default function DetalleProyectoPage() {
   };
 
   const cycleStatus = (fpId) => {
+    record();
     setStatusDraft((prev) => {
       const current = prev[fpId] ?? fingerprints.find((f) => f.id === fpId)?.selection_status ?? "REVIEW";
       return { ...prev, [fpId]: SELECTION_CYCLE[current] || "REVIEW" };
@@ -309,6 +317,24 @@ export default function DetalleProyectoPage() {
           <p className="text-sm text-muted-foreground">
             {fingerprints.length} fotografías disponibles · toca cada tarjeta para cambiar su estado.
           </p>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={undo}
+              disabled={!canUndo}
+              title="Deshacer (⌘Z)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40"
+            >
+              <Undo2 className="h-3.5 w-3.5" /> Deshacer
+            </button>
+            <button
+              onClick={redo}
+              disabled={!canRedo}
+              title="Rehacer (⌘Y)"
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40"
+            >
+              <Redo2 className="h-3.5 w-3.5" /> Rehacer
+            </button>
+          </div>
           <PhotoFingerprintGrid items={gridItems} onCycleStatus={cycleStatus} />
           <button
             onClick={saveSelection}
