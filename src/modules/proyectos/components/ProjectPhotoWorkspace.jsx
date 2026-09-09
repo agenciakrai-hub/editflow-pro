@@ -27,12 +27,14 @@ export default function ProjectPhotoWorkspace({
     { value: "capture", label: "Hora de captura" },
     { value: "selected", label: "Fotos seleccionadas" },
     { value: "unselected", label: "Fotos no seleccionadas" },
+    { value: "stars", label: "Fotos con estrellas" },
     { value: "camera", label: "Cámara" },
   ];
   const displayed = useMemo(() => {
     let list = [...items];
     if (viewMode === "selected") list = list.filter((it) => selectedIds.has(it.id));
     else if (viewMode === "unselected") list = list.filter((it) => !selectedIds.has(it.id));
+    else if (viewMode === "stars") list = list.filter((it) => (it.rating || 0) > 0);
     // Orden temporal. Sin hora de captura (p. ej. proyectos guardados antes de leer
     // el EXIF de las .CR3), recurre al nombre — la numeración de cámara (KRFC####) es
     // cronológica — para que «Hora de captura» siempre dé un orden real.
