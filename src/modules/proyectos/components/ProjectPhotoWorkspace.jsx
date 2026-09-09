@@ -76,8 +76,8 @@ export default function ProjectPhotoWorkspace({
                 </div>
                 {item.previewUrl ? (
                   <div
-                    className="aspect-square w-full cursor-zoom-in bg-black/5"
-                    onClick={() => setLightboxIndex(i)}
+                    className="aspect-square w-full cursor-pointer bg-black/5"
+                    onDoubleClick={() => setLightboxIndex(i)}
                   >
                     <img src={item.previewUrl} alt={item.filename} className="h-full w-full object-contain" />
                   </div>
