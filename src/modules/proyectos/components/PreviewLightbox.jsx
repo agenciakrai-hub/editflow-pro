@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 
 // Vista previa a pantalla completa (modo revisión): foto grande al centro, contador
-// de totales/seleccionadas arriba, instrucción de la tecla ⌘ y tira de miniaturas
-// abajo. ⌘/Ctrl+clic sobre una miniatura (o la foto grande) marca/desmarca la foto:
-// la selección es la MISMA del espacio de trabajo del proyecto, así que al cerrar la
-// vista previa la galería refleja lo marcado aquí (y viceversa). Flechas ←/→ navegan,
-// Esc o clic fuera cierra. Todas las fotos se ven iluminadas; las marcadas con ⌘
-// lucen un marco verde (en la foto grande y en su miniatura).
-export default function PreviewLightbox({ items, index, onIndex, onClose, selectedIds, onToggleSelect }) {
+// de totales/seleccionadas arriba y tira de miniaturas abajo. ⌘/Ctrl+clic sobre la
+// foto grande o una miniatura: foto en revisión → validada (verde); foto verde →
+// desmarcada; sin marcar → marcada. La selección es la MISMA del espacio de trabajo,
+// así que al cerrar la vista previa la galería refleja lo hecho aquí (y viceversa).
+// Flechas ←/→ navegan, Esc o clic fuera cierra. Verde = seleccionada, amarillo = a
+// revisar (marco + punto en la foto grande y en cada miniatura).
+export default function PreviewLightbox({ items, index, onIndex, onClose, selectedIds, onToggleSelect, onValidate }) {
   const stripRef = useRef(null);
   // Tamaño de las miniaturas de la tira inferior, ajustable con la barra.
   const [thumbH, setThumbH] = useState(80);
@@ -18,13 +18,10 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowLeft") onIndex((i) => (i > 0 ? i - 1 : i));
       else if (e.key === "ArrowRight") onIndex((i) => (i < items.length - 1 ? i + 1 : i));
-      // Pulsar ⌘/Ctrl (sin clic del ratón) marca la foto grande; pulsarla de nuevo
-      // la desmarca. e.repeat evita disparos múltiples al mantener la tecla.
-      else if ((e.key === "Meta" || e.key === "Control") && !e.repeat) onToggleSelect(items[index]?.id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onIndex, items, index, onToggleSelect]);
+  }, [onClose, onIndex, items]);
 
   // Mantiene la miniatura de la foto actual visible y centrada en la tira.
   useEffect(() => {
@@ -35,8 +32,17 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
   if (index == null || index < 0 || index >= items.length) return null;
   const item = items[index];
 
-  const handleThumbClick = (e, id, i) => {
+  // ⌘/Ctrl+clic: foto en revisión (amarilla) → validada (verde); foto ya verde
+  // → se desmarca; foto sin marcar → se marca. Un clic normal solo navega.
+  const cmdClick = (it) => {
+    if (it.aiReview && onValidate) onValidate(it.id);
+    else onToggleSelect(it.id);
+  };
+  const isCmd = (e) => e.metaKey || e.ctrlKey;
+
+  const handleThumbClick = (e, it, i) => {
     e.stopPropagation();
+    if (isCmd(e)) { cmdClick(it); return; }
     onIndex(i);
   };
 
@@ -86,7 +92,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
               src={item.previewUrl}
               alt={item.filename}
               className="max-h-full max-w-full object-contain"
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); if (isCmd(e)) cmdClick(item); }}
             />
           </div>
         ) : (
@@ -110,7 +116,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
           fondo del visor y lo cierra. */}
       <div className="flex shrink-0 items-center justify-between gap-4 px-4 pb-2" onClick={(e) => e.stopPropagation()}>
         <p className="text-center text-xs text-white/70">
-          Para seleccionar fotos pulsa la tecla cmd ⌘
+          ⌘/Ctrl + clic sobre una foto la valida (verde); si ya está verde, la desmarca
         </p>
         <div className="flex items-center gap-2">
           <span className="text-xs text-white/70">Tamaño</span>
@@ -139,7 +145,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
             <div
               key={it.id}
               data-thumb={i}
-              onClick={(e) => handleThumbClick(e, it.id, i)}
+              onClick={(e) => handleThumbClick(e, it, i)}
               className={
                 "relative shrink-0 cursor-pointer overflow-hidden rounded-md border transition-opacity " +
                 (i === index

@@ -187,6 +187,15 @@ export default function NuevoProyectoPage() {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, rating } : it)));
   };
 
+  // ⌘+clic en el visor sobre una foto en revisión (amarilla): el fotógrafo la
+  // VALIDA — deja de estar en revisión, pasa a estado verde (SELECT) y queda
+  // marcada. Cuenta como un paso de deshacer.
+  const validatePhoto = (id) => {
+    record();
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, aiReview: false, status: it.status === "REVIEW" ? "SELECT" : it.status } : it)));
+    setSelectedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
+  };
+
   const toggleSelect = (id) => {
     record();
     setSelectedIds((prev) => {
@@ -525,6 +534,7 @@ export default function NuevoProyectoPage() {
           canRedo={canRedo}
           onDeleteSelected={deleteSelected}
           onCycleStatus={cycleStatus}
+          onValidatePhoto={validatePhoto}
           gridCols={gridCols}
           onGridCols={setGridCols}
           saving={saving}
