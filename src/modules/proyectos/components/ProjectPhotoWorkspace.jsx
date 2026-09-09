@@ -18,13 +18,13 @@ export default function ProjectPhotoWorkspace({
   // Orden/visor de la galería. Por defecto las fotos se ordenan por HORA DE CAPTURA.
   // «Seleccionadas»/«No seleccionadas» actúan de filtro (manteniendo el orden temporal);
   // «Cámara» agrupa por modelo y «Nombre» ordena alfabéticamente.
-  const [viewMode, setViewMode] = useState("capture");
+  const [viewMode, setViewMode] = useState("name");
   const VIEW_MODES = [
+    { value: "name", label: "Nombre de la foto" },
     { value: "capture", label: "Hora de captura" },
     { value: "selected", label: "Fotos seleccionadas" },
     { value: "unselected", label: "Fotos no seleccionadas" },
     { value: "camera", label: "Cámara" },
-    { value: "name", label: "Nombre de la foto" },
   ];
   const displayed = useMemo(() => {
     let list = [...items];
