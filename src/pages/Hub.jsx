@@ -5,6 +5,12 @@ import { Images, Sparkles, FileImage, FolderHeart, Wand2, Brain, BookOpen } from
 // No ejecuta ninguna herramienta: cada tarjeta solo navega a su ruta.
 const tools = [
   {
+    to: "/flujo-v2",
+    title: "Flujo IA V2",
+    desc: "Proceso nuevo y aislado con modos Básico y Pro: agrupa ráfagas, selecciona, decide ajustes y prepara el álbum sin tocar los RAW.",
+    icon: Sparkles,
+  },
+  {
     to: "/proyectos",
     title: "Proyectos",
     desc: "Crea un proyecto nuevo o reabre uno guardado (solo metadatos). Recarga la carpeta/catálogo para volver a procesar.",
