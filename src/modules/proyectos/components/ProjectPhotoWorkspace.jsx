@@ -227,7 +227,7 @@ export default function ProjectPhotoWorkspace({
             className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary disabled:opacity-40"
           >
             {busyAction === "seleccion" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            Selección
+            Selección inteligente
           </button>
           <button
             onClick={onGoEditar}
@@ -246,7 +246,7 @@ export default function ProjectPhotoWorkspace({
             Maquetar álbum
           </button>
           <p className="text-[11px] leading-tight text-muted-foreground">
-            «Selección» ejecuta la selección IA sobre las fotos marcadas en esta misma página. «Editar» y «Maquetar álbum» guardan el proyecto y abren la herramienta correspondiente.
+            «Selección inteligente» ejecuta la selección IA sobre las fotos marcadas en esta misma página. «Editar» y «Maquetar álbum» guardan el proyecto y abren la herramienta correspondiente.
           </p>
         </div>
       </aside>
