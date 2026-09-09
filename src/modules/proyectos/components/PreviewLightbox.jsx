@@ -96,8 +96,10 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
         )}
       </div>
 
-      {/* Instrucción de selección + barra de tamaño de las miniaturas */}
-      <div className="flex shrink-0 items-center justify-between gap-4 px-4 pb-2">
+      {/* Instrucción de selección + barra de tamaño de las miniaturas.
+          stopPropagation: sin él, arrastrar la barra «Tamaño» burbujea al
+          fondo del visor y lo cierra. */}
+      <div className="flex shrink-0 items-center justify-between gap-4 px-4 pb-2" onClick={(e) => e.stopPropagation()}>
         <p className="text-center text-xs text-white/70">
           Para seleccionar fotos pulsa la tecla cmd ⌘
         </p>
