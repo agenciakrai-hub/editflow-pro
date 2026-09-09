@@ -26,6 +26,9 @@ export default function NuevoProyectoPage() {
   const [items, setItems] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Acción en curso («save», «seleccion», «editar», «album»): SOLO el botón
+  // pulsado muestra su spinner; el resto queda deshabilitado pero sin girar.
+  const [busyAction, setBusyAction] = useState(null);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [phase, setPhase] = useState("extracting");
   // Selección múltiple para eliminar + densidad del grid.
@@ -293,16 +296,23 @@ export default function NuevoProyectoPage() {
     }
   };
 
+  const handleSave = async () => {
+    setBusyAction("save");
+    try { await save(); } finally { setBusyAction(null); }
+  };
   const goSeleccion = async () => {
-    const id = await save();
+    setBusyAction("seleccion");
+    const id = await save().finally(() => setBusyAction(null));
     if (id) navigate(`/dashboard?project=${id}`);
   };
   const goEditar = async () => {
-    const id = await save();
+    setBusyAction("editar");
+    const id = await save().finally(() => setBusyAction(null));
     if (id) navigate("/ajustes-ia");
   };
   const goAlbum = async () => {
-    const id = await save();
+    setBusyAction("album");
+    const id = await save().finally(() => setBusyAction(null));
     if (id) navigate("/album");
   };
 
@@ -391,7 +401,8 @@ export default function NuevoProyectoPage() {
           gridCols={gridCols}
           onGridCols={setGridCols}
           saving={saving}
-          onSave={save}
+          busyAction={busyAction}
+          onSave={handleSave}
           onGoSeleccion={goSeleccion}
           onGoEditar={goEditar}
           onGoAlbum={goAlbum}

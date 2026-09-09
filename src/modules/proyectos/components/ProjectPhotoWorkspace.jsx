@@ -12,7 +12,7 @@ import PreviewLightbox from "./PreviewLightbox";
 //  - Barra lateral derecha con Guardar, Selección y Editar (con sus rutas).
 export default function ProjectPhotoWorkspace({
   items, selectedIds, onToggleSelect, onToggleSelectAll, onDeleteSelected,
-  onCycleStatus, gridCols, onGridCols, saving, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
+  onCycleStatus, gridCols, onGridCols, saving, busyAction, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
 }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
   // Orden/visor de la galería. Por defecto las fotos se ordenan por HORA DE CAPTURA.
@@ -171,7 +171,7 @@ export default function ProjectPhotoWorkspace({
             disabled={saving}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-accent-foreground disabled:opacity-40"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {busyAction === "save" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             Guardar
           </button>
           <button
@@ -179,7 +179,7 @@ export default function ProjectPhotoWorkspace({
             disabled={saving}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary disabled:opacity-40"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {busyAction === "seleccion" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
             Selección
           </button>
           <button
@@ -187,7 +187,7 @@ export default function ProjectPhotoWorkspace({
             disabled={saving}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary disabled:opacity-40"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+            {busyAction === "editar" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
             Editar
           </button>
           <button
@@ -195,7 +195,7 @@ export default function ProjectPhotoWorkspace({
             disabled={saving}
             className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary disabled:opacity-40"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
+            {busyAction === "album" ? <Loader2 className="h-4 w-4 animate-spin" /> : <BookOpen className="h-4 w-4" />}
             Maquetar álbum
           </button>
           <p className="text-[11px] leading-tight text-muted-foreground">
