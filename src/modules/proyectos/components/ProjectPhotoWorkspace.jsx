@@ -114,12 +114,12 @@ export default function ProjectPhotoWorkspace({
           {displayed.map((item, i) => {
             const checked = selectedIds.has(item.id);
             return (
-              <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${checked ? "border-accent ring-1 ring-accent" : "border-border"}`}>
+              <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${checked ? "border-green-500 ring-1 ring-green-500" : "border-border"}`}>
                 <div className="absolute left-1.5 top-1.5 z-10">
                   <button
                     type="button"
                     onClick={() => onToggleSelect(item.id)}
-                    className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? "border-accent bg-accent text-accent-foreground" : "border-white/70 bg-black/40 text-transparent hover:bg-black/60"}`}
+                    className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? "border-green-500 bg-green-500 text-white" : "border-white/70 bg-black/40 text-transparent hover:bg-black/60"}`}
                   >
                     {checked ? <span className="text-[11px] font-bold leading-none">✓</span> : null}
                   </button>
