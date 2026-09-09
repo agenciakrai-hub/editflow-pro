@@ -15,7 +15,7 @@ export default function AIProviders() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [providers, setProviders] = useState([]);
-  const [active, setActive] = useState({ active_seleccion: "base44", active_ajustes: "", active_model_seleccion: "", active_model_ajustes: "" });
+  const [active, setActive] = useState({ active_seleccion: "base44", active_ajustes: "", active_model_seleccion: "", active_model_ajustes: "", active_album: "", active_model_album: "" });
   const [adding, setAdding] = useState(false);
   const [addResult, setAddResult] = useState(null);
   const [busyAction, setBusyAction] = useState(null);
@@ -34,6 +34,8 @@ export default function AIProviders() {
         active_ajustes: cfg?.active_ajustes || "",
         active_model_seleccion: cfg?.active_model_seleccion || "",
         active_model_ajustes: cfg?.active_model_ajustes || "",
+        active_album: cfg?.active_album || "",
+        active_model_album: cfg?.active_model_album || "",
       });
     } catch (e) {
       toast({ title: "Error al cargar", description: e.message, variant: "destructive" });
@@ -65,10 +67,10 @@ export default function AIProviders() {
     return ok;
   };
 
-  const saveModels = async (id, seleccion_models, ajustes_models, edicion_models, video_models) => {
+  const saveModels = async (id, seleccion_models, ajustes_models, edicion_models, video_models, album_models) => {
     setBusyAction({ id, action: "save" });
     try {
-      const res = await base44.functions.invoke("ai-providers", { action: "update-models", id, seleccion_models, ajustes_models, edicion_models, video_models });
+      const res = await base44.functions.invoke("ai-providers", { action: "update-models", id, seleccion_models, ajustes_models, edicion_models, video_models, album_models });
       const data = res?.data ?? res;
       if (data.ok) {
         setProviders((prev) => prev.map((p) => (p.id === id ? data.provider : p)));
@@ -116,6 +118,8 @@ export default function AIProviders() {
         active_ajustes: a.active_ajustes === `custom:${id}` ? "" : a.active_ajustes,
         active_model_seleccion: a.active_seleccion === `custom:${id}` ? "" : a.active_model_seleccion,
         active_model_ajustes: a.active_ajustes === `custom:${id}` ? "" : a.active_model_ajustes,
+        active_album: a.active_album === `custom:${id}` ? "" : a.active_album,
+        active_model_album: a.active_album === `custom:${id}` ? "" : a.active_model_album,
       }));
       toast({ title: "Proveedor eliminado" });
     } catch (e) {
@@ -165,6 +169,15 @@ export default function AIProviders() {
   // Usabilidad de un proveedor para una tarea: encendido, conexión verificada y con
   // modelos marcados (o modelo legado como fallback).
   const usable = (val, task) => {
+    if (task === "album") {
+      // Álbum: proveedores de la cadena propia (siempre utilizables) o propios con
+      // modelos marcados para Álbum (o modelo legado como fallback).
+      if (["gemini_paid", "qwen", "nvidia"].includes(val)) return true;
+      if (!String(val || "").startsWith("custom:")) return false;
+      const p = providers.find((c) => `custom:${c.id}` === val);
+      if (!p || !p.enabled || p.last_ok === false) return false;
+      return (p.album_models?.length > 0) || !!p.model;
+    }
     if (val === "base44" || val === "none") return task === "seleccion";
     if (!String(val || "").startsWith("custom:")) return false;
     const p = providers.find((c) => `custom:${c.id}` === val);
@@ -178,25 +191,30 @@ export default function AIProviders() {
   const ajustesCovered = providerOptions.some((o) => o.value === active.active_ajustes);
   // Modelos marcados del proveedor activo de cada tarea (para elegir el modelo EXACTO).
   const markedModelsOf = (task) => {
-    const val = task === "ajustes" ? active.active_ajustes : active.active_seleccion;
+    const val = task === "ajustes" ? active.active_ajustes : task === "album" ? active.active_album : active.active_seleccion;
     const p = providers.find((c) => `custom:${c.id}` === val);
-    const marked = task === "ajustes" ? p?.ajustes_models : p?.seleccion_models;
+    const marked = task === "ajustes" ? p?.ajustes_models : task === "album" ? p?.album_models : p?.seleccion_models;
     return Array.isArray(marked) ? marked : [];
   };
   const seleccionModelOptions = markedModelsOf("seleccion");
   const ajustesModelOptions = markedModelsOf("ajustes");
+  const albumModelOptions = markedModelsOf("album");
   // Cambia el proveedor activo de una tarea y LIMPIA el modelo exacto si deja de
   // pertenecer a la lista marcada del nuevo proveedor.
   const setTaskProvider = (task, value) => {
     setActive((a) => {
-      const providerKey = task === "ajustes" ? "active_ajustes" : "active_seleccion";
-      const modelKey = task === "ajustes" ? "active_model_ajustes" : "active_model_seleccion";
+      const keys = {
+        seleccion: ["active_seleccion", "active_model_seleccion"],
+        ajustes: ["active_ajustes", "active_model_ajustes"],
+        album: ["active_album", "active_model_album"],
+      };
+      const [providerKey, modelKey] = keys[task];
       const next = { ...a, [providerKey]: value };
       if (!String(value).startsWith("custom:")) {
         next[modelKey] = "";
       } else {
         const p = providers.find((c) => `custom:${c.id}` === value);
-        const marked = task === "ajustes" ? p?.ajustes_models : p?.seleccion_models;
+        const marked = task === "ajustes" ? p?.ajustes_models : task === "album" ? p?.album_models : p?.seleccion_models;
         if (!Array.isArray(marked) || !marked.includes(a[modelKey])) next[modelKey] = "";
       }
       return next;
@@ -208,8 +226,8 @@ export default function AIProviders() {
       <div>
         <h1 className="text-2xl font-semibold">Proveedores IA</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Una sola lista de proveedores. Cada uno muestra todos sus modelos: marca cuáles usar para Selección IA y
-          Ajustes IA, cambia su API key, enciéndelo o apágalo, o elimínalo (se borra de la base de datos).
+          Una sola lista de proveedores. Cada uno muestra todos sus modelos: marca cuáles usar para Selección IA,
+          Ajustes IA y Álbum, cambia su API key, enciéndelo o apágalo, o elimínalo (se borra de la base de datos).
         </p>
       </div>
 
@@ -297,9 +315,44 @@ export default function AIProviders() {
             Marca los modelos de cada proveedor y elige el modelo exacto de cada tarea. Sin modelo exacto se usa el mejor marcado.
           </p>
         </div>
+        <div className="space-y-1.5 border-t border-border pt-4">
+          <label className="text-sm font-medium">Álbum</label>
+          <select value={active.active_album || ""} onChange={(e) => setTaskProvider("album", e.target.value)}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm">
+            <option value="">Auto — cadena de Album AI (Gemini de pago → Qwen → NVIDIA)</option>
+            <option value="gemini_paid">Google Gemini — Album AI (key de pago)</option>
+            <option value="qwen">Qwen</option>
+            <option value="nvidia">NVIDIA</option>
+            {providerOptions.map((o) => (
+              <option key={o.value} value={o.value} disabled={!usable(o.value, "album")}>
+                {o.label}{optionLabel(" — apagado o sin modelos", o.value, "album")}
+              </option>
+            ))}
+          </select>
+          {active.active_album && (
+            <div className="space-y-1.5 pt-1">
+              <label className="text-sm font-medium">Modelo exacto para Álbum</label>
+              {albumModelOptions.length > 0 ? (
+                <select value={active.active_model_album || ""} onChange={(e) => setActive((a) => ({ ...a, active_model_album: e.target.value }))}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm">
+                  <option value="">Auto — mejor modelo marcado</option>
+                  {albumModelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+                </select>
+              ) : (
+                <input value={active.active_model_album || ""} onChange={(e) => setActive((a) => ({ ...a, active_model_album: e.target.value }))}
+                  placeholder="Vacío = modelo por defecto del proveedor"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm" />
+              )}
+              <p className="text-xs text-muted-foreground">
+                La selección de fotos y la maquetación de lienzos del módulo Álbum usan este proveedor y modelo.
+              </p>
+            </div>
+          )}
+        </div>
         <p className="text-xs text-muted-foreground">
           En Selección hay failover: si el proveedor activo falla, se reintenta con el siguiente habilitado. En Ajustes,
-          el proveedor activo es el único responsable.
+          el proveedor activo es el único responsable. En Álbum, el proveedor activo se usa primero y, si falla, la cadena
+          de Album AI (Gemini de pago → Qwen → NVIDIA) continúa.
         </p>
       </div>
 

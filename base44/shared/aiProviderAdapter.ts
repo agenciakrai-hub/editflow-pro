@@ -36,6 +36,9 @@ interface InvokeOpts {
   // Fuerza un proveedor concreto ignorando active_seleccion/active_ajustes. Lo usa el
   // motor de revelado IA visual (Qwen) para garantizar Qwen sin depender de la config.
   forceProvider?: Provider;
+  // Fuerza un modelo EXACTO (lo usa album-engine con el proveedor activo de Álbum).
+  // Prevalece sobre el modelo por defecto del proveedor; vacío = modelo por defecto.
+  forceModel?: string;
 }
 
 // Lee el unico registro de configuracion (admin-only entity, accedido via service role).
@@ -112,7 +115,7 @@ async function callQwen(cfg: any, opts: InvokeOpts): Promise<any> {
   const base = String(cfg?.qwen_endpoint || "").trim().replace(/\/+$/, "");
   if (!base) throw new Error("qwen_endpoint no configurado");
   const endpoint = base + "/chat/completions";
-  const model = cfg?.qwen_model || "qwen3-vl-plus";
+  const model = opts.forceModel || cfg?.qwen_model || "qwen3-vl-plus";
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
 
   const content: any[] = [{ type: "text", text: opts.prompt }];
@@ -146,7 +149,7 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
   const base = String(cfg?.nvidia_endpoint || NVIDIA_DEFAULT_ENDPOINT).trim().replace(/\/+$/, "");
   if (!base) throw new Error("nvidia_endpoint no configurado");
   const endpoint = base + "/chat/completions";
-  const model = cfg?.nvidia_model || NVIDIA_DEFAULT_MODEL;
+  const model = opts.forceModel || cfg?.nvidia_model || NVIDIA_DEFAULT_MODEL;
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
 
   const content: any[] = [{ type: "text", text: opts.prompt }];
@@ -189,7 +192,7 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
 // error tipado con httpStatus para que el orquestador decida el fallback a la capa de pago.
 async function callGeminiOnce(apiKey: string, cfg: any, opts: InvokeOpts): Promise<any> {
   const base = String(cfg?.gemini_endpoint || GEMINI_DEFAULT_ENDPOINT).trim().replace(/\/+$/, "");
-  const model = cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
+  const model = opts.forceModel || cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
   const endpoint = `${base}/models/${model}:generateContent?key=${apiKey}`;
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
 

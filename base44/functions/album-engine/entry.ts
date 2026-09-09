@@ -18,7 +18,7 @@
 // consentimiento. De la config admin del Core solo LEE endpoint/modelo (read-only).
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { secrets } from "base44:runtime";
-import { invokeVision } from "../../shared/aiProviderAdapter.ts";
+import { invokeVision, pickBestVisionModel } from "../../shared/aiProviderAdapter.ts";
 
 const GEMINI_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_DEFAULT_MODEL = "gemini-2.5-flash";
@@ -69,6 +69,60 @@ async function getPlatformConfig(base44) {
   }
 }
 
+// Config de Álbum (Proveedores IA → Álbum): proveedor activo y modelo exacto elegidos
+// por el administrador. active_album vacío = cadena por defecto (gemini_paid → qwen →
+// nvidia). "custom:<id>" es un proveedor propio de CustomAiProvider.
+async function getAlbumActive(base44) {
+  try {
+    const cfg = await getPlatformConfig(base44);
+    return {
+      active: String(cfg?.active_album || "").trim(),
+      exactModel: String(cfg?.active_model_album || "").trim(),
+    };
+  } catch {
+    return { active: "", exactModel: "" };
+  }
+}
+
+// Transporte AISLADO para proveedores propios (OpenAI-compatible): las previews van
+// como data URLs inline (image_url), igual que NVIDIA — NUNCA UploadFile (privacidad).
+// Modelos: SOLO los marcados para Álbum (album_models); el modelo EXACTO del admin
+// prevalece si está en la lista; si no, el mejor marcado; fallback: modelo legado.
+async function callCustomAlbum(base44, customId, prompt, fileUrls, modelOverride) {
+  const rec = await base44.asServiceRole.entities.CustomAiProvider.get(customId).catch(() => null);
+  if (!rec) throw new Error(`album custom: proveedor no encontrado (${customId})`);
+  if (rec.enabled === false) throw new Error(`album custom: proveedor deshabilitado (${rec.name})`);
+  let apiKey = String(rec.api_key || "").trim();
+  if (!apiKey && rec.builtin_secret) {
+    try { apiKey = String(secrets.get(rec.builtin_secret) || "").trim(); } catch { apiKey = ""; }
+  }
+  if (!apiKey) throw new Error(`album custom: "${rec.name}" no tiene API key`);
+  const base = String(rec.endpoint || "").trim().replace(/\/+$/, "");
+  if (!base) throw new Error(`album custom: "${rec.name}" no tiene endpoint`);
+  const marked = (Array.isArray(rec.album_models) ? rec.album_models : []).map((m) => String(m || "").trim()).filter(Boolean);
+  const legacy = String(rec.model || "").trim();
+  let model = "";
+  if (modelOverride && (!marked.length || marked.includes(modelOverride))) model = modelOverride;
+  else if (marked.length) model = pickBestVisionModel(marked);
+  else if (legacy) model = legacy;
+  if (!model) throw new Error(`album custom: "${rec.name}" no tiene modelos marcados para Álbum (márcalos en Proveedores IA)`);
+  const content = [{ type: "text", text: prompt }];
+  for (const u of fileUrls) content.push({ type: "image_url", image_url: { url: u } });
+  const res = await fetchWithTimeout(base + "/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model, messages: [{ role: "user", content }], stream: false }),
+  });
+  if (!res.ok) {
+    const txt = await res.text().catch(() => "");
+    const err = new Error(`album custom [${rec.name}] HTTP ${res.status}: ${txt.slice(0, 200)}`);
+    err.httpStatus = res.status;
+    throw err;
+  }
+  const data = await res.json();
+  return { result: parseJsonLoose(data?.choices?.[0]?.message?.content), model, name: rec.name };
+}
+
 // Cadena del usuario (Bloque 3): respeta allowed_providers y la REVOCACIÓN de
 // consentimiento. Solo se aplica a acciones con fotos del usuario (E4-E7).
 async function userChain(base44) {
@@ -109,9 +163,9 @@ function assertImageDataUrls(urls, action) {
 // Usa EXCLUSIVAMENTE GEMINI_API_KEY_PAID (tier de pago: Google no usa los datos
 // para mejorar productos). NUNCA la key gratuita. Nunca UploadFile: inline_data.
 // ---------------------------------------------------------------------------
-async function callGeminiPaidOnce(apiKey, cfg, prompt, fileUrls) {
+async function callGeminiPaidOnce(apiKey, cfg, prompt, fileUrls, modelOverride) {
   const base = String(cfg?.gemini_endpoint || GEMINI_DEFAULT_ENDPOINT).trim().replace(/\/+$/, "");
-  const model = cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
+  const model = modelOverride || cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
   const parts = [{ text: prompt }];
   for (const u of fileUrls) {
     const m = /^data:([^;]+);base64,(.*)$/is.exec(u);
@@ -137,7 +191,7 @@ async function callGeminiPaidOnce(apiKey, cfg, prompt, fileUrls) {
   return parseJsonLoose(contentOut);
 }
 
-async function callGeminiPaid(base44, prompt, fileUrls) {
+async function callGeminiPaid(base44, prompt, fileUrls, modelOverride) {
   // Nueva API key única: prefiere la key de pago aislada de Album AI y, si no está
   // seteada, usa la nueva key general (GEMINI_API_KEY) — siempre gemini-2.5-flash.
   const apiKey = secrets.get("GEMINI_API_KEY_PAID") || secrets.get("GEMINI_API_KEY");
@@ -147,7 +201,7 @@ async function callGeminiPaid(base44, prompt, fileUrls) {
   let lastErr = null;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      return await callGeminiPaidOnce(apiKey, cfg, prompt, fileUrls);
+      return await callGeminiPaidOnce(apiKey, cfg, prompt, fileUrls, modelOverride);
     } catch (e) {
       lastErr = e;
       if (!transient.has(e.httpStatus) || attempt === 3) throw e;
@@ -164,28 +218,43 @@ async function callGeminiPaid(base44, prompt, fileUrls) {
 // ---------------------------------------------------------------------------
 async function invokeAlbumVision(base44, action, prompt, fileUrls, skip, useUserConfig) {
   const errors = [];
-  const chain = useUserConfig ? await userChain(base44) : CHAIN;
+  const albumCfg = await getAlbumActive(base44);
+  let chain = useUserConfig ? await userChain(base44) : CHAIN;
+  // Proveedor ACTIVO de Álbum (Proveedores IA): SIEMPRE primero en la cadena. Un
+  // proveedor propio ("custom:<id>") se antepone aunque no pertenezca a la cadena
+  // legada; el resto de la cadena sigue como failover si el activo falla.
+  if (albumCfg.active) {
+    chain = [albumCfg.active, ...chain.filter((p) => p !== albumCfg.active)];
+  }
   for (const provider of chain) {
     if (skip && skip.includes(provider)) {
       errors.push({ provider, skipped: true });
       continue;
     }
     const t0 = Date.now();
+    // Modelo EXACTO de Álbum: SOLO se aplica al proveedor activo.
+    const exact = provider === albumCfg.active ? albumCfg.exactModel : "";
     try {
       let result;
       let model = "";
+      let providerLabel = provider;
       if (provider === "gemini_paid") {
-        result = await callGeminiPaid(base44, prompt, fileUrls);
+        result = await callGeminiPaid(base44, prompt, fileUrls, exact);
         const cfg = await getPlatformConfig(base44);
-        model = cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
+        model = exact || cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
+      } else if (String(provider).startsWith("custom:")) {
+        const out = await callCustomAlbum(base44, provider.slice("custom:".length), prompt, fileUrls, exact);
+        result = out.result;
+        model = out.model;
+        providerLabel = out.name || provider;
       } else {
         // Qwen / NVIDIA por el seam compartido en SOLO LECTURA. task es irrelevante
         // en ruta forzada (forceProvider): solo transporte, sin failover del Core.
-        result = await invokeVision(base44, { task: "seleccion", prompt, file_urls: fileUrls, forceProvider: provider });
+        result = await invokeVision(base44, { task: "seleccion", prompt, file_urls: fileUrls, forceProvider: provider, forceModel: exact || undefined });
         const cfg = await getPlatformConfig(base44);
-        model = provider === "qwen" ? (cfg?.qwen_model || "qwen3-vl-plus") : (cfg?.nvidia_model || "minimaxai/minimax-m3");
+        model = exact || (provider === "qwen" ? (cfg?.qwen_model || "qwen3-vl-plus") : (cfg?.nvidia_model || "minimaxai/minimax-m3"));
       }
-      return { result, provider, model, latency_ms: Date.now() - t0 };
+      return { result, provider: providerLabel, model, latency_ms: Date.now() - t0 };
     } catch (e) {
       console.log(`[album-engine] ${action} provider=${provider} fallo: ${e?.message || e}`);
       errors.push({ provider, error: String(e?.message || e) });

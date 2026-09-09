@@ -39,6 +39,13 @@
       },
       "description": "Modelos que el administrador marc\u00f3 para Ajustes IA (ajustes b\u00e1sicos). Los motores usan EXCLUSIVAMENTE esta lista (o el modelo legado como fallback)."
     },
+    "album_models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Modelos que el administrador marc\u00f3 para la herramienta \u00c1LBUM (selecci\u00f3n de fotos + maquetaci\u00f3n de lienzos de EditFlow Album AI). El motor de \u00e1lbum usa EXCLUSIVAMENTE esta lista cuando el proveedor est\u00e1 activo para \u00c1lbum (o el modelo legado como fallback)."
+    },
     "edicion_models": {
       "type": "array",
       "items": {

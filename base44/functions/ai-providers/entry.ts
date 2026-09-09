@@ -184,6 +184,7 @@ function maskProvider(r: any) {
     ajustes_models: Array.isArray(r.ajustes_models) ? r.ajustes_models : [],
     edicion_models: Array.isArray(r.edicion_models) ? r.edicion_models : [],
     video_models: Array.isArray(r.video_models) ? r.video_models : [],
+    album_models: Array.isArray(r.album_models) ? r.album_models : [],
     model: r.model || '',
     enabled: r.enabled !== false,
     last_ok: !!r.last_ok,
@@ -335,6 +336,7 @@ export default async function(req: Request): Promise<Response> {
         ajustes_models: clean(body.ajustes_models),
         edicion_models: clean(body.edicion_models),
         video_models: clean(body.video_models),
+        album_models: clean(body.album_models),
       });
       return Response.json({ ok: true, provider: maskProvider(rec) });
     }
@@ -371,6 +373,10 @@ export default async function(req: Request): Promise<Response> {
       // automático, por eso se comprueba undefined y no trim.
       if (body.active_model_seleccion !== undefined && typeof body.active_model_seleccion === 'string') patch.active_model_seleccion = body.active_model_seleccion.trim();
       if (body.active_model_ajustes !== undefined && typeof body.active_model_ajustes === 'string') patch.active_model_ajustes = body.active_model_ajustes.trim();
+      // Álbum: cadena vacía = Auto (cadena por defecto de Album AI), por eso se acepta
+      // cualquier string (sin exigir trim truthy).
+      if (typeof body.active_album === 'string') patch.active_album = body.active_album.trim();
+      if (body.active_model_album !== undefined && typeof body.active_model_album === 'string') patch.active_model_album = body.active_model_album.trim();
       const existing = await getConfigRecord(base44);
       let cfg;
       if (existing) {
@@ -379,6 +385,7 @@ export default async function(req: Request): Promise<Response> {
         cfg = await base44.asServiceRole.entities.AiProviderConfig.create({
           active_seleccion: patch.active_seleccion || 'base44',
           active_ajustes: patch.active_ajustes || 'base44',
+          active_album: patch.active_album || '',
         });
       }
       return Response.json({ ok: true, config: cfg });
@@ -416,6 +423,7 @@ export default async function(req: Request): Promise<Response> {
           const patch: any = {};
           if (cfg.active_seleccion === `custom:${id}`) { patch.active_seleccion = 'base44'; patch.active_model_seleccion = ''; }
           if (cfg.active_ajustes === `custom:${id}`) { patch.active_ajustes = 'base44'; patch.active_model_ajustes = ''; }
+          if (cfg.active_album === `custom:${id}`) { patch.active_album = ''; patch.active_model_album = ''; }
           if (Object.keys(patch).length) await base44.asServiceRole.entities.AiProviderConfig.update(cfg.id, patch);
         }
       } catch {}

@@ -66,6 +66,15 @@
       "type": "string",
       "description": "Modelo EXACTO para Ajustes IA (IA Visual e H\u00edbrido) dentro del proveedor activo (custom:<id>): ambos modos lo usan SIEMPRE, sin heur\u00edstica ni sustituciones. Debe pertenecer a la lista marcada (ajustes_models) del proveedor activo. Vac\u00edo = autom\u00e1tico (mejor modelo marcado)."
     },
+    "active_album": {
+      "type": "string",
+      "default": "",
+      "description": "Proveedor activo para la herramienta \u00c1LBUM (selecci\u00f3n de fotos + maquetaci\u00f3n de lienzos de EditFlow Album AI). Vac\u00edo = cadena por defecto de Album AI (gemini_paid \u2192 qwen \u2192 nvidia). Tambi\u00e9n: gemini_paid, qwen, nvidia o custom:<id> de CustomAiProvider. El activo se usa PRIMERO; si falla, la cadena de Album AI contin\u00faa (failover)."
+    },
+    "active_model_album": {
+      "type": "string",
+      "description": "Modelo EXACTO para \u00c1lbum dentro del proveedor activo: el motor lo usa SIEMPRE para el proveedor activo. Para proveedores propios debe pertenecer a album_models del proveedor. Vac\u00edo = autom\u00e1tico (mejor modelo marcado o modelo por defecto del proveedor)."
+    },
     "builtin_migrated": {
       "type": "boolean",
       "default": false,

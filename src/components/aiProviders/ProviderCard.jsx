@@ -19,6 +19,7 @@ const COL_LABELS = {
   ajustes: "Ajustes",
   edicion: "Edición",
   video: "Vídeo",
+  album: "Álbum",
 };
 
 export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey }) {
@@ -28,6 +29,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
   const [ajDraft, setAjDraft] = useState(provider.ajustes_models || []);
   const [edDraft, setEdDraft] = useState(provider.edicion_models || []);
   const [vidDraft, setVidDraft] = useState(provider.video_models || []);
+  const [albDraft, setAlbDraft] = useState(provider.album_models || []);
   const [showKey, setShowKey] = useState(false);
   const [newKey, setNewKey] = useState("");
 
@@ -53,7 +55,8 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
     !sameSet(selDraft, provider.seleccion_models) ||
     !sameSet(ajDraft, provider.ajustes_models) ||
     !sameSet(edDraft, provider.edicion_models) ||
-    !sameSet(vidDraft, provider.video_models);
+    !sameSet(vidDraft, provider.video_models) ||
+    !sameSet(albDraft, provider.album_models);
   const busy = (action) => busyAction?.id === provider.id && busyAction?.action === action;
 
   const drafts = {
@@ -61,6 +64,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
     ajustes: { get: ajDraft, set: setAjDraft },
     edicion: { get: edDraft, set: setEdDraft },
     video: { get: vidDraft, set: setVidDraft },
+    album: { get: albDraft, set: setAlbDraft },
   };
   const toggleModel = (task, model) => {
     drafts[task].set((d) => (d.includes(model) ? d.filter((m) => m !== model) : [...d, model]));
@@ -71,9 +75,9 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
   // la casilla de esa tarea; en "Todos" las cuatro.
   const cols =
     tab === "todos"
-      ? ["seleccion", "ajustes", "edicion", "video"]
+      ? ["seleccion", "ajustes", "edicion", "video", "album"]
       : tab === "seleccion"
-        ? ["seleccion", "ajustes"]
+        ? ["seleccion", "ajustes", "album"]
         : [tab];
 
   const saveKey = async () => {
@@ -152,7 +156,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
               <button key={t.id} onClick={() => setTab(t.id)}
                 title={
                   t.id === "todos" ? "Todos los modelos del proveedor"
-                  : t.id === "seleccion" ? "Modelos de VISIÓN (texto + imagen): los únicos válidos para Selección IA y Ajustes IA"
+                  : t.id === "seleccion" ? "Modelos de VISIÓN (texto + imagen): los únicos válidos para Selección IA, Ajustes IA y Álbum"
                   : t.id === "edicion" ? "Modelos de EDICIÓN de imagen (image-edit / generación de píxeles)"
                   : "Modelos de VÍDEO (generación / edición de vídeo)"
                 }
@@ -200,7 +204,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
             )}
           </div>
           <div className="flex items-center gap-3">
-            <button onClick={() => onSaveModels(provider.id, selDraft, ajDraft, edDraft, vidDraft)} disabled={!dirty || busy("save")}
+            <button onClick={() => onSaveModels(provider.id, selDraft, ajDraft, edDraft, vidDraft, albDraft)} disabled={!dirty || busy("save")}
               className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40">
               {busy("save") ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Guardar
             </button>
@@ -209,7 +213,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
                 ? "Marca qué modelos usar para EDICIÓN de imagen. La selección solo se guarda al pulsar Guardar."
                 : tab === "video"
                   ? "Marca qué modelos usar para VÍDEO. La selección solo se guarda al pulsar Guardar."
-                  : "Marca qué modelos usar para Selección IA y Ajustes IA (solo los de visión devuelven texto). La selección solo se guarda al pulsar Guardar."}
+                  : "Marca qué modelos usar para Selección IA, Ajustes IA y Álbum (solo los de visión devuelven texto). La selección solo se guarda al pulsar Guardar."}
             </p>
           </div>
         </>
