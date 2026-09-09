@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
 
 // Vista previa a pantalla completa (modo revisión): foto grande al centro, contador
@@ -6,10 +6,12 @@ import { X, ChevronLeft, ChevronRight } from "lucide-react";
 // abajo. ⌘/Ctrl+clic sobre una miniatura (o la foto grande) marca/desmarca la foto:
 // la selección es la MISMA del espacio de trabajo del proyecto, así que al cerrar la
 // vista previa la galería refleja lo marcado aquí (y viceversa). Flechas ←/→ navegan,
-// Esc o clic fuera cierra. Las fotos marcadas se ven luminosas; las desmarcadas,
-// atenuadas (igual que la referencia visual).
+// Esc o clic fuera cierra. Todas las fotos se ven iluminadas; las marcadas con ⌘
+// lucen un marco verde (en la foto grande y en su miniatura).
 export default function PreviewLightbox({ items, index, onIndex, onClose, selectedIds, onToggleSelect }) {
   const stripRef = useRef(null);
+  // Tamaño de las miniaturas de la tira inferior, ajustable con la barra.
+  const [thumbH, setThumbH] = useState(80);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -65,12 +67,19 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
           </button>
         )}
         {item.previewUrl ? (
-          <img
-            src={item.previewUrl}
-            alt={item.filename}
-            className="max-h-full max-w-full object-contain"
-            onClick={(e) => e.stopPropagation()}
-          />
+          <div
+            className={
+              "inline-flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-md border-4 transition-colors " +
+              (selectedIds.has(item.id) ? "border-green-500" : "border-transparent")
+            }
+          >
+            <img
+              src={item.previewUrl}
+              alt={item.filename}
+              className="max-h-full max-w-full object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
         ) : (
           <div className="flex h-40 w-64 items-center justify-center rounded-lg bg-white/5 text-xs text-white/50">
             Sin preview
@@ -87,10 +96,23 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
         )}
       </div>
 
-      {/* Instrucción de selección */}
-      <p className="shrink-0 pb-2 text-center text-xs text-white/70">
-        Para seleccionar fotos pulsa la tecla cmd ⌘
-      </p>
+      {/* Instrucción de selección + barra de tamaño de las miniaturas */}
+      <div className="flex shrink-0 items-center justify-between gap-4 px-4 pb-2">
+        <p className="text-center text-xs text-white/70">
+          Para seleccionar fotos pulsa la tecla cmd ⌘
+        </p>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-white/70">Tamaño</span>
+          <input
+            type="range"
+            min={48}
+            max={160}
+            value={thumbH}
+            onChange={(e) => setThumbH(Number(e.target.value))}
+            className="w-32 accent-green-500"
+          />
+        </div>
+      </div>
 
       {/* Tira de miniaturas: las marcadas luminosas, las desmarcadas atenuadas */}
       <div
@@ -108,20 +130,25 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
               className={
                 "relative shrink-0 cursor-pointer overflow-hidden rounded-md border transition-opacity " +
                 (i === index
-                  ? "border-white ring-2 ring-white"
+                  ? marked
+                    ? "border-green-500 ring-2 ring-green-500"
+                    : "border-white ring-2 ring-white"
                   : marked
-                    ? "border-white/40"
+                    ? "border-green-500"
                     : "border-white/10")
               }
               title={it.filename}
             >
               {it.previewUrl ? (
-                <img src={it.previewUrl} alt={it.filename} className="h-20 w-28 object-cover" />
+                <img
+                  src={it.previewUrl}
+                  alt={it.filename}
+                  style={{ height: thumbH, width: Math.round(thumbH * 1.4) }}
+                  className="object-cover"
+                />
               ) : (
-                <div className="h-20 w-28 bg-white/10" />
+                <div style={{ height: thumbH, width: Math.round(thumbH * 1.4) }} className="bg-white/10" />
               )}
-              {/* Atenuado (tono apagado) para las fotos NO marcadas */}
-              {!marked && <div className="absolute inset-0 bg-black/55" />}
               <span className="absolute bottom-0.5 left-1 max-w-[calc(100%-0.5rem)] truncate rounded bg-black/60 px-1 text-[10px] text-white">
                 {it.filename}
               </span>
