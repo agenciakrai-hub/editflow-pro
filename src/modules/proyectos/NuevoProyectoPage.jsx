@@ -201,8 +201,17 @@ export default function NuevoProyectoPage() {
       // proyecto están todas marcadas por defecto, así que se guardan todas. Las
       // marcadas sin curar (REVIEW) suben a SELECT (5 estrellas + etiqueta verde);
       // la curación manual del botón «A revisar» siempre prevalece si existe.
-      const effStatus = (it) => (selectedIds.has(it.id) && it.status === "REVIEW" ? "SELECT" : it.status);
-      const selCount = items.filter((it) => ["TOP_PICK", "SELECT"].includes(effStatus(it))).length;
+      // La marca (checkbox) es LA selección: las marcadas sin curar suben a SELECT;
+      // las DESMARCADAS que estaban en SELECT vuelven a REVIEW (la curación manual
+      // TOP_PICK/REJECT se conserva). Así, al reabrir el proyecto, solo aparecen
+      // como seleccionadas las fotos que el fotógrafo dejó realmente marcadas.
+      const effStatus = (it) => {
+        if (selectedIds.has(it.id)) return it.status === "REVIEW" ? "SELECT" : it.status;
+        return it.status === "TOP_PICK" || it.status === "REJECT" ? it.status : "REVIEW";
+      };
+      const selCount = items.filter(
+        (it) => selectedIds.has(it.id) && ["TOP_PICK", "SELECT"].includes(effStatus(it))
+      ).length;
       const payload = {
         title: title.trim(),
         event_date: eventDate || undefined,
