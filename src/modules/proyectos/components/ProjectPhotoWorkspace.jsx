@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
-import Lightbox from "@/components/Lightbox";
+import PreviewLightbox from "./PreviewLightbox";
 
 // Espacio de trabajo a pantalla completa para las fotos subidas al proyecto.
 // Reemplaza al PhotoFingerprintGrid + botón Guardar sueltos. Incluye:
@@ -21,7 +21,6 @@ export default function ProjectPhotoWorkspace({
   // de las fotos → menos columnas. valor alto del slider = menos columnas = más grande.
   const MIN = 2, MAX = 12;
   const sliderValue = MIN + MAX - cols;
-  const images = items.map((it) => ({ url: it.previewUrl, filename: it.filename }));
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
@@ -143,12 +142,13 @@ export default function ProjectPhotoWorkspace({
       </aside>
 
       {lightboxIndex != null && (
-        <Lightbox
-          images={images}
+        <PreviewLightbox
+          items={items}
           index={lightboxIndex}
+          onIndex={setLightboxIndex}
           onClose={() => setLightboxIndex(null)}
-          onPrev={() => setLightboxIndex((i) => (i > 0 ? i - 1 : i))}
-          onNext={() => setLightboxIndex((i) => (i < images.length - 1 ? i + 1 : i))}
+          selectedIds={selectedIds}
+          onToggleSelect={onToggleSelect}
         />
       )}
     </div>
