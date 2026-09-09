@@ -81,7 +81,10 @@ export default function NuevoProyectoPage() {
         }));
         if (!alive) return;
         setItems(loaded);
-        setSelectedIds(new Set(loaded.map((it) => it.id)));
+        // La marca (checkbox) se guarda por foto: el proyecto se reabre EXACTAMENTE
+        // como se dejó (fotos desmarcadas incluidas). Registros antiguos sin el
+        // campo marcado → todas marcadas (comportamiento original).
+        setSelectedIds(new Set(loaded.filter((it) => it.fingerprint.marked !== false).map((it) => it.id)));
       } catch (e) {
         toast({ title: "No se pudo abrir el proyecto", description: e?.message, variant: "destructive" });
       }
@@ -248,6 +251,9 @@ export default function NuevoProyectoPage() {
           camera_model: it.fingerprint.camera_model,
           file_size: it.fingerprint.file_size,
           selection_status: effStatus(it),
+          // La marca (checkbox) de cada foto se persiste: al reabrir el proyecto
+          // aparecen marcadas/desmarcadas exactamente como se dejaron al guardar.
+          marked: selectedIds.has(it.id),
           ...statusMeta(effStatus(it)),
         }))
       );

@@ -38,6 +38,11 @@
       ],
       "default": "REVIEW"
     },
+    "marked": {
+      "type": "boolean",
+      "default": true,
+      "description": "Marca (checkbox) de la foto en el espacio de trabajo del proyecto. Se guarda con \u00abGuardar\u00bb y se restaura al reabrir: el proyecto aparece exactamente como se dej\u00f3. Solo cambia si el usuario la marca/desmarca y guarda."
+    },
     "rating": {
       "type": "number",
       "default": 0
