@@ -12,6 +12,26 @@ const HISTORY_LIMIT = 50;
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const tmpId = () => "tmp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
+// Punto 7 — DISTRIBUCIÓN INTELIGENTE: roles de la Selección IA (hero/key/support/
+// detail) convertidos a preferencias de tamaño para el planificador. Se combinan
+// con el perfil visual IA cuando existe (nunca lo destruyen: gana el mayor peso).
+const ROLE_SIZE = { hero: "large", key: "large", support: "medium", detail: "small" };
+const ROLE_IMP = { hero: 85, key: 65, support: 45, detail: 30 };
+function applyRoleWeights(profiles, roleOf) {
+  if (!roleOf?.size) return profiles;
+  for (const [id, role] of roleOf) {
+    const size = ROLE_SIZE[role] || "medium";
+    const imp = ROLE_IMP[role] ?? 0;
+    const prev = profiles.get(id) || { preferredSlot: { size: "medium" }, visualImportance: 0 };
+    profiles.set(id, {
+      ...prev,
+      preferredSlot: { ...(prev.preferredSlot || {}), size },
+      visualImportance: Math.max(prev.visualImportance || 0, imp),
+    });
+  }
+  return profiles;
+}
+
 export function useAlbumStore(project, initialSpreads, photosById) {
   const [spreads, setSpreads] = useState(initialSpreads);
   const [selectedSpreadId, setSelectedSpreadId] = useState(initialSpreads.length ? initialSpreads[0].id : null);
@@ -267,6 +287,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     if (!ordered.length) return null;
     let profiles = new Map();
     try { profiles = await analyzePhotosForLayout(project.id, ordered); } catch { profiles = new Map(); }
+    // Punto 7 — roles hero/key/support/detail como preferencia de tamaño de hueco.
+    profiles = applyRoleWeights(profiles, opts?.roleOf);
     // Límite máximo de lienzos (decisión del usuario antes de ejecutar) y
     // similitud (grupos de ráfaga/secuencia de la Selección IA): el planificador
     // DP existente optimiza DENTRO del límite y evita fotos casi idénticas en el
@@ -341,6 +363,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     if (!ordered.length) return null;
     let profiles = new Map();
     try { profiles = await analyzePhotosForLayout(project.id, ordered); } catch { profiles = new Map(); }
+    // Punto 7 — roles hero/key/support/detail como preferencia de tamaño de hueco.
+    profiles = applyRoleWeights(profiles, opts?.roleOf);
     const plan = planAutoLayout(project, ordered, profiles, {
       maxSpreads: opts?.maxSpreads, simGroups: opts?.simGroups, priority: opts?.priority, maxPerSpread: opts?.maxPerSpread,
     });

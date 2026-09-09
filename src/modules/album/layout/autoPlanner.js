@@ -41,8 +41,13 @@ const HERO_BONUS = 0.08;
 // ---- SIMILITUD entre fotos (grupos de ráfaga/secuencia del pipeline de
 // Selección IA): penaliza repetir fotos casi idénticas en el mismo lienzo y, en
 // el planificador, también en lienzos CONSECUTIVOS (cuando es posible evitarlo). ----
-const SIM_SAME_W = 0.9;
-const SIM_CONSEC_W = 0.5;
+const SIM_SAME_W = 1.4; // Punto 2 — refuerzo: fotos casi idénticas en el mismo lienzo
+const SIM_CONSEC_W = 0.8; // Punto 2 — refuerzo: repetir grupo en lienzos consecutivos
+// CALIDAD (punto 6) — penaliza colocar una foto cuya resolución nativa no alcanza
+// los ppp mínimos de impresión en su hueco (base cover): la DP prefiere otra
+// plantilla o asignación donde la foto entre con calidad.
+const QUALITY_W = 0.6;
+const DPI_MIN = 150;
 
 // Puntúa UNA plantilla contra un grupo de fotos y calcula la asignación
 // determinista foto↔hueco (mismo emparejamiento por proporción del motor: verticales
@@ -54,6 +59,7 @@ function scoreGroup(album, layout, photos, profiles, simGroups, costs) {
   const maxArea = geo.reduce((m, g) => Math.max(m, g.w_mm * g.h_mm), 0);
   const slots = geo.map((g, i) => ({ i, ratio: g.w_mm / g.h_mm, sizeClass: slotSizeClass(g, maxArea) })).sort((a, b) => a.ratio - b.ratio);
   const ph = photos.map((p) => ({ id: p.id, ratio: photoRatio(p) })).sort((a, b) => a.ratio - b.ratio);
+  const photoById = new Map(photos.map((p) => [p.id, p]));
   const assignment = new Array(geo.length).fill(null);
   let cost = costs?.canvas ?? CANVAS_COST;
   let visual = 0;
@@ -66,6 +72,19 @@ function scoreGroup(album, layout, photos, profiles, simGroups, costs) {
     const so = orientationOf(s.ratio);
     const po = orientationOf(p.ratio);
     if (so !== po) cost += (so === "square" || po === "square") ? ORIENT_ADJACENT : ORIENT_OPPOSITE;
+    // CALIDAD (punto 6) — DPI efectivo de la foto en su hueco (base cover).
+    const qphoto = photoById.get(p.id);
+    if (qphoto?.width_px > 0 && qphoto?.height_px > 0) {
+      const sw = geo[s.i].w_mm;
+      const sh = geo[s.i].h_mm;
+      if (sw > 0 && sh > 0) {
+        const qr = qphoto.width_px / qphoto.height_px;
+        const dw = Math.max(sw, sh * qr);
+        const dh = Math.max(sh, sw / qr);
+        const dpi = Math.min((25.4 * qphoto.width_px) / dw, (25.4 * qphoto.height_px) / dh);
+        if (dpi < DPI_MIN) visual += QUALITY_W * ((DPI_MIN - dpi) / DPI_MIN);
+      }
+    }
     // SIMILITUD — penaliza fotos casi idénticas dentro del MISMO lienzo.
     const gid = simGroups?.get(p.id);
     if (gid != null) {

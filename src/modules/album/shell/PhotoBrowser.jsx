@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
-import { FolderOpen, Link2, Loader2, Plus, RefreshCw, Search, Wand2, X } from "lucide-react";
+import { FolderOpen, Link2, Loader2, Plus, RefreshCw, Search, ShieldCheck, Wand2, X } from "lucide-react";
 import FolderTabs from "@/modules/album/shell/photoBrowser/FolderTabs";
 import ThumbStrip from "@/modules/album/shell/photoBrowser/ThumbStrip";
 import PhotoZoom from "@/modules/album/shell/photoBrowser/PhotoZoom";
@@ -13,7 +13,7 @@ const ALL = "__all__";
 // Colocación múltiple — selección con clic (individual), Ctrl/Cmd+clic (alternar) y
 // Shift+clic (rango), con estado visual claro (anillo + check). Arrastrar la selección
 // al lienzo crea automáticamente la plantilla adecuada. Doble clic = ampliada.
-export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, onRegenerateNonLocked, height }) {
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, onRegenerateNonLocked, onValidate, height }) {
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
@@ -154,6 +154,13 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
             title="Vuelve a maquetar todos los lienzos NO bloqueados (los bloqueados quedan intactos). Pide configuración antes de ejecutar."
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-medium text-muted-foreground hover:bg-secondary">
             <RefreshCw className="h-3 w-3" /> Regenerar no bloqueados
+          </button>
+        )}
+        {onValidate && (
+          <button onClick={onValidate}
+            title="Comprueba duplicados, fotos similares, calidad de impresión, protagonismo, lienzos vacíos y variedad antes de dar el álbum por terminado"
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-medium text-muted-foreground hover:bg-secondary">
+            <ShieldCheck className="h-3 w-3" /> Validar maquetación
           </button>
         )}
         <label className="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">

@@ -19,6 +19,9 @@ import SpreadCanvas from "@/modules/album/editor/SpreadCanvas";
 import RelocateDialog from "@/modules/album/relocate/RelocateDialog";
 import ExportDialog from "@/modules/album/export/ExportDialog";
 import AutoLayoutConfigDialog from "@/modules/album/shell/AutoLayoutConfigDialog";
+import ValidationReportDialog from "@/modules/album/shell/ValidationReportDialog";
+import { validateLayout } from "@/modules/album/layout/layoutValidator";
+import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 
 // Fase 5.2 — SHELL VISUAL profesional del editor: topbar + biblioteca de plantillas
@@ -40,13 +43,23 @@ export default function AlbumEditorPage({ projectId }) {
         const photos = await listPhotos(projectId);
         const spreads = [...(await listSpreads(projectId))].sort((a, b) => a.order_index - b.order_index);
         const photoGroups = await listPhotoGroups(projectId).catch(() => []);
+        // Punto 7 — roles (hero/key/support/detail) de la última Selección IA
+        // completada: alimentan la maquetación y la validación final (punto 15).
+        let roleOf = new Map();
+        try {
+          const sels = await base44.entities.AlbumAISelection.filter({ project_id: projectId });
+          const done = (sels || [])
+            .filter((s) => s.status === "completed" && Array.isArray(s.selection))
+            .sort((a, b) => new Date(b.created_date || 0) - new Date(a.created_date || 0));
+          if (done[0]) roleOf = new Map(done[0].selection.map((x) => [x.photo_id, x.role]).filter(([, r]) => !!r));
+        } catch {}
         const thumbs = new Map();
         await Promise.all(photos.map(async (p) => {
           let t = await getTierPreview(projectId, p.id, "thumb");
           if (!t) t = await getPreview(previewKey(projectId, p.filename)); // legado Fase 2
           if (t) thumbs.set(p.id, t);
         }));
-        if (alive) setData({ project, photos, spreads, thumbs, photoGroups });
+        if (alive) setData({ project, photos, spreads, thumbs, photoGroups, roleOf });
       } catch (e) {
         if (alive) setError(e?.message || "No se pudo cargar el álbum");
       }
@@ -70,7 +83,7 @@ export default function AlbumEditorPage({ projectId }) {
   return <AlbumEditorInner key={projectId} {...data} />;
 }
 
-function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spreads, thumbs: initialThumbs, photoGroups }) {
+function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spreads, thumbs: initialThumbs, photoGroups, roleOf }) {
   const { toast } = useToast();
   const [project, setProject] = useState(initialProject);
   const [photos, setPhotos] = useState(initialPhotos);
@@ -109,6 +122,23 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     return m;
   }, [photoGroups]);
   const store = useAlbumStore(project, spreads, photosById);
+
+  // Punto 15 — VALIDACIÓN FINAL: se ejecuta tras cada maquetación/regeneración (y a
+  // petición con «Validar maquetación») sobre el estado ya actualizado: duplicados,
+  // fotos similares, calidad de impresión, protagonismo, lienzos vacíos, variedad
+  // y máximo de lienzos indicado por el usuario.
+  const [validation, setValidation] = useState(null);
+  const [validateReq, setValidateReq] = useState(null);
+  useEffect(() => {
+    if (!validateReq) return;
+    const findings = validateLayout({ spreads: store.spreads, photosById, simGroups, roleOf });
+    const limit = validateReq.maxSpreads;
+    if (limit != null && store.spreads.length > limit) {
+      findings.unshift({ severity: "error", kind: "limit", message: `El álbum tiene ${store.spreads.length} lienzos y el máximo indicado era ${limit}.` });
+    }
+    setValidation({ findings });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [validateReq]);
 
   const spread = store.selectedSpread;
   const selectedSlot = spread ? (spread.slots || []).find((s) => s.slot_id === store.selectedSlotId) || null : null;
@@ -316,7 +346,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     }
     const limit = Number(cfg.maxSpreads) > 0 ? Math.floor(Number(cfg.maxSpreads)) : null;
     toast({ title: "Maquetando…", description: limit ? `Preparando la distribución automática (máximo ${limit} lienzos).` : "Preparando la distribución automática de las fotos." });
-    const res = await store.autoLayoutPhotos(ordered, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread });
+    const res = await store.autoLayoutPhotos(ordered, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf });
     if (!res) {
       toast({ title: "Sin plantillas compatibles", description: "No hay combinación de plantillas para estas fotos dentro del máximo de lienzos indicado y la configuración actual del álbum.", variant: "destructive" });
       return;
@@ -325,6 +355,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       title: "Maquetación completada",
       description: `${res.total} seleccionada(s) · ${res.placed} colocada(s) · ${res.leftover} sin colocar · ${res.spreadCount} lienzo(s) creado(s) al final del álbum${res.usedAi ? " · con mejora visual IA" : ""}. Revisa los lienzos nuevos (⌘Z deshace toda la maquetación).`,
     });
+    setValidateReq({ maxSpreads: limit });
   };
   const handleAutoLayoutFolder = (folder) => {
     const ids = photos.filter((p) => p.folder === folder && !placedPhotoIds.has(p.id)).map((p) => p.id);
@@ -347,9 +378,10 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     if (!d) return;
     if (d.mode === "regenerate") {
       toast({ title: "Regenerando…", description: "Rehaciendo los lienzos no bloqueados (los bloqueados quedan intactos)." });
-      const res = await store.regenerateNonLocked({ maxSpreads: cfg.maxSpreads, maxPerSpread: cfg.maxPerSpread, priority: cfg.priority, simGroups });
+      const res = await store.regenerateNonLocked({ maxSpreads: cfg.maxSpreads, maxPerSpread: cfg.maxPerSpread, priority: cfg.priority, simGroups, roleOf });
       if (!res) { toast({ title: "Sin plantillas compatibles", description: "No hay combinación para regenerar con esa configuración.", variant: "destructive" }); return; }
       toast({ title: "Regeneración completada", description: `${res.placed} foto(s) en ${res.spreadCount} lienzo(s) nuevo(s) · ${res.keptLocked} bloqueado(s) intacto(s) · ${res.leftover} sin colocar (⌘Z deshace).` });
+      setValidateReq({ maxSpreads: Number(cfg.maxSpreads) > 0 ? Math.floor(Number(cfg.maxSpreads)) : null });
       return;
     }
     runAutoLayout(d.ids, cfg);
@@ -616,11 +648,15 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onAutoLayout={openAutoLayout}
         onAutoLayoutFolder={handleAutoLayoutFolder}
         onRegenerateNonLocked={openRegenerateNonLocked}
+        onValidate={() => setValidateReq({})}
         />
         </div>
         </>
       )}
 
+      {validation && (
+        <ValidationReportDialog findings={validation.findings} onClose={() => setValidation(null)} />
+      )}
       {autoDialog && (
         <AutoLayoutConfigDialog
           open
