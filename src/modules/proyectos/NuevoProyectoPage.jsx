@@ -78,6 +78,9 @@ export default function NuevoProyectoPage() {
       withFingerprint.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl }))
     ).catch(() => {});
     setItems(withFingerprint);
+    // Por defecto TODAS las fotos quedan marcadas (checkbox) al subir la carpeta:
+    // el fotógrafo parte de la selección completa y desmarca solo lo que no quiera.
+    setSelectedIds(new Set(withFingerprint.map((p) => p.id)));
     setExtracting(false);
   };
 
@@ -125,7 +128,12 @@ export default function NuevoProyectoPage() {
       const folderRef = await saveHandle(folderHandle, "directory", { name: folderHandle.name });
       const catalogRef = catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }) : null;
 
-      const selCount = items.filter((it) => it.status === "TOP_PICK" || it.status === "SELECT").length;
+      // La SELECCIÓN que se guarda son las fotos MARCADAS (checkbox): al crear el
+      // proyecto están todas marcadas por defecto, así que se guardan todas. Las
+      // marcadas sin curar (REVIEW) suben a SELECT (5 estrellas + etiqueta verde);
+      // la curación manual del botón «A revisar» siempre prevalece si existe.
+      const effStatus = (it) => (selectedIds.has(it.id) && it.status === "REVIEW" ? "SELECT" : it.status);
+      const selCount = items.filter((it) => ["TOP_PICK", "SELECT"].includes(effStatus(it))).length;
       // La selección solo se marca como guardada cuando realmente existe una selección.
       // Sin selección (0 fotos marcadas), el proyecto queda como borrador y al abrirlo se
       // muestra la interfaz de selección, no el resumen vacío.
@@ -158,8 +166,8 @@ export default function NuevoProyectoPage() {
           camera_make: it.fingerprint.camera_make,
           camera_model: it.fingerprint.camera_model,
           file_size: it.fingerprint.file_size,
-          selection_status: it.status,
-          ...statusMeta(it.status),
+          selection_status: effStatus(it),
+          ...statusMeta(effStatus(it)),
         }))
       );
 
@@ -173,7 +181,7 @@ export default function NuevoProyectoPage() {
           asShotWB: it.asShotWB,
           skinStats: it.skinStats,
           fingerprint: it.fingerprint,
-          status: it.status,
+          status: effStatus(it),
         }))
       );
       toast({ title: "Proyecto guardado", description: `${items.length} fotos · ${selCount} seleccionadas` });
