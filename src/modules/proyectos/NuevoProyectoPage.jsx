@@ -11,7 +11,7 @@ import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject
 import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
 import { useToast } from "@/components/ui/use-toast";
 import useUndoRedo from "@/hooks/useUndoRedo";
-import { setPendingProjectPreviews } from "@/lib/rawaistudio/localSession";
+import { setPendingProjectPreviews, setSession } from "@/lib/rawaistudio/localSession";
 import { cachePreviews, getCachedPreviews } from "./lib/previewCache";
 
 // Crea un proyecto: nombre + fecha + catálogo .lrcat + carpeta RAW. Lee los RAW igual que
@@ -421,7 +421,35 @@ export default function NuevoProyectoPage() {
   const goEditar = async () => {
     setBusyAction("editar");
     const id = await save().finally(() => setBusyAction(null));
-    if (id) navigate("/ajustes-ia");
+    if (!id) return;
+    // El proyecto ya está creado: «Editar» lleva las fotos SELECCIONADAS a la sesión
+    // del módulo de revelado (mismo contrato que DetalleProyectoPage → AjustesIA),
+    // así que NO vuelve a pedir la carpeta RAW — el módulo arranca con las fotos
+    // del proyecto ya cargadas.
+    const effStatus = (it) => {
+      if (it.aiReview) return "REVIEW";
+      if (selectedIds.has(it.id)) return it.status === "REVIEW" ? "SELECT" : it.status;
+      return it.status === "TOP_PICK" || it.status === "REJECT" ? it.status : "REVIEW";
+    };
+    const selected = items
+      .filter((it) => ["TOP_PICK", "SELECT"].includes(effStatus(it)))
+      .map((it) => ({
+        id: it.id,
+        file: it.file,
+        preview: it.preview,
+        manualRotation: 0,
+        rating: it.rating || 0,
+        colorLabel: it.aiReview ? "yellow" : "green",
+        cameraInfo: it.cameraInfo || null,
+        asShotWB: it.asShotWB || null,
+        skinStats: it.skinStats || null,
+      }));
+    if (!selected.length) {
+      toast({ title: "Sin fotos seleccionadas", description: "Marca al menos una foto para llevarla a Editar.", variant: "destructive" });
+      return;
+    }
+    setSession({ photos: selected });
+    navigate("/ajustes-ia");
   };
   const goAlbum = async () => {
     setBusyAction("album");

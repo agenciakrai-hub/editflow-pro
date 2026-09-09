@@ -236,7 +236,7 @@ export default function AjustesIA() {
     }
   };
 
-  const useSession = () => {
+  const loadSessionPhotos = () => {
     if (!session.photos?.length) return;
     setPhotos(
       session.photos.map((p) => ({
@@ -250,6 +250,14 @@ export default function AjustesIA() {
     setResults([]);
     setSynced(false);
   };
+
+  // Al llegar desde un proyecto («Editar» en el espacio de trabajo), las fotos
+  // seleccionadas ya están en la sesión: se cargan automáticamente, sin pedir
+  // de nuevo la carpeta RAW.
+  useEffect(() => {
+    loadSessionPhotos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onPick = (list) => {
     const raws = Array.from(list || []).filter((f) => isRawFile(f.name) && !isHiddenOrSystemFile(f.name));
@@ -517,7 +525,7 @@ export default function AjustesIA() {
                 Hay {session.photos.length} fotos en la sesión (flujo combinado).
               </p>
               <button
-                onClick={useSession}
+                onClick={loadSessionPhotos}
                 className="inline-flex items-center gap-2 rounded-md bg-white px-4 py-2 text-sm font-medium text-black"
               >
                 <Sparkles className="h-4 w-4" /> Usar {session.photos.length} fotos de la sesión
