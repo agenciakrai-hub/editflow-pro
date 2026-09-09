@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen, ArrowDownUp, Undo2, Redo2 } from "lucide-react";
+import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen, ArrowDownUp, Undo2, Redo2, Star } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
 import PreviewLightbox from "./PreviewLightbox";
 
@@ -12,7 +12,7 @@ import PreviewLightbox from "./PreviewLightbox";
 //  - Barra lateral derecha con Guardar, Selección y Editar (con sus rutas).
 export default function ProjectPhotoWorkspace({
   items, selectedIds, onToggleSelect, onToggleSelectMany, onToggleSelectAll, onDeleteSelected,
-  onCycleStatus, gridCols, onGridCols, saving, busyAction, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
+  onCycleStatus, onSetRating, gridCols, onGridCols, saving, busyAction, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
   onUndo, onRedo, canUndo, canRedo,
 }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
@@ -169,6 +169,28 @@ export default function ProjectPhotoWorkspace({
                 )}
                 <div className="space-y-1 p-1.5">
                   <p className="truncate text-[10px] font-mono text-muted-foreground">{item.filename}</p>
+                  {/* 5 estrellas por foto, APAGADAS por defecto: pulsar la n-ésima la
+                      enciende; pulsar la misma otra vez la apaga. Se guarda con el
+                      proyecto y viaja al XMP (xmp:Rating). La selección (verde) no
+                      toca las estrellas: solo añade xmp:Label="Green". */}
+                  <div className="flex items-center justify-center gap-0.5">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => onSetRating(item.id, item.rating === n ? 0 : n)}
+                        title={item.rating === n ? `Quitar ${n} estrellas` : `${n} estrellas`}
+                        className="p-0.5"
+                      >
+                        <Star
+                          className={
+                            "h-3 w-3 " +
+                            (item.rating >= n ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40")
+                          }
+                        />
+                      </button>
+                    ))}
+                  </div>
                   <button
                     type="button"
                     onClick={() => onCycleStatus(item.id)}

@@ -198,7 +198,9 @@ export default function DetalleProyectoPage() {
     try {
       const updates = fingerprints.map((f) => {
         const status = statusDraft[f.id] ?? f.selection_status;
-        return { id: f.id, selection_status: status, ...statusMeta(status) };
+        // Las estrellas siguen siendo las del fotógrafo (apagadas por defecto):
+        // seleccionar solo añade la etiqueta verde, nunca fuerza xmp:Rating=5.
+        return { id: f.id, selection_status: status, ...statusMeta(status, f.rating || 0) };
       });
       await bulkUpdateFingerprints(updates);
       const updatedFingerprints = fingerprints.map((f) => ({ ...f, ...updates.find((u) => u.id === f.id) }));
