@@ -23,6 +23,21 @@ function findExifStart(bytes) {
   return -1;
 }
 
+// Fallback CR3: en el contenedor ISO-BMFF (.cr3 de Canon) el bloque EXIF empieza
+// DIRECTO con la cabecera TIFF ("II*\0" / "MM\0*"), sin la firma "Exif\0\0".
+// Sin este fallback, las .CR3 no tienen hora de captura y la galería pierde el
+// orden cronológico.
+function findTiffStart(bytes) {
+  const len = bytes.length;
+  for (let i = 0; i < len - 4; i++) {
+    if (
+      (bytes[i] === 0x49 && bytes[i + 1] === 0x49 && bytes[i + 2] === 0x2a && bytes[i + 3] === 0x00) ||
+      (bytes[i] === 0x4d && bytes[i + 1] === 0x4d && bytes[i + 2] === 0x00 && bytes[i + 3] === 0x2a)
+    ) return i;
+  }
+  return -1;
+}
+
 const readU16 = (b, o, le) => (le ? b[o] | (b[o + 1] << 8) : (b[o] << 8) | b[o + 1]);
 const readU32 = (b, o, le) =>
   le
@@ -84,7 +99,8 @@ function parseExifDate(str) {
 // Devuelve { captureTime, focal, aperture, iso, exposureTime, source }.
 // captureTime es epoch ms de DateTimeOriginal (preferido) o DateTime; null si no hay EXIF.
 export function readCaptureTimeFromBytes(bytes) {
-  const tiffStart = findExifStart(bytes);
+  let tiffStart = findExifStart(bytes);
+  if (tiffStart < 0) tiffStart = findTiffStart(bytes); // CR3: EXIF sin firma "Exif\0\0"
   if (tiffStart < 0 || tiffStart + 8 > bytes.length) {
     return { captureTime: null, focal: null, aperture: null, iso: null, exposureTime: null, source: "none" };
   }

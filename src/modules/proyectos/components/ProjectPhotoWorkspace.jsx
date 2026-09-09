@@ -30,7 +30,17 @@ export default function ProjectPhotoWorkspace({
     let list = [...items];
     if (viewMode === "selected") list = list.filter((it) => selectedIds.has(it.id));
     else if (viewMode === "unselected") list = list.filter((it) => !selectedIds.has(it.id));
-    const byTime = (a, b) => (a.captureTime || 0) - (b.captureTime || 0);
+    // Orden temporal. Sin hora de captura (p. ej. proyectos guardados antes de leer
+    // el EXIF de las .CR3), recurre al nombre — la numeración de cámara (KRFC####) es
+    // cronológica — para que «Hora de captura» siempre dé un orden real.
+    const byName = (a, b) => a.filename.localeCompare(b.filename, "es", { numeric: true });
+    const byTime = (a, b) => {
+      const at = a.captureTime || 0;
+      const bt = b.captureTime || 0;
+      if (at && bt) return at - bt || byName(a, b);
+      if (!at && !bt) return byName(a, b);
+      return at ? -1 : 1; // la que sí tiene hora va primero; el resto al final
+    };
     if (viewMode === "name") list.sort((a, b) => a.filename.localeCompare(b.filename, "es", { numeric: true }));
     else if (viewMode === "camera")
       list.sort((a, b) => (a.camera || "").localeCompare(b.camera || "") || byTime(a, b));
