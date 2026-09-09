@@ -30,6 +30,7 @@ import Cerebro from '@/pages/Cerebro';
 import HistorialTrabajos from '@/pages/HistorialTrabajos';
 import AlbumApp from '@/modules/album/pages/AlbumApp';
 import AlbumFileLauncher from '@/modules/album/format/AlbumFileLauncher';
+import WorkflowV2Page from '@/modules/workflow-v2/WorkflowV2Page';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -75,6 +76,7 @@ const AuthenticatedApp = () => {
           <Route path="/cerebro" element={<Cerebro />} />
           <Route path="/historial" element={<HistorialTrabajos />} />
           <Route path="/album" element={<AlbumApp />} />
+          <Route path="/flujo-v2" element={<WorkflowV2Page />} />
           <Route path="/suscripcion" element={<Subscription />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
