@@ -45,6 +45,9 @@ export default function NuevoProyectoPage() {
   // (individual, rango con Mayús, todas), estados y eliminaciones. Cada acción
   // registra un paso ANTES de aplicarse. El guardado no se deshace.
   const itemsRef = useRef(items); itemsRef.current = items;
+  // Traza de la última ejecución de selección IA. Viaja con el propio guardado del
+  // proyecto (create/update), de modo que no dependa de una escritura aislada.
+  const lastTraceRef = useRef(null);
   const selectedRef = useRef(selectedIds); selectedRef.current = selectedIds;
   const getSnapshot = useCallback(() => ({ items: itemsRef.current, selectedIds: selectedRef.current }), []);
   const applySnapshot = useCallback((s) => { setItems(s.items); setSelectedIds(s.selectedIds); }, []);
@@ -282,6 +285,9 @@ export default function NuevoProyectoPage() {
         lightroom_catalog_name: catalogHandle?.name || existing?.catalogName || "",
         raw_folder_path: folderHandle?.name || existing?.folderName || "",
       };
+      // La traza de la última selección IA viaja DENTRO del guardado del proyecto:
+      // create/update la persisten en la misma operación atómica que el resto.
+      if (lastTraceRef.current) payload.ai_config_snapshot = { selection_trace: lastTraceRef.current };
 
       // Proyecto existente: se ACTUALIZA (nunca se crea un duplicado). El estado actual
       // del espacio de trabajo reemplaza a los fingerprints guardados, incluyendo las
@@ -329,13 +335,6 @@ export default function NuevoProyectoPage() {
           ...(it.aiReview || it.rating === 3 ? { rating: 3, color_label: "yellow" } : {}),
         }))
       );
-
-      // Si la selección IA corrió ANTES de guardar (proyecto nuevo sin ID), la traza
-      // quedó en window.__lastSelectionTrace. Ahora que ya hay ID, se persiste.
-      if (window.__lastSelectionTrace) {
-        base44.entities.Project.update(savedId, { ai_config_snapshot: { selection_trace: window.__lastSelectionTrace } }).catch(() => {});
-        delete window.__lastSelectionTrace;
-      }
 
       // Pasa las previews ya extraídas al detalle para no volver a procesarlas al abrir.
       setPendingProjectPreviews(
@@ -407,11 +406,18 @@ export default function NuevoProyectoPage() {
         if (typeof t === "number") setAiTotal(t);
       });
       // Persiste la traza completa de la ejecución en el proyecto para auditarla.
+      // Se guarda en el ref: «Guardar» la re-escribe junto con el proyecto. La
+      // escritura inmediata sigue siendo fire-and-forget, pero si falla se avisa
+      // (antes el error se tragaba en silencio y la traza se perdía sin rastro).
+      lastTraceRef.current = trace || null;
       const traceProjectId = existing?.projectId || projectIdParam;
       if (trace && traceProjectId) {
-        base44.entities.Project.update(traceProjectId, { ai_config_snapshot: { selection_trace: trace } }).catch(() => {});
-      } else if (trace) {
-        window.__lastSelectionTrace = trace;
+        base44.entities.Project.update(traceProjectId, { ai_config_snapshot: { selection_trace: trace } })
+          .catch((e) => toast({
+            title: "Traza de selección no guardada",
+            description: `Se guardará al pulsar «Guardar». Motivo: ${e?.message || "desconocido"}`,
+            variant: "destructive",
+          }));
       }
       setItems((prev) => prev.map((it) => {
         if (!selectedIds.has(it.id)) return it; // solo participan las marcadas
