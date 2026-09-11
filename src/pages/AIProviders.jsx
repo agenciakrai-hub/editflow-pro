@@ -361,9 +361,9 @@ export default function AIProviders() {
           )}
         </div>
         <p className="text-xs text-muted-foreground">
-          En Selección hay failover: si el proveedor activo falla, se reintenta con el siguiente habilitado. En Ajustes,
-          el proveedor activo es el único responsable. En Álbum, el proveedor activo se usa primero y, si falla, la cadena
-          de Album AI (Gemini de pago → Qwen → NVIDIA) continúa.
+          En Selección y Ajustes, el proveedor activo es el único responsable: si el modelo elegido falla (429/500/timeout),
+          se reintenta con otro modelo marcado del <strong>mismo proveedor</strong> — nunca salta a otro proveedor. En Álbum,
+          el proveedor activo se usa primero y, si falla, la cadena de Album AI (Gemini de pago → Qwen → NVIDIA) continúa.
         </p>
       </div>
 

@@ -357,78 +357,85 @@ async function buildFailoverChain(base44: any, active: string, task?: AiTask): P
   return chain;
 }
 
-// Punto unico de ruteo. CON FAILOVER EXPLÍCITO y AUDITABLE: cada intento se registra en
-// opts._trace.attempts (proveedor, modelo, ok, error, http_status, duración). Si el
-// usuario fijó un MODELO EXACTO, NO hay failover (no se sustituye el modelo); si falla,
-// se lanza un error explícito. Si se fuerza un proveedor (forceProvider), un único
-// intento sin failover. La traza nunca oculta un fallback: expone proveedor/modelo
-// configurado, intentos, failover, proveedor/modelo finales y motivo.
+// Punto unico de ruteo. FAILOVER SOLO ENTRE MODELOS DEL MISMO PROVEEDOR: el proveedor
+// activo es el ÚNICO que se intenta. Si el modelo elegido falla (429/500/timeout),
+// callCustom reintenta con el siguiente modelo marcado y verificado vision-capable del
+// MISMO proveedor — NUNCA salta a otro proveedor. Cada intento se registra en
+// opts._trace.attempts (modelo, ok, error, http_status, duración). Si se fuerza un
+// proveedor (forceProvider), un único intento sin failover. La traza expone
+// proveedor/modelo configurado, intentos por modelo, failover y modelo final.
 export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
   if (opts._trace && !Array.isArray(opts._trace.attempts)) opts._trace.attempts = [];
   // Modo forzado (forceProvider): un único intento, sin failover.
   if (opts.forceProvider) {
     const provider = opts.forceProvider;
     if (opts._trace) opts._trace.active_provider = provider;
+    const fpIsCustom = typeof provider === "string" && provider.startsWith("custom:");
     const t0 = Date.now();
     try {
       const out = await callProvider(base44, provider, opts);
       if (opts._trace) {
-        opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: true, http_status: opts._trace.http_status ?? null, latency_ms: Date.now() - t0 });
-        opts._trace.failover = false;
+        // callCustom ya registró cada intento de modelo; para proveedores legados se
+        // registra aquí el intento único.
+        if (!fpIsCustom) {
+          opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: true, http_status: opts._trace.http_status ?? null, latency_ms: Date.now() - t0 });
+        }
+        opts._trace.failover = opts._trace.attempts.length > 1;
         opts._trace.final_provider = provider;
         opts._trace.final_model = opts._trace.model || null;
       }
       return out;
     } catch (e: any) {
-      if (opts._trace) opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: false, error: String(e?.message || e).slice(0, 300), http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0 });
+      if (opts._trace && !fpIsCustom) {
+        opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: false, error: String(e?.message || e).slice(0, 300), http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0 });
+      }
       throw e;
     }
   }
   const { active, exact } = await getTaskConfig(base44, opts.task);
   if (opts._trace) { opts._trace.active_provider = active; opts._trace.configured_model = exact || "(auto)"; }
-  // MODELO EXACTO fijado por el usuario: NO hay failover. Se intenta ÚNICAMENTE el
-  // proveedor activo con ese modelo. Si falla, se registra el error y se lanza — nunca
-  // se sustituye silenciosamente por otro modelo/proveedor.
-  const allowFailover = !exact;
-  const chain = allowFailover ? await buildFailoverChain(base44, active, opts.task) : [active];
-  let lastErr: any;
-  for (const provider of chain) {
-    const t0 = Date.now();
-    try {
-      const out = await callProvider(base44, provider, opts);
-      const m = opts._trace?.model || null;
-      if (opts._trace) opts._trace.attempts.push({ provider, model: m, ok: true, http_status: opts._trace.http_status ?? null, latency_ms: Date.now() - t0 });
-      if (opts._trace) {
-        opts._trace.failover = opts._trace.attempts.length > 1;
-        opts._trace.final_provider = provider;
-        opts._trace.final_model = m;
-        opts._trace.failover_reason = null;
+  // REGLA DE FAILOVER: el proveedor activo es el ÚNICO que se intenta. Si el modelo
+  // elegido falla (429/500/timeout), callCustom reintenta con OTRO MODELO del MISMO
+  // proveedor (failover a nivel de modelo). NUNCA se salta a otro proveedor: el
+  // proveedor seleccionado por el administrador es el único que procesa las fotos.
+  // Si todos los modelos del proveedor fallan, la tarea falla con error explícito.
+  const isCustom = typeof active === "string" && active.startsWith("custom:");
+  const t0 = Date.now();
+  try {
+    const out = await callProvider(base44, active, opts);
+    if (opts._trace) {
+      // callCustom ya registró cada intento de modelo en attempts; para proveedores
+      // legados (qwen/nvidia/gemini/base44) se registra aquí el intento único.
+      if (!isCustom) {
+        opts._trace.attempts.push({ provider: active, model: opts._trace.model || null, ok: true, http_status: opts._trace.http_status ?? null, latency_ms: Date.now() - t0 });
       }
-      return out;
-    } catch (e: any) {
-      const msg = String(e?.message || e);
-      const m = opts._trace?.model || null;
-      if (opts._trace) opts._trace.attempts.push({ provider, model: m, ok: false, error: msg.slice(0, 300), http_status: e?.httpStatus ?? opts._trace?.http_status ?? null, latency_ms: Date.now() - t0 });
-      console.log(`[aiProvider] ${allowFailover ? "failover" : "exact-model (sin failover)"}: provider=${provider} fallo: ${msg}`);
-      lastErr = e;
+      opts._trace.failover = opts._trace.attempts.length > 1;
+      opts._trace.final_provider = active;
+      opts._trace.final_model = opts._trace.model || null;
+      opts._trace.failover_reason = null;
     }
+    return out;
+  } catch (e: any) {
+    const msg = String(e?.message || e).slice(0, 300);
+    if (opts._trace) {
+      if (!isCustom) {
+        opts._trace.attempts.push({ provider: active, model: opts._trace.model || null, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0 });
+      }
+      opts._trace.failover = opts._trace.attempts.length > 1;
+      opts._trace.final_provider = null;
+      opts._trace.final_model = null;
+      opts._trace.failover_reason = msg;
+    }
+    throw e;
   }
-  if (opts._trace) {
-    opts._trace.failover = allowFailover && opts._trace.attempts.length > 1;
-    opts._trace.final_provider = null;
-    opts._trace.final_model = null;
-    opts._trace.failover_reason = lastErr ? String(lastErr?.message || lastErr).slice(0, 300) : "todos los proveedores fallaron";
-  }
-  if (!allowFailover && lastErr) {
-    throw new Error(`El modelo exacto configurado (${exact}) falló en el proveedor activo (${active}) y NO se sustituyó. Causa: ${String(lastErr?.message || lastErr).slice(0, 300)}`);
-  }
-  throw lastErr || new Error(`Todos los proveedores fallaron para task=${opts.task}`);
 }
 
 // Proveedor personalizado (OpenAI-compatible). Lee el registro CustomAiProvider por id y
 // lo llama como endpoint /chat/completions con image_url — mismo contrato que Qwen.
 // Sirve para seleccion y para ajustes: el motor correspondiente construye el prompt y el
-// schema segun la task; el proveedor solo responde. SIN FAILOVER.
+// schema segun la task; el proveedor solo responde. FAILOVER ENTRE MODELOS DEL MISMO
+// PROVEEDOR: si el modelo elegido falla, reintenta con el siguiente modelo marcado y
+// verificado vision-capable de este proveedor. NUNCA salta a otro proveedor.
 async function callCustom(base44: any, customId: string, opts: InvokeOpts): Promise<any> {
   let rec: any = null;
   try {
@@ -480,9 +487,17 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     const v = e?.caps?.vision;
     return v === true ? true : v === false ? false : null;
   };
-  let model: string;
-  let modelSource: "exacto" | "auto" = "auto";
-  if (exactModel) {
+  // CONSTRUCCIÓN DE LA CADENA DE MODELOS (failover DENTRO del mismo proveedor).
+  // Si el modelo elegido falla en runtime (HTTP 429/500/timeout), se reintenta con el
+  // siguiente modelo marcado y verificado vision-capable del MISMO proveedor. NUNCA se
+  // salta a otro proveedor: el proveedor activo es el único responsable.
+  // Orden: modelo exacto (si está fijado y es válido) → resto de marcados verificados.
+  // forceModel (album-engine): modelo forzado por el llamador, sin failover de modelo.
+  const trueMarked = marked.filter((m: string) => capVisionOf(m) === true);
+  let modelChain: string[] = [];
+  if (opts.forceModel) {
+    modelChain = [opts.forceModel];
+  } else if (exactModel) {
     if (!marked.includes(exactModel)) {
       throw new ModelResolutionError(`El modelo exacto "${exactModel}" no está marcado para ${taskLabel} en el proveedor "${rec.name}". Márcalo en Proveedores IA o elige "Auto".`);
     }
@@ -493,23 +508,14 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     if (cv === null) {
       throw new ModelResolutionError(`El modelo exacto "${exactModel}" NO está verificado para visión. ${taskLabel} requiere una capacidad confirmada. Pulsa "Probar capacidad" en Proveedores IA para verificarlo antes de ejecutar.`);
     }
-    model = exactModel;
-    modelSource = "exacto";
+    modelChain = [exactModel, ...trueMarked.filter((m: string) => m !== exactModel)];
   } else {
-    // Auto: SOLO entre marcados verificados compatibles (vision=true). Si no hay
-    // ninguno verificado, se lanza error (no se usa un modelo no verificado ni se cae
-    // a heurísticas de nombre ni a models[0]). El administrador debe marcar y
-    // verificar al menos un modelo con "Probar capacidad".
-    const trueMarked = marked.filter((m: string) => capVisionOf(m) === true);
-    if (trueMarked.length) {
-      model = trueMarked[0];
-      modelSource = "auto";
-    } else {
-      throw new ModelResolutionError(`"${rec.name}" no tiene modelos marcados y verificados como compatibles con ${taskLabel}. Marca al menos un modelo en Proveedores IA y pulsa "Probar capacidad" para confirmar su capacidad de visión antes de ejecutar.`);
-    }
+    modelChain = trueMarked;
   }
-  if (opts._trace) { opts._trace.model = model; opts._trace.configured_model = exactModel || "(auto)"; }
-  console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${modelSource})`);
+  if (!modelChain.length) {
+    throw new ModelResolutionError(`"${rec.name}" no tiene modelos marcados y verificados como compatibles con ${taskLabel}. Marca al menos un modelo en Proveedores IA y pulsa "Probar capacidad" para confirmar su capacidad de visión antes de ejecutar.`);
+  }
+  if (opts._trace) { opts._trace.configured_model = exactModel || "(auto)"; }
   // Validación PRE-FLIGHT (antes de enviar imágenes): endpoint http/https y presencia de
   // imágenes. La clave, el endpoint no vacío y el modelo vision-capable ya se validaron
   // arriba. Si algo falla aquí, se detecta ANTES de la llamada al proveedor.
@@ -533,33 +539,52 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     }));
     if (opts._trace) opts._trace.base64_convert_ms = Date.now() - tB64;
   }
-  const content: any[] = [{ type: "text", text: opts.prompt }];
-  for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
-  const body = { model, messages: [{ role: "user", content }], stream: false };
-  const t0 = Date.now();
-  const res = await fetchWithTimeout(endpoint, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const latency = Date.now() - t0;
-  if (opts._trace) { opts._trace.request_ms = latency; opts._trace.http_status = res.status; opts._trace.endpoint = endpoint; }
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    const err: any = new Error(`[${rec.name}] HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
-    err.httpStatus = res.status;
-    throw err;
+  // Intenta cada modelo del proveedor en orden. Si uno falla (429/500/timeout), reintenta
+  // con el siguiente modelo del MISMO proveedor. NUNCA salta a otro proveedor. La traza
+  // registra cada intento (modelo, ok, error, http_status, latencia).
+  let lastErr: any;
+  for (let mi = 0; mi < modelChain.length; mi++) {
+    const model = modelChain[mi];
+    const isLastModel = mi === modelChain.length - 1;
+    if (opts._trace) opts._trace.model = model;
+    console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${mi + 1}/${modelChain.length})${mi > 0 ? " failover-modelo" : ""}`);
+    const content: any[] = [{ type: "text", text: opts.prompt }];
+    for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
+    const body = { model, messages: [{ role: "user", content }], stream: false };
+    const t0 = Date.now();
+    try {
+      const res = await fetchWithTimeout(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const latency = Date.now() - t0;
+      if (opts._trace) { opts._trace.request_ms = latency; opts._trace.http_status = res.status; opts._trace.endpoint = endpoint; }
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        const err: any = new Error(`[${rec.name}] HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
+        err.httpStatus = res.status;
+        throw err;
+      }
+      const data: any = await res.json();
+      if (opts._trace) {
+        opts._trace.tokens_in = data?.usage?.prompt_tokens ?? null;
+        opts._trace.tokens_out = data?.usage?.completion_tokens ?? null;
+      }
+      const contentOut = data?.choices?.[0]?.message?.content;
+      const tParse = Date.now();
+      const parsed = parseJsonContent(contentOut);
+      if (opts._trace) opts._trace.parse_ms = Date.now() - tParse;
+      if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: true, http_status: res.status, latency_ms: latency });
+      return parsed;
+    } catch (e: any) {
+      const msg = String(e?.message || e).slice(0, 300);
+      if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0 });
+      console.log(`[aiProvider] modelo ${model} fallo: ${msg}${isLastModel ? " (sin mas modelos en este proveedor)" : ""}`);
+      lastErr = e;
+    }
   }
-  const data: any = await res.json();
-  if (opts._trace) {
-    opts._trace.tokens_in = data?.usage?.prompt_tokens ?? null;
-    opts._trace.tokens_out = data?.usage?.completion_tokens ?? null;
-  }
-  const contentOut = data?.choices?.[0]?.message?.content;
-  const tParse = Date.now();
-  const parsed = parseJsonContent(contentOut);
-  if (opts._trace) opts._trace.parse_ms = Date.now() - tParse;
-  return parsed;
+  throw lastErr || new Error(`Todos los modelos de "${rec.name}" fallaron para ${taskLabel}`);
 }
 
 // Ping minimo a un proveedor personalizado (OpenAI-compatible). Acepta credenciales sueltas
