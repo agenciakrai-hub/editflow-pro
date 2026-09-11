@@ -18,13 +18,20 @@ import { buildModelsMeta, resolveDeclaredCaps, ModelMetaEntry } from "./modelCap
 import { runWithConcurrency } from "./concurrency.ts";
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
-const PROBE_CONCURRENCY = 6;
+const PROBE_CONCURRENCY = 4;
 const PROBE_TIMEOUT_MS = 20000;
+// Reintento en errores transitorios (429 rate-limit / 503 service) con backoff. No es
+// failover a otro proveedor — mismo modelo, misma key. Ayuda con proveedores con rate
+// limits estrictos (NVIDIA NIM free tier).
+const PROBE_RETRY_STATUSES = new Set([429, 503]);
+const PROBE_MAX_ATTEMPTS = 2;
 
-// Imagen de prueba mínima (1x1 PNG). Suficiente para detectar si el modelo ACEPTA
-// entrada de imagen: 200+texto → vision=true; 400 citando image → vision=false.
+// Imagen de prueba (64x64 PNG con una forma reconocible). Suficientemente grande para
+// que los VLM no la rechacen por tamaño; suficientemente pequeña para minimizar latencia
+// y coste del sondeo. Detecta si el modelo ACEPTA entrada de imagen:
+// 200+texto → vision=true; 400 citando que NO soporta imagen → vision=false.
 const TEST_IMAGE_DATA_URL =
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0N8AAAAASUVORK5CYII=";
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAvElEQVR4nO3ZsRGAIBBEUQuz/zE2NrYOW4C9gwXvz2ws/4XCcd3v1jvsBQDcBQDcBQDcBQDcBQDcBQBSP/ecZ8tWBDSmpzMSAEJ6IiMKCNbHDTogJT3OEAHp9bJBAQyq1wz1AEPrBUMfYEJ9r6ESYFp9l6EMYHJ9uwEAAAAAAAAAAADAiobGqkqA7f/I/gDY/lZigqE3piRg+7vRQQYto/D7QJYheDpvZBIj8UTeid0D4B4A9wC4B8A9AO59EYtPA+/Vm/gAAAAASUVORK5CYII=";
 
 // ---------------- Nivel B: cross-reference OpenRouter ----------------
 
@@ -94,39 +101,54 @@ async function probeOne(
     { type: "text", text: "Describe this image in one short sentence." },
     { type: "image_url", image_url: { url: TEST_IMAGE_DATA_URL } },
   ];
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-    let res: Response;
+  const body = JSON.stringify({ model, messages: [{ role: "user", content }], stream: false, max_tokens: 16 });
+  for (let attempt = 1; attempt <= PROBE_MAX_ATTEMPTS; attempt++) {
     try {
-      res = await fetch(endpoint, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "user", content }], stream: false, max_tokens: 16 }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+      let res: Response;
+      try {
+        res = await fetch(endpoint, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      const txt = await res.text().catch(() => "");
+      // Reintento en 429/503 (rate-limit / service unavailable) — mismo modelo.
+      if (PROBE_RETRY_STATUSES.has(res.status) && attempt < PROBE_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        continue;
+      }
+      if (res.ok) {
+        let data: any = null;
+        try { data = JSON.parse(txt); } catch {}
+        const out = String(data?.choices?.[0]?.message?.content || "").trim();
+        if (out) return { vision: true, status: "ok", reason: `OK: ${out.slice(0, 80)}` };
+        return { vision: null, status: "error", reason: "Respuesta vacía del modelo" };
+      }
+      const low = txt.toLowerCase();
+      // Solo vision=false cuando hay evidencia EXPLÍCITA de que el modelo NO soporta
+      // entrada de imagen. "image too small", "invalid image", "format not supported"
+      // NO cuentan (el modelo SÍ soporta imagen, solo rechazó esta concreta).
+      // Errores transitorios (429/500/502/503/timeout/red) → null (no false).
+      const noImageSupport =
+        (res.status === 400 || res.status === 422 || res.status === 415) &&
+        /not support.*(image|vision|multimodal)|unsupported.*(image|vision|modal)|text.?only model|does not (support|accept|handle).*(image|vision|multimodal)|image (input )?not (supported|allowed)|vision not supported|not a multimodal|image_url.*(not supported|unsupported)|modal.*not support/i.test(low);
+      if (noImageSupport) return { vision: false, status: "rejected", reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` };
+      return { vision: null, status: "error", reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` };
+    } catch (e: any) {
+      if (attempt < PROBE_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        continue;
+      }
+      return { vision: null, status: "error", reason: String(e?.message || e).slice(0, 120) };
     }
-    const txt = await res.text().catch(() => "");
-    if (res.ok) {
-      let data: any = null;
-      try { data = JSON.parse(txt); } catch {}
-      const out = String(data?.choices?.[0]?.message?.content || "").trim();
-      if (out) return { vision: true, status: "ok", reason: `OK: ${out.slice(0, 80)}` };
-      return { vision: null, status: "error", reason: "Respuesta vacía del modelo" };
-    }
-    const low = txt.toLowerCase();
-    // Solo vision=false cuando hay evidencia REAL de que el modelo NO acepta imágenes.
-    // Errores transitorios (429/500/502/503/timeout/red) → null (no false).
-    const rejectsImage =
-      (res.status === 400 || res.status === 422 || res.status === 415) &&
-      /image|vision|multimodal|not support|unsupported|modal|does not|no admite|no acepta|image_url/.test(low);
-    if (rejectsImage) return { vision: false, status: "rejected", reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` };
-    return { vision: null, status: "error", reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` };
-  } catch (e: any) {
-    return { vision: null, status: "error", reason: String(e?.message || e).slice(0, 120) };
   }
+  return { vision: null, status: "error", reason: "Reintentos agotados" };
 }
 
 // Sondea automáticamente los modelos con vision=null. Preserva true/false existentes
