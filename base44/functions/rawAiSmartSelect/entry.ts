@@ -516,11 +516,13 @@ export default async function(req: Request): Promise<Response> {
       let finalRan = false;
 
       try {
+        const tUpload0 = Date.now();
         const uploaded = await uploadPreviewBatch(
           base44,
           candidates.map((c: any) => ({ id: String(c.id), previewBase64: String(c.preview_base64) })),
           "seleccion"
         );
+        const uploadMs = Date.now() - tUpload0;
 
         const trace: any = {};
         let result: any;
@@ -607,11 +609,22 @@ export default async function(req: Request): Promise<Response> {
           category: result.category,
           reason: result.reason,
           rankings,
-          _meta: { ia_calls: iaCalls, finalist_ids: finalistIds, final_ran: finalRan, fallback: false, provider: trace.provider || null, model: trace.model || null },
+          _meta: {
+            ia_calls: iaCalls, finalist_ids: finalistIds, final_ran: finalRan, fallback: false,
+            provider: trace.provider || null, model: trace.model || null,
+            upload_ms: uploadMs,
+            request_ms: trace.request_ms ?? null,
+            base64_convert_ms: trace.base64_convert_ms ?? null,
+            parse_ms: trace.parse_ms ?? null,
+            http_status: trace.http_status ?? null,
+            tokens_in: trace.tokens_in ?? null,
+            tokens_out: trace.tokens_out ?? null,
+            endpoint: trace.endpoint ?? null,
+          },
         };
       } catch (e: any) {
         // Fallback técnico conservador (no simula decisión IA).
-        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null } };
+        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null, upload_ms: null, request_ms: null, base64_convert_ms: null, parse_ms: null, http_status: null, tokens_in: null, tokens_out: null, endpoint: null } };
       }
     });
 

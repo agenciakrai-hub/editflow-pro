@@ -412,6 +412,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   // host. El resto de proveedores (Qwen, NVIDIA, otros custom) no cambian en nada.
   let urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
   if (/^https?:\/\/generativelanguage\.googleapis\.com\//i.test(endpoint)) {
+    const tB64 = Date.now();
     urls = await Promise.all(urls.map(async (u: string) => {
       if (u.startsWith("data:")) return u;
       const r = await fetchWithTimeout(u, { method: "GET" }, 30000);
@@ -421,6 +422,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
       return `data:${r.headers.get("content-type") || "image/jpeg"};base64,${btoa(bin)}`;
     }));
+    if (opts._trace) opts._trace.base64_convert_ms = Date.now() - tB64;
   }
   const content: any[] = [{ type: "text", text: opts.prompt }];
   for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
@@ -432,13 +434,21 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     body: JSON.stringify(body),
   });
   const latency = Date.now() - t0;
+  if (opts._trace) { opts._trace.request_ms = latency; opts._trace.http_status = res.status; opts._trace.endpoint = endpoint; }
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     throw new Error(`[${rec.name}] HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
   }
   const data: any = await res.json();
+  if (opts._trace) {
+    opts._trace.tokens_in = data?.usage?.prompt_tokens ?? null;
+    opts._trace.tokens_out = data?.usage?.completion_tokens ?? null;
+  }
   const contentOut = data?.choices?.[0]?.message?.content;
-  return parseJsonContent(contentOut);
+  const tParse = Date.now();
+  const parsed = parseJsonContent(contentOut);
+  if (opts._trace) opts._trace.parse_ms = Date.now() - tParse;
+  return parsed;
 }
 
 // Ping minimo a un proveedor personalizado (OpenAI-compatible). Acepta credenciales sueltas

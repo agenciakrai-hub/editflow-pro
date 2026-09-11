@@ -177,33 +177,78 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   let resolved = 0;
   onProgress?.(resolved, totalBursts);
 
+  // Instrumentación de concurrencia (solo medición; no cambia el pool ni el orden).
+  let activeNow = 0;
+  let maxActive = 0;
+  const concurrencySamples = [];
+
   trace.stages.ai_analysis = { start_ms: Date.now(), bursts_total: bursts.length };
   await runPool(bursts, BATCH_CONCURRENCY, async (burst) => {
     const bStart = Date.now();
+    activeNow += 1;
+    if (activeNow > maxActive) maxActive = activeNow;
+    concurrencySamples.push({ t_ms: Date.now() - trace.started_ms, active: activeNow });
+    const concAtStart = activeNow;
     const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
     const groupSizeFor = () => (burst.independent ? 1 : burst.files.length);
     let burstProvider = null, burstModel = null, burstFallback = false, burstIaCalls = 0;
+    // Telemetría por llamada (solo medición; no cambia comportamiento). Las previews ya
+    // fueron extraídas en Pass 1 (base64 + dimensiones en f.preview); aquí solo se
+    // registran bytes/dimensiones/MIME. La conversión base64 ya ocurrió → prep_duration_ms
+    // mide solo el ensamblado del payload (despreciable).
+    const tPrep0 = performance.now();
+    const photosPayload = [];
+    const prepPhotos = [];
+    for (const f of burst.files) {
+      const p = f.preview || {};
+      const dataUrl = p.dataUrl || "";
+      const mimeMatch = /^data:([^;]+);/.exec(dataUrl);
+      const b64 = p.base64 || "";
+      photosPayload.push({
+        id: f.id,
+        preview_base64: b64,
+        technical: {
+          sharpness: f.technical?.sharpness ?? 0,
+          exposureScore: f.technical?.exposureScore ?? 0.5,
+          corrupt: !!f.technical?.corrupt,
+        },
+      });
+      prepPhotos.push({
+        id: f.id,
+        mime: mimeMatch ? mimeMatch[1] : "image/jpeg",
+        width: p.width || null,
+        height: p.height || null,
+        base64_chars: b64.length,
+        image_bytes_approx: b64.length ? Math.round((b64.length * 3) / 4) : null,
+      });
+    }
+    const prepDurationMs = Math.round(performance.now() - tPrep0);
+    const invokeStartMs = Date.now();
+    let invokeDurationMs = null;
+    let beUploadMs = null, beRequestMs = null, beBase64Ms = null, beParseMs = null;
+    let beHttpStatus = null, beTokensIn = null, beTokensOut = null, beEndpoint = null;
     try {
       const { data } = await base44.functions.invoke("rawAiSmartSelect", {
         bursts: [{
           burst_id: burst.id,
           independent: burst.independent,
-          photos: burst.files.map((f) => ({
-            id: f.id,
-            preview_base64: f.preview?.base64,
-            technical: {
-              sharpness: f.technical?.sharpness ?? 0,
-              exposureScore: f.technical?.exposureScore ?? 0.5,
-              corrupt: !!f.technical?.corrupt,
-            },
-          })),
+          photos: photosPayload,
         }],
       });
+      invokeDurationMs = Date.now() - invokeStartMs;
       const g = data?.groups?.[burst.id];
       burstProvider = g?._meta?.provider || null;
       burstModel = g?._meta?.model || null;
       burstFallback = !!g?._meta?.fallback;
       burstIaCalls = g?._meta?.ia_calls || 0;
+      beUploadMs = g?._meta?.upload_ms ?? null;
+      beRequestMs = g?._meta?.request_ms ?? null;
+      beBase64Ms = g?._meta?.base64_convert_ms ?? null;
+      beParseMs = g?._meta?.parse_ms ?? null;
+      beHttpStatus = g?._meta?.http_status ?? null;
+      beTokensIn = g?._meta?.tokens_in ?? null;
+      beTokensOut = g?._meta?.tokens_out ?? null;
+      beEndpoint = g?._meta?.endpoint ?? null;
       const rankings = Array.isArray(g?.rankings) ? g.rankings : [];
       const byId = new Map(rankings.map((r) => [String(r.id), r]));
       const category = g?.category || null;
@@ -233,6 +278,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
         });
       });
     } catch {
+      invokeDurationMs = Date.now() - invokeStartMs;
       burstFallback = true;
       // Fallo de IA: fallback técnico conservador POR RÁFAGA.
       const fb = technicalFallbackForGroup(burst);
@@ -248,17 +294,28 @@ export async function runAiBurstSelection(withPreview, onProgress) {
           previewWarning: false,
         });
       });
+    } finally {
+      activeNow = Math.max(0, activeNow - 1);
+      concurrencySamples.push({ t_ms: Date.now() - trace.started_ms, active: activeNow });
     }
     trace.bursts.push({
       burst_id: burst.id, independent: burst.independent, photo_count: burst.files.length,
       start_ms: bStart, end_ms: Date.now(), duration_ms: Date.now() - bStart,
       provider: burstProvider, model: burstModel, ia_calls: burstIaCalls, fallback: burstFallback,
+      concurrency_at_start: concAtStart,
+      prep: { duration_ms: prepDurationMs, photos: prepPhotos },
+      transport: { invoke_ms: invokeDurationMs, upload_ms: beUploadMs, base64_convert_ms: beBase64Ms },
+      gemini: { request_ms: beRequestMs, http_status: beHttpStatus, endpoint: beEndpoint, tokens_in: beTokensIn, tokens_out: beTokensOut },
+      parse: { duration_ms: beParseMs },
     });
     resolved += 1;
     onProgress?.(resolved, totalBursts);
   }, () => {});
   trace.stages.ai_analysis.end_ms = Date.now();
   trace.stages.ai_analysis.duration_ms = trace.stages.ai_analysis.end_ms - trace.stages.ai_analysis.start_ms;
+  trace.stages.ai_analysis.max_concurrency = maxActive;
+  trace.stages.ai_analysis.concurrency_limit = BATCH_CONCURRENCY;
+  trace.stages.ai_analysis.concurrency_samples = concurrencySamples;
 
   // DEDUP entre grupos: pHash detecta candidatos; la IA compara visualmente (momento,
   // expresión, composición, sujeto) y solo rebaja si es un duplicado REAL. Diferencia
