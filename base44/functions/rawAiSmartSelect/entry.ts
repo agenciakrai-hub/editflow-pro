@@ -362,7 +362,14 @@ async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: 
     },
     _trace: trace,
   });
-  const g = result[key] || {};
+  // CORRECCIÓN (bug culling): el proveedor activo (custom/Gemini) NO recibe
+  // response_json_schema (el adaptador custom lo omite) y el prompt pide el JSON del
+  // grupo en la RAÍZ ({keep_ids, category, reason, rankings}). Antes solo se leía
+  // result['group_0'] (envoltorio que únicamente imponía InvokeLLM): con Gemini la
+  // clave no existía → g={} → TODAS las fotos caían al default REVIEW y la decisión
+  // real de la IA (SELECT/REJECT incluidos) se descartaba en silencio. Se aceptan
+  // AMBAS formas: envuelta (schema) o raíz (prompt).
+  const g = (result && typeof result === 'object' && result[key]) ? result[key] : (result || {});
   const category = typeof g.category === 'string' ? g.category : null;
   const rankings = Array.isArray(g.rankings) ? g.rankings : [];
   const byId: Record<string, any> = {};
@@ -436,7 +443,10 @@ async function analyzeIndependent(base44: any, key: string, ids: string[], uploa
     },
     _trace: trace,
   });
-  const g = result[key] || {};
+  // CORRECCIÓN (bug culling, mismo defecto que analyzeSubset): el proveedor custom
+  // devuelve el JSON del grupo en la RAÍZ, no envuelto en la clave del schema. Se
+  // aceptan ambas formas para no perder la decisión real de la IA.
+  const g = (result && typeof result === 'object' && result[key]) ? result[key] : (result || {});
   const rankings = Array.isArray(g.rankings) ? g.rankings : [];
   const byId: Record<string, any> = {};
   for (const r of rankings) {
@@ -630,8 +640,10 @@ export default async function(req: Request): Promise<Response> {
           },
         };
       } catch (e: any) {
-        // Fallback técnico conservador (no simula decisión IA).
-        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null, upload_ms: null, request_ms: null, base64_convert_ms: null, parse_ms: null, http_status: null, tokens_in: null, tokens_out: null, endpoint: null } };
+        // Fallback técnico conservador (no simula decisión IA). Se registra el motivo
+        // para que la traza/logs permitan auditar POR QUÉ falló la IA del burst.
+        console.log(`[rawAiSmartSelect] burst=${burstId} fallo de IA: ${String(e?.message || e)}`);
+        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null, upload_ms: null, request_ms: null, base64_convert_ms: null, parse_ms: null, http_status: null, tokens_in: null, tokens_out: null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
       }
     });
 
