@@ -25,6 +25,61 @@
       },
       "description": "Todos los modelos detectados autom\u00e1ticamente al verificar la conexi\u00f3n (GET {endpoint}/models)."
     },
+    "available_models_meta": {
+      "type": "array",
+      "description": "FUENTE \u00daNICA DE VERDAD de capacidades por modelo. Cada entrada: {id, caps:{vision,image_edit,video} (true|false|null), source:'declared'|'verified'|'unverified', probed_at, probe_status:'ok'|'rejected'|'error'}. vision=true \u2192 compatible con Selecci\u00f3n/Ajustes/\u00c1lbum; vision=false \u2192 verificado NO compatible (runtime bloquea); vision=null \u2190 no verificado (UI deshabilita, 'Probar capacidad' lo verifica). Resuelto por base44/shared/modelCapabilities.ts desde metadatos declarados del proveedor; la prueba emp\u00edrica ('probe-vision') actualiza source='verified'.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "caps": {
+            "type": "object",
+            "properties": {
+              "vision": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "image_edit": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "video": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            }
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "declared",
+              "verified",
+              "unverified"
+            ]
+          },
+          "probed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "probe_status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "rejected",
+              "error"
+            ]
+          }
+        }
+      }
+    },
     "seleccion_models": {
       "type": "array",
       "items": {

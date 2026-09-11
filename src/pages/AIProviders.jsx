@@ -147,6 +147,32 @@ export default function AIProviders() {
     return ok;
   };
 
+  // Probar capacidad de visión de un modelo (sondeo empírico bajo demanda). Envía
+  // una imagen de prueba representativa (generada en el navegador) al backend, que la
+  // pasa al modelo con el mismo formato que la producción y persiste el resultado en
+  // available_models_meta (caché). Refresca la lista de proveedores para reflejar la
+  // casilla habilitada/deshabilitada.
+  const probeVision = async (id, model, image) => {
+    setBusyAction({ id, action: "probe" });
+    try {
+      const res = await base44.functions.invoke("ai-providers", { action: "probe-vision", id, model, image });
+      const data = res?.data ?? res;
+      if (data.vision === true) {
+        toast({ title: "Visión verificada", description: `${model}: compatible con imágenes. Ya puedes marcarlo para Selección/Ajustes/Álbum.` });
+      } else if (data.vision === false) {
+        toast({ title: "Visión no soportada", description: `${model} rechazó la imagen (modelo de texto). Casilla deshabilitada.`, variant: "destructive" });
+      } else {
+        toast({ title: "Prueba no concluyente", description: `${model}: ${data.reason || "error"}. NO se clasificó como sin visión — repítelo más tarde.`, variant: "destructive" });
+      }
+      const resList = await base44.functions.invoke("ai-providers", { action: "list" });
+      const dataList = resList?.data ?? resList;
+      setProviders(Array.isArray(dataList?.providers) ? dataList.providers : []);
+    } catch (e) {
+      toast({ title: "Falló la prueba de capacidad", description: e.message, variant: "destructive" });
+    }
+    setBusyAction(null);
+  };
+
   const save = async () => {
     setSaving(true);
     try {
@@ -190,11 +216,20 @@ export default function AIProviders() {
   const seleccionCovered = ["base44", "none", ...providerOptions.map((o) => o.value)].includes(active.active_seleccion);
   const ajustesCovered = providerOptions.some((o) => o.value === active.active_ajustes);
   // Modelos marcados del proveedor activo de cada tarea (para elegir el modelo EXACTO).
+  // Se EXCLUYEN los verificados como NO compatibles (vision=false); se incluyen los
+  // verificados compatibles (true) y los no verificados (null) para no romper configs
+  // existentes sin probar.
   const markedModelsOf = (task) => {
     const val = task === "ajustes" ? active.active_ajustes : task === "album" ? active.active_album : active.active_seleccion;
     const p = providers.find((c) => `custom:${c.id}` === val);
     const marked = task === "ajustes" ? p?.ajustes_models : task === "album" ? p?.album_models : p?.seleccion_models;
-    return Array.isArray(marked) ? marked : [];
+    const capKey = task === "ajustes" || task === "album" || task === "seleccion" ? "vision" : null;
+    const meta = new Map((p?.available_models_meta || []).map((e) => [e.id, e]));
+    return (Array.isArray(marked) ? marked : []).filter((m) => {
+      if (!capKey) return true;
+      const v = meta.get(m)?.caps?.[capKey];
+      return v !== false;
+    });
   };
   const seleccionModelOptions = markedModelsOf("seleccion");
   const ajustesModelOptions = markedModelsOf("ajustes");
@@ -251,6 +286,7 @@ export default function AIProviders() {
             onToggle={toggleProvider}
             onDelete={deleteProvider}
             onUpdateKey={updateKey}
+            onProbeVision={probeVision}
           />
         ))}
       </section>

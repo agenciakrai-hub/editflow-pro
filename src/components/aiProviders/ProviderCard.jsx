@@ -1,19 +1,27 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, KeyRound, Loader2, Power, RefreshCw, Save, Search, Trash2, XCircle } from "lucide-react";
-import { modelCapability } from "@/lib/ai/modelCapabilities";
+import { CheckCircle2, KeyRound, Loader2, Power, RefreshCw, Save, Search, Trash2, XCircle, Zap } from "lucide-react";
+import { checkboxState } from "@/lib/ai/modelCapabilities";
 
-// Tarjeta de proveedor (unificada): badge de conexión, API key enmascarada con cambio
-// de clave, lista buscable de modelos con pestañas por TAREA (Selección / Edición /
-// Vídeo) que muestran SOLO los modelos utilizables para esa tarea, encendido/apagado y
-// borrado. Las selecciones de modelos NUNCA se guardan automáticamente: solo al
-// pulsar "Guardar".
+// Tarjeta de proveedor (unificada). Las casillas de modelo/tarea se habilitan o
+// deshabilitan según las capacidades RESUELTAS (available_models_meta), que son la
+// fuente única de verdad generada por el backend (base44/shared/modelCapabilities.ts
+// + prueba empírica "Probar capacidad"). El frontend NO clasifica por nombre.
+//
+// Tres estados de casilla:
+//   - compatible / compatible_marked → habilitada (marcada o no).
+//   - incompatible → deshabilitada (verificado NO compatible).
+//   - unverified → deshabilitada (sin evidencia); muestra "Probar capacidad".
+//   - marked_unverified → deshabilitada pero marcada (config antigua preservada; avisa
+//     de que no se ejecutará hasta verificar).
 const TABS = [
   { id: "todos", label: "Todos" },
   { id: "seleccion", label: "Selección" },
   { id: "edicion", label: "Edición" },
   { id: "video", label: "Vídeo" },
+  { id: "sinverificar", label: "Sin verificar" },
 ];
 
+const COLS = ["seleccion", "ajustes", "edicion", "video", "album"];
 const COL_LABELS = {
   seleccion: "Selección",
   ajustes: "Ajustes",
@@ -22,7 +30,37 @@ const COL_LABELS = {
   album: "Álbum",
 };
 
-export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey }) {
+// Imagen de prueba representativa (JPEG 512×384, NO 1×1, NO fotos originales): una
+// escena sintética con formas reconocibles. Se envía como data URL al backend, que la
+// pasa al modelo con el MISMO formato que la producción (image_url). Generada en el
+// navegador; nunca se sube a almacenamiento.
+function makeTestImage() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 384;
+  const ctx = canvas.getContext("2d");
+  const g = ctx.createLinearGradient(0, 0, 512, 384);
+  g.addColorStop(0, "#dbeafe");
+  g.addColorStop(1, "#fef3c7");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 512, 384);
+  ctx.fillStyle = "#dc2626";
+  ctx.beginPath();
+  ctx.arc(150, 200, 70, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#2563eb";
+  ctx.fillRect(300, 130, 140, 140);
+  ctx.fillStyle = "#16a34a";
+  ctx.beginPath();
+  ctx.moveTo(400, 330);
+  ctx.lineTo(470, 210);
+  ctx.lineTo(330, 210);
+  ctx.closePath();
+  ctx.fill();
+  return canvas.toDataURL("image/jpeg", 0.85);
+}
+
+export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey, onProbeVision }) {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState("todos");
   const [selDraft, setSelDraft] = useState(provider.seleccion_models || []);
@@ -32,19 +70,40 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
   const [albDraft, setAlbDraft] = useState(provider.album_models || []);
   const [showKey, setShowKey] = useState(false);
   const [newKey, setNewKey] = useState("");
+  const [probing, setProbing] = useState(null); // model id en sondeo
 
   const models = provider.available_models || [];
+  const metaMap = useMemo(() => {
+    const m = new Map();
+    for (const e of (provider.available_models_meta || [])) {
+      if (e?.id) m.set(e.id, e);
+    }
+    return m;
+  }, [provider.available_models_meta]);
+  const metaOf = (modelId) => metaMap.get(modelId) || null;
+  const visionState = (modelId) => metaOf(modelId)?.caps?.vision ?? null;
+
   const tabCounts = useMemo(() => {
-    const c = { todos: models.length, seleccion: 0, edicion: 0, video: 0 };
-    for (const m of models) c[modelCapability(m)] = (c[modelCapability(m)] || 0) + 1;
+    const c = { todos: models.length, seleccion: 0, edicion: 0, video: 0, sinverificar: 0 };
+    for (const m of models) {
+      const e = metaOf(m);
+      if (e?.caps?.vision === true) c.seleccion += 1;
+      if (e?.caps?.image_edit === true) c.edicion += 1;
+      if (e?.caps?.video === true) c.video += 1;
+      if (e?.caps?.vision === null) c.sinverificar += 1;
+    }
     return c;
-  }, [models]);
+  }, [models, metaMap]);
+
   const filtered = useMemo(() => {
     let list = models;
-    if (tab !== "todos") list = list.filter((m) => modelCapability(m) === tab);
+    if (tab === "seleccion") list = list.filter((m) => visionState(m) === true);
+    else if (tab === "edicion") list = list.filter((m) => metaOf(m)?.caps?.image_edit === true);
+    else if (tab === "video") list = list.filter((m) => metaOf(m)?.caps?.video === true);
+    else if (tab === "sinverificar") list = list.filter((m) => visionState(m) === null);
     const q = search.trim().toLowerCase();
     return q ? list.filter((m) => m.toLowerCase().includes(q)) : list;
-  }, [models, search, tab]);
+  }, [models, search, tab, metaMap]);
 
   const sameSet = (a, b) => {
     const x = a || [];
@@ -70,21 +129,21 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
     drafts[task].set((d) => (d.includes(model) ? d.filter((m) => m !== model) : [...d, model]));
   };
 
-  // Columnas de casillas según la pestaña: en "Selección" se muestran las dos tareas
-  // que usan modelos de visión (Selección IA y Ajustes IA); en "Edición"/"Vídeo" solo
-  // la casilla de esa tarea; en "Todos" las cuatro.
-  const cols =
-    tab === "todos"
-      ? ["seleccion", "ajustes", "edicion", "video", "album"]
-      : tab === "seleccion"
-        ? ["seleccion", "ajustes", "album"]
-        : [tab];
-
   const saveKey = async () => {
     const ok = await onUpdateKey(provider.id, newKey);
     if (ok) {
       setNewKey("");
       setShowKey(false);
+    }
+  };
+
+  const probeVision = async (model) => {
+    setProbing(model);
+    try {
+      const image = makeTestImage();
+      await onProbeVision(provider.id, model, image);
+    } finally {
+      setProbing(null);
     }
   };
 
@@ -114,7 +173,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
           {provider.last_reason && <p className="mt-0.5 text-xs text-red-500">{provider.last_reason}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button onClick={() => onRetest(provider.id)} disabled={busy("retest")} title="Re-test de conexión"
+          <button onClick={() => onRetest(provider.id)} disabled={busy("retest")} title="Re-test de conexión (refresca modelos y capacidades declaradas; conserva las pruebas empíricas)"
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40">
             {busy("retest") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Re-test
           </button>
@@ -150,15 +209,16 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
 
       {models.length > 0 ? (
         <>
-          {/* Pestañas por tarea: filtran la lista a SOLO los modelos utilizables */}
+          {/* Pestañas por capacidad: filtran la lista a los modelos de cada tipo */}
           <div className="flex flex-wrap items-center gap-1.5">
             {TABS.map((t) => (
               <button key={t.id} onClick={() => setTab(t.id)}
                 title={
                   t.id === "todos" ? "Todos los modelos del proveedor"
-                  : t.id === "seleccion" ? "Modelos de VISIÓN (texto + imagen): los únicos válidos para Selección IA, Ajustes IA y Álbum"
-                  : t.id === "edicion" ? "Modelos de EDICIÓN de imagen (image-edit / generación de píxeles)"
-                  : "Modelos de VÍDEO (generación / edición de vídeo)"
+                  : t.id === "seleccion" ? "Modelos verificados compatibles con visión (Selección/Ajustes/Álbum)"
+                  : t.id === "edicion" ? "Modelos con capacidad de edición de imagen declarada"
+                  : t.id === "video" ? "Modelos con capacidad de vídeo declarada"
+                  : "Modelos sin verificar (prueba su capacidad de visión para habilitarlos)"
                 }
                 className={"rounded-full px-3 py-1.5 text-xs font-medium " + (tab === t.id ? "bg-primary text-primary-foreground" : "border border-border hover:bg-secondary")}>
                 {t.label} <span className={tab === t.id ? "opacity-70" : "text-muted-foreground"}>({tabCounts[t.id] ?? 0})</span>
@@ -174,32 +234,79 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
               className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm"
             />
           </div>
-          <div className="max-h-64 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+          <div className="max-h-72 overflow-y-auto rounded-lg border border-border divide-y divide-border">
             <div className="flex items-center gap-2 bg-secondary/40 px-3 py-1.5 text-xs font-medium text-muted-foreground">
               <span className="min-w-0 flex-1">Modelo ({filtered.length}{filtered.length !== models.length ? ` de ${models.length}` : ""})</span>
-              {cols.map((c) => (
+              {COLS.map((c) => (
                 <span key={c} className="w-16 text-center">{COL_LABELS[c]}</span>
               ))}
+              <span className="w-20 text-center">Visión</span>
             </div>
-            {filtered.map((m) => (
-              <div key={m} className="flex items-center gap-2 px-3 py-2">
-                <span className="min-w-0 flex-1 truncate font-mono text-xs">{m}</span>
-                {cols.map((c) => (
-                  <label key={c} className="flex w-16 items-center justify-center">
-                    <input type="checkbox" checked={drafts[c].get.includes(m)} onChange={() => toggleModel(c, m)} />
-                  </label>
-                ))}
-              </div>
-            ))}
+            {filtered.map((m) => {
+              const e = metaOf(m);
+              const vState = visionState(m);
+              const probeStatus = e?.probe_status;
+              return (
+                <div key={m} className="flex items-center gap-2 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-mono text-xs">{m}</p>
+                    {e?.source === "verified" && probeStatus === "ok" && (
+                      <span className="text-[10px] text-emerald-600">Visión verificada</span>
+                    )}
+                    {e?.source === "verified" && probeStatus === "rejected" && (
+                      <span className="text-[10px] text-red-500">Visión rechazada</span>
+                    )}
+                    {e?.source === "verified" && probeStatus === "error" && (
+                      <span className="text-[10px] text-amber-600">Prueba con error</span>
+                    )}
+                  </div>
+                  {COLS.map((c) => {
+                    const marked = drafts[c].get.includes(m);
+                    const st = checkboxState(e, c, marked);
+                    const enabled = st === "compatible" || st === "compatible_marked";
+                    const title =
+                      st === "incompatible" ? "Verificado como NO compatible con esta herramienta"
+                      : st === "unverified" ? "Capacidad no verificada. Prueba el modelo (Probar capacidad) para habilitar esta herramienta."
+                      : st === "marked_unverified" ? "Marcado pero no verificado como compatible — no se ejecutará hasta verificar. Pulsa Probar capacidad."
+                      : "";
+                    return (
+                      <label key={c} className={"flex w-16 items-center justify-center " + (st === "marked_unverified" ? "text-amber-500" : "")} title={title}>
+                        <input
+                          type="checkbox"
+                          checked={marked}
+                          disabled={!enabled}
+                          onChange={() => enabled && toggleModel(c, m)}
+                          className={st === "marked_unverified" ? "accent-amber-500" : ""}
+                        />
+                      </label>
+                    );
+                  })}
+                  <div className="flex w-20 items-center justify-center">
+                    {vState === null && (
+                      <button
+                        onClick={() => probeVision(m)}
+                        disabled={probing === m}
+                        title="Probar capacidad de visión con una imagen de prueba representativa (mismo formato que en producción)"
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-medium hover:bg-secondary disabled:opacity-40"
+                      >
+                        {probing === m ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />} Probar
+                      </button>
+                    )}
+                    {vState === false && <XCircle className="h-3.5 w-3.5 text-red-400" title="Visión rechazada" />}
+                    {vState === true && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" title="Visión verificada" />}
+                  </div>
+                </div>
+              );
+            })}
             {filtered.length === 0 && (
               <p className="px-3 py-4 text-center text-xs text-muted-foreground">
                 {tab === "todos"
                   ? "Ningún modelo coincide con la búsqueda."
                   : tab === "seleccion"
-                    ? "Este proveedor no tiene modelos de visión (texto + imagen) utilizables para Selección / Ajustes."
-                    : tab === "edicion"
-                      ? "Este proveedor no tiene modelos de edición de imagen."
-                      : "Este proveedor no tiene modelos de vídeo."}
+                    ? "Ningún modelo verificado compatible con visión. Prueba modelos en la pestaña «Sin verificar»."
+                    : tab === "sinverificar"
+                      ? "Todos los modelos tienen su capacidad de visión resuelta (declarada o verificada)."
+                      : "Ningún modelo declarado con esta capacidad."}
               </p>
             )}
           </div>
@@ -209,11 +316,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
               {busy("save") ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Guardar
             </button>
             <p className="text-xs text-muted-foreground">
-              {tab === "edicion"
-                ? "Marca qué modelos usar para EDICIÓN de imagen. La selección solo se guarda al pulsar Guardar."
-                : tab === "video"
-                  ? "Marca qué modelos usar para VÍDEO. La selección solo se guarda al pulsar Guardar."
-                  : "Marca qué modelos usar para Selección IA, Ajustes IA y Álbum (solo los de visión devuelven texto). La selección solo se guarda al pulsar Guardar."}
+              Las casillas se habilitan solo si el modelo es compatible (capacidad verificada o declarada). Los modelos sin verificar deben probarse con «Probar». La selección solo se guarda al pulsar Guardar.
             </p>
           </div>
         </>

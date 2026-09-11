@@ -467,27 +467,52 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     const exactRaw = opts.task === "ajustes" ? cfg?.active_model_ajustes : cfg?.active_model_seleccion;
     exactModel = String(exactRaw || "").trim();
   } catch {}
+  // CAPACIDADES desde la fuente única de verdad (available_models_meta, resuelta en
+  // ai-providers desde metadatos declarados / prueba empírica). NO se usa el nombre del
+  // modelo ni regex. vision: true=compatible, false=verificado NO compatible, null=no
+  // verificado.
+  const metaList: any[] = Array.isArray(rec.available_models_meta) ? rec.available_models_meta : [];
+  const capVisionOf = (m: string): boolean | null => {
+    const e = metaList.find((x: any) => String(x?.id || "") === m);
+    const v = e?.caps?.vision;
+    return v === true ? true : v === false ? false : null;
+  };
   let model: string;
   let modelSource: "exacto" | "auto" | "legado" = "auto";
   if (exactModel) {
     if (!marked.includes(exactModel)) {
       throw new ModelResolutionError(`El modelo exacto "${exactModel}" no está marcado para ${taskLabel} en el proveedor "${rec.name}". Márcalo en Proveedores IA o elige "Auto".`);
     }
-    if (!isVisionModel(exactModel)) {
-      throw new ModelResolutionError(`El modelo exacto "${exactModel}" no soporta entrada de imágenes; no puede usarse para ${taskLabel}. Selecciona un modelo multimodal (vision-capable).`);
+    const cv = capVisionOf(exactModel);
+    if (cv === false) {
+      // Verificado como NO compatible (prueba de visión rechazada): el runtime lo
+      // IMPIDE definitivamente. No se sustituye por otro modelo; se informa claro.
+      throw new ModelResolutionError(`El modelo exacto "${exactModel}" está verificado como NO compatible con imágenes (prueba de visión rechazada en Proveedores IA). No puede ejecutar ${taskLabel}. Verifícalo de nuevo o elige otro modelo multimodal.`);
     }
     model = exactModel;
     modelSource = "exacto";
+    if (cv === null) {
+      console.log(`[aiProvider] modelo exacto "${exactModel}" NO verificado para visión (caps=null); se permite ejecutar. Convendrá probarlo en Proveedores IA → "Probar capacidad" para confirmar.`);
+    }
   } else {
-    const visionMarked = marked.filter((m) => isVisionModel(m));
-    if (visionMarked.length) {
-      model = pickBestVisionModel(visionMarked) || visionMarked[0];
+    // Auto: SOLO entre marcados verificados compatibles (vision=true). Si no hay
+    // ninguno, se admiten marcados NO verificados (null) para no romper configs
+    // existentes sin probar, pero NUNCA un marcado verificado como NO compatible
+    // (false). Sin regex ni "primer modelo de la lista completa": se respeta el
+    // orden de marcado del administrador.
+    const trueMarked = marked.filter((m: string) => capVisionOf(m) === true);
+    const nullMarked = marked.filter((m: string) => capVisionOf(m) === null);
+    if (trueMarked.length) {
+      model = trueMarked[0];
       modelSource = "auto";
-    } else if (legacy && isVisionModel(legacy)) {
-      model = legacy;
-      modelSource = "legado";
+    } else if (nullMarked.length) {
+      model = nullMarked[0];
+      modelSource = "auto";
+      console.log(`[aiProvider] auto: ningún modelo marcado verificado compatible para ${taskLabel} en "${rec.name}"; usando no verificado "${model}". Pídelo en Proveedores IA → "Probar capacidad".`);
     } else {
-      throw new ModelResolutionError(`Ninguno de los modelos marcados para "${rec.name}" soporta entrada de imágenes. Auto no puede seleccionar un modelo de texto para ${taskLabel}. Marca al menos un modelo vision-capable (gemma-3/4, qwen-vl, gemini, gpt-4o, llava, etc.).`);
+      // Sin modelos marcados: NO se usa el modelo legado (heurística de nombre) para
+      // Selección/Ajustes. Se exige marcar y verificar al menos un modelo.
+      throw new ModelResolutionError(`"${rec.name}" no tiene modelos marcados compatibles con ${taskLabel}. Marca al menos un modelo en Proveedores IA y verifícalo con "Probar capacidad".`);
     }
   }
   if (opts._trace) { opts._trace.model = model; opts._trace.configured_model = exactModel || "(auto)"; }

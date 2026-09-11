@@ -10,6 +10,7 @@ import {
   isGeminiKeyPresent,
   pickBestVisionModel,
 } from '../../shared/aiProviderAdapter.ts';
+import { buildModelsMeta } from '../../shared/modelCapabilities.ts';
 
 // Proveedores IA — admin-only. UNA SOLA herramienta de proveedores: se añade un
 // proveedor con endpoint + API key, la función autodetecta el nombre (dominio), normaliza
@@ -55,10 +56,13 @@ function nameFromDomain(endpoint: string): string {
 }
 
 // Verifica la conexión y lista TODOS los modelos del proveedor (GET {endpoint}/models).
+// Devuelve también los objetos CRUDOS (raw) para que buildModelsMeta resuelva las
+// capacidades declaradas (OpenRouter architecture.modality, OpenAI modalities, NVIDIA
+// capabilities.inference cuando el deployment las declare).
 async function fetchModels(
   endpoint: string,
   apiKey: string
-): Promise<{ ok: boolean; models: string[]; reason: string; http_status: number | null; latency_ms: number }> {
+): Promise<{ ok: boolean; models: string[]; raw: any[]; reason: string; http_status: number | null; latency_ms: number }> {
   const t0 = Date.now();
   try {
     const controller = new AbortController();
@@ -74,19 +78,41 @@ async function fetchModels(
     }
     const bodyText = await res.text().catch(() => '');
     if (!res.ok) {
-      return { ok: false, models: [], reason: `HTTP ${res.status}: ${bodyText.slice(0, 200)}`, http_status: res.status, latency_ms: Date.now() - t0 };
+      return { ok: false, models: [], raw: [], reason: `HTTP ${res.status}: ${bodyText.slice(0, 200)}`, http_status: res.status, latency_ms: Date.now() - t0 };
     }
     const data = JSON.parse(bodyText);
-    const models = (data?.data || data?.models || [])
-      .map((m: any) => String(m?.id || m?.name || '').trim())
-      .filter(Boolean);
+    const raw = (data?.data || data?.models || []).slice(0, MODELS_PAGE_LIMIT);
+    const models = raw.map((m: any) => String(m?.id || m?.name || '').trim()).filter(Boolean);
     if (!models.length) {
-      return { ok: false, models: [], reason: 'El proveedor no devolvió modelos en GET /models', http_status: res.status, latency_ms: Date.now() - t0 };
+      return { ok: false, models: [], raw: [], reason: 'El proveedor no devolvió modelos en GET /models', http_status: res.status, latency_ms: Date.now() - t0 };
     }
-    return { ok: true, models: models.slice(0, MODELS_PAGE_LIMIT), reason: '', http_status: res.status, latency_ms: Date.now() - t0 };
+    return { ok: true, models, raw, reason: '', http_status: res.status, latency_ms: Date.now() - t0 };
   } catch (e: any) {
-    return { ok: false, models: [], reason: String(e?.message || e), http_status: null, latency_ms: Date.now() - t0 };
+    return { ok: false, models: [], raw: [], reason: String(e?.message || e), http_status: null, latency_ms: Date.now() - t0 };
   }
+}
+
+// Reconstruye available_models_meta preservando los resultados de pruebas empíricas
+// (probe) de modelos que siguen presentes tras un re-test. Las caps declaradas se
+// re-resuelven desde los metadatos crudos frescos; las caps verificadas por probe se
+// conservan (source='verified', vision true/false, probe_status) para no perder la
+// evidencia empírica al refrescar la lista de modelos.
+function rebuildMetaPreservingProbes(prevMeta: any[] | undefined, rawModels: any[]): any[] {
+  const built = buildModelsMeta(rawModels);
+  if (!Array.isArray(prevMeta) || !prevMeta.length) return built;
+  const prevById = new Map(prevMeta.map((m: any) => [String(m?.id || ''), m]));
+  return built.map((entry: any) => {
+    const p = prevById.get(entry.id);
+    if (!p || p.source !== "verified") return entry;
+    // Conservar la evidencia empírica de visión sobre la caps re-resuelta.
+    return {
+      ...entry,
+      caps: { ...entry.caps, vision: p.caps?.vision ?? entry.caps.vision },
+      source: "verified",
+      probed_at: p.probed_at || null,
+      probe_status: p.probe_status || null,
+    };
+  });
 }
 
 function maskKey(key: string): string {
@@ -140,6 +166,8 @@ async function ensureBuiltinRows(base44: any) {
       if (def.legacy === 'nvidia' && cfg?.nvidia_endpoint) endpoint = normalizeEndpoint(cfg.nvidia_endpoint);
       const check = await fetchModels(endpoint, key).catch(() => null);
       const models = check?.ok ? check.models.map((m: string) => m.replace(/^models\//, '')) : [def.model];
+      const rawModels = check?.ok ? check.raw.map((m: any) => ({ ...m, id: String(m?.id || m?.name || '').replace(/^models\//, '') })) : [];
+      const meta = check?.ok ? buildModelsMeta(rawModels) : [];
       const marks = [models.includes(def.model) ? def.model : models[0]];
       const rec: any = await base44.asServiceRole.entities.CustomAiProvider.create({
         name: def.name,
@@ -147,6 +175,7 @@ async function ensureBuiltinRows(base44: any) {
         api_key: '',
         builtin_secret: def.key,
         available_models: models,
+        available_models_meta: meta,
         seleccion_models: marks,
         ajustes_models: marks,
         model: def.model,
@@ -180,6 +209,7 @@ function maskProvider(r: any) {
     name: r.name,
     endpoint: r.endpoint,
     available_models: Array.isArray(r.available_models) ? r.available_models : [],
+    available_models_meta: Array.isArray(r.available_models_meta) ? r.available_models_meta : [],
     seleccion_models: Array.isArray(r.seleccion_models) ? r.seleccion_models : [],
     ajustes_models: Array.isArray(r.ajustes_models) ? r.ajustes_models : [],
     edicion_models: Array.isArray(r.edicion_models) ? r.edicion_models : [],
@@ -299,8 +329,12 @@ export default async function(req: Request): Promise<Response> {
           return Response.json({ ok: false, reason: `No se pudo verificar la conexión: ${check.reason}` });
         }
         // Los ids de Gemini llegan como "models/xyz": se normalizan a "xyz" para que la
-        // página y el chat/completions usen el mismo identificador.
+        // página y el chat/completions usen el mismo identificador. Se normalizan también
+        // en los objetos crudos para que buildModelsMeta produzca ids coherentes.
         const models = check.models.map((m: string) => m.replace(/^models\//, ''));
+        const rawModels = check.raw.map((m: any) => ({ ...m, id: String(m?.id || m?.name || '').replace(/^models\//, '') }));
+        // Capacidades resueltas desde metadatos declarados (fuente única de verdad).
+        const meta = buildModelsMeta(rawModels);
         // Preferencia del proyecto: los motores Gemini se limitan a gemini-2.5-flash.
         const flash = models.includes('gemini-2.5-flash') ? ['gemini-2.5-flash'] : [];
         const rec = await base44.asServiceRole.entities.CustomAiProvider.create({
@@ -308,6 +342,7 @@ export default async function(req: Request): Promise<Response> {
           endpoint,
           api_key: apiKey,
           available_models: models,
+          available_models_meta: meta,
           seleccion_models: isGemini ? flash : [],
           ajustes_models: isGemini ? flash : [],
           // Legado: mejor modelo de vision detectado (fallback si nunca se marcan modelos).
@@ -354,9 +389,11 @@ export default async function(req: Request): Promise<Response> {
         return Response.json({ ok: false, reason: `La nueva clave no se pudo verificar: ${check.reason}` });
       }
       const models = check.models.map((m: string) => m.replace(/^models\//, ''));
+      const rawModels = check.raw.map((m: any) => ({ ...m, id: String(m?.id || m?.name || '').replace(/^models\//, '') }));
       const updated = await base44.asServiceRole.entities.CustomAiProvider.update(id, {
         api_key: apiKey,
         available_models: models,
+        available_models_meta: rebuildMetaPreservingProbes(rec.available_models_meta, rawModels),
         last_ok: true,
         last_reason: '',
         last_checked: new Date().toISOString(),
@@ -401,7 +438,14 @@ export default async function(req: Request): Promise<Response> {
         last_reason: check.ok ? '' : check.reason,
         last_checked: new Date().toISOString(),
       };
-      if (check.ok) patch.available_models = check.models;
+      if (check.ok) {
+        const rawModels = check.raw.map((m: any) => ({ ...m, id: String(m?.id || m?.name || '').replace(/^models\//, '') }));
+        patch.available_models = check.models.map((m: string) => m.replace(/^models\//, ''));
+        // Re-resuelve caps declaradas y CONSERVA las pruebas empíricas (probe) de
+        // modelos que siguen presentes: no se pierde la evidencia verificada al
+        // refrescar la lista.
+        patch.available_models_meta = rebuildMetaPreservingProbes(rec.available_models_meta, rawModels);
+      }
       const updated = await base44.asServiceRole.entities.CustomAiProvider.update(id, patch);
       return Response.json({ ok: check.ok, reason: check.reason, provider: maskProvider(updated), total_models: check.models.length });
     }
@@ -412,37 +456,98 @@ export default async function(req: Request): Promise<Response> {
       return Response.json({ ok: true });
     }
 
-    // DIAGNÓSTICO TEMPORAL: devuelve los objetos CRUDOS de /models (primeros N) para
-    // inspeccionar el esquema real de capacidades/modalidades del proveedor.
-    if (action === 'raw-models') {
+    // PROBAR CAPACIDAD DE VISIÓN (sondeo empírico bajo demanda). Envía una imagen de
+    // prueba representativa (JPEG data URL generada en el navegador, NO 1x1, NO fotos
+    // originales) al modelo usando EXACTAMENTE el mismo formato que la producción
+    // (chat/completions con image_url). Inspecciona la respuesta real:
+    //   - HTTP 200 + contenido textual  → visión verificada (vision=true).
+    //   - HTTP 400/422/415 + error que cita image/vision/multimodal/not supported
+    //     → modelo rechaza imagen (vision=false, verificado NO compatible).
+    //   - timeout / error de red / otro error → NO se clasifica como sin visión
+    //     (vision=null, no verificado) para evitar falsos negativos.
+    // Persiste el resultado en available_models_meta (caché: no se re-prueba hasta que
+    // el usuario pulse "Probar de nuevo" o cambie el endpoint/key).
+    if (action === 'probe-vision') {
       const id = String(body.id || '');
-      const limit = Math.min(Number(body.limit) || 8, 20);
+      const model = String(body.model || '').trim();
+      const image = String(body.image || '').trim();
+      if (!id || !model) return Response.json({ ok: false, reason: 'Faltan id de proveedor o modelo' });
+      if (!image || !/^data:image\/[a-z+]+;base64,/i.test(image)) {
+        return Response.json({ ok: false, reason: 'Se requiere una imagen de prueba (data URL JPEG)' });
+      }
       const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
       if (!rec) return Response.json({ ok: false, reason: 'Proveedor no encontrado' });
       const key = effectiveKey(rec);
-      if (!key) return Response.json({ ok: false, reason: 'Sin API key' });
+      if (!key) return Response.json({ ok: false, reason: 'El proveedor no tiene API key' });
+      const base = String(rec.endpoint || '').trim().replace(/\/+$/, '');
+      if (!base) return Response.json({ ok: false, reason: 'El proveedor no tiene endpoint' });
+      const endpoint = base + '/chat/completions';
+      const content = [
+        { type: 'text', text: 'Describe brevemente esta imagen en una frase corta.' },
+        { type: 'image_url', image_url: { url: image } },
+      ];
+      let probeStatus: 'ok' | 'rejected' | 'error' = 'error';
+      let vision: boolean | null = null;
+      let reason = '';
+      const t0 = Date.now();
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 30000);
+        const timer = setTimeout(() => controller.abort(), 60000);
         let res: Response;
         try {
-          res = await fetch(`${rec.endpoint}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal });
+          res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model, messages: [{ role: 'user', content }], stream: false, max_tokens: 256 }),
+            signal: controller.signal,
+          });
         } finally { clearTimeout(timer); }
-        const data: any = await res.json().catch(() => null);
-        // Si se pide un modelo concreto, se fetchea /models/{id} además para ver si el
-        // endpoint individual declara capacidades que la lista no trae.
-        let single: any = null;
-        if (typeof body.model === "string" && body.model.trim()) {
-          try {
-            const rs = await fetch(`${rec.endpoint}/models/${encodeURIComponent(body.model.trim())}`, { headers: { Authorization: `Bearer ${key}` } });
-            single = { status: rs.status, body: await rs.json().catch(() => null) };
-          } catch (e: any) { single = { error: String(e?.message || e) }; }
+        const txt = await res.text().catch(() => '');
+        if (res.ok) {
+          let data: any = null;
+          try { data = JSON.parse(txt); } catch {}
+          const out = String(data?.choices?.[0]?.message?.content || '').trim();
+          if (out) { probeStatus = 'ok'; vision = true; reason = `OK: ${out.slice(0, 140)}`; }
+          else { probeStatus = 'error'; vision = null; reason = 'Respuesta vacía del modelo'; }
+        } else {
+          const low = txt.toLowerCase();
+          const rejectsImage = (res.status === 400 || res.status === 422 || res.status === 415) &&
+            /image|vision|multimodal|not support|unsupported|modal|does not|no admite|no acepta/.test(low);
+          if (rejectsImage) {
+            probeStatus = 'rejected'; vision = false; reason = `HTTP ${res.status}: ${txt.slice(0, 200)}`;
+          } else {
+            probeStatus = 'error'; vision = null; reason = `HTTP ${res.status}: ${txt.slice(0, 200)}`;
+          }
         }
-        const arr = (data?.data || data?.models || []).slice(0, limit);
-        return Response.json({ ok: res.ok, status: res.status, endpoint: rec.endpoint, sample: arr, total: (data?.data || data?.models || []).length, single });
       } catch (e: any) {
-        return Response.json({ ok: false, reason: String(e?.message || e) });
+        probeStatus = 'error'; vision = null; reason = String(e?.message || e).slice(0, 200);
       }
+      // Persistir en available_models_meta. Se RE-LEE el registro justo antes de
+      // escribir para no perder los resultados de otros sondeos concurrentes sobre el
+      // mismo proveedor (read-modify-write con ventana mínima: solo se parchea la
+      // entrada de este modelo).
+      const fresh: any = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
+      const meta = Array.isArray(fresh?.available_models_meta) ? fresh.available_models_meta.map((m: any) => ({ ...m })) : [];
+      const idx = meta.findIndex((m: any) => String(m?.id || '') === model);
+      const prevCaps = idx >= 0 ? (meta[idx].caps || {}) : {};
+      const entry: any = {
+        id: model,
+        caps: { vision, image_edit: prevCaps.image_edit ?? null, video: prevCaps.video ?? null },
+        source: vision === null ? 'unverified' : 'verified',
+        probed_at: new Date().toISOString(),
+        probe_status: probeStatus,
+      };
+      if (idx >= 0) meta[idx] = entry; else meta.push(entry);
+      await base44.asServiceRole.entities.CustomAiProvider.update(id, { available_models_meta: meta });
+      return Response.json({
+        ok: vision === true,
+        vision,
+        status: probeStatus,
+        reason,
+        latency_ms: Date.now() - t0,
+        model,
+        provider: id,
+      });
     }
 
     if (action === 'delete') {
