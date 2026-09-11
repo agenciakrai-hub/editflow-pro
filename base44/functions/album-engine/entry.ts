@@ -267,6 +267,17 @@ async function invokeAlbumVision(base44, action, prompt, fileUrls, skip, useUser
 // PROMPTS (E4–E7) — selección profesional. La IA SOLO analiza/recomienda/explica;
 // jamás elimina fotos ni toca spreads.
 // ---------------------------------------------------------------------------
+function e3ContinuityPrompt(pairs) {
+  return `Eres el asistente de agrupación de ráfagas de un fotógrafo profesional. Recibirás PARES de fotos consecutivas en el tiempo (par 0 = imágenes 1 y 2, par 1 = imágenes 3 y 4, y así sucesivamente). Para cada par decide si la segunda foto pertenece al MISMO MOMENTO FOTOGRÁFICO que la primera (misma ráfaga) o si debe empezar una NUEVA RÁFAGA.
+MISMA RÁFAGA: la escena, el encuadre y los sujetos CONTINÚAN, con solo diferencias pequeñas normales entre disparos consecutivos (micro-movimientos, parpadeo, respiración).
+NUEVA RÁFAGA (cambio de momento): giro brusco de cabeza u orientación de la mirada, cambio importante de pose u orientación corporal, cambio fuerte de expresión, un sujeto relevante que entra o sale del encuadre, cambio de acción o instante decisivo, o cambio claro de escena/encuadre/composición.
+El tiempo por sí solo NO une fotos: decide SIEMPRE por la continuidad de los sujetos y del momento fotográfico.
+Responde SOLO JSON válido, sin texto extra:
+{"decisions":[{"pair":0,"same_moment":true,"change":"none","confidence":90}]}
+(change: "head" | "pose" | "expression" | "subject" | "action" | "scene" | "none")
+Pares: ${pairs.map((_, i) => `par ${i}`).join(", ")}`;
+}
+
 function e4Prompt(eventType, batch) {
   return `Eres el asistente de selección fotográfica de un fotógrafo profesional de ${eventType}. Analiza CADA foto (identificada por su alias, en el orden dado). Valora:
 - technical (0-100): nitidez real del sujeto, exposición, ruido, defectos graves (desenfoque, trepidación). Usa la métrica local como apoyo, no como verdad absoluta.
@@ -405,6 +416,30 @@ async function actionE4(base44, body) {
   return json(200, { action: "e4-triage", analyses, missing, provider: out.provider, model: out.model, latency_ms: out.latency_ms });
 }
 
+// E3-continuity: resuelve SOLO fronteras ambiguas de la agrupación de ráfagas
+// (misma escena, posible cambio de sujeto/momento). Lote pequeño: 1-12 pares
+// (24 imágenes). Nunca se envían todas las fotos — solo los pares dudosos.
+async function actionE3Continuity(base44, body) {
+  const pairs = Array.isArray(body.pairs) ? body.pairs : [];
+  if (!pairs.length || pairs.length > 12) throw new Error("e3-continuity: lote de 1-12 pares requerido (tope de 24 imágenes)");
+  const urls = [];
+  for (const p of pairs) urls.push(p.a, p.b);
+  assertImageDataUrls(urls, "e3-continuity");
+  const out = await invokeAlbumVision(base44, "e3-continuity", e3ContinuityPrompt(pairs), urls, body.skip, true);
+  // Cada par SIEMPRE devuelve decisión; si el proveedor omite una, se conserva la
+  // unión (conservador: no se parte una ráfaga dudosa sin pruebas).
+  const decisions = pairs.map((_, i) => {
+    const d = (out.result?.decisions || []).find((x) => Number(x.pair) === i) || null;
+    return {
+      pair: i,
+      same_moment: d ? d.same_moment !== false : true,
+      change: String(d?.change || "none"),
+      confidence: Number(d?.confidence) || 0,
+    };
+  });
+  return json(200, { action: "e3-continuity", decisions, provider: out.provider, model: out.model, latency_ms: out.latency_ms });
+}
+
 async function actionE5(base44, body) {
   const group = Array.isArray(body.group) ? body.group : [];
   if (!group.length || group.length > 12) throw new Error("e5-group: grupo de 2-12 fotos requerido (grupos mayores se dividen en sub-lotes)");
@@ -474,6 +509,7 @@ export default async function(req: Request): Promise<Response> {
       return json(400, { error: "consent_required", stage: action, message: "El análisis remoto requiere consentimiento explícito del fotógrafo." });
     }
     if (action === "e4-triage") return await actionE4(base44, body);
+    if (action === "e3-continuity") return await actionE3Continuity(base44, body);
     if (action === "e5-group") return await actionE5(base44, body);
     if (action === "e6-moments") return await actionE6(base44, body);
     if (action === "visual-profile") return await actionVisualProfile(base44, body);

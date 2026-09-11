@@ -1,12 +1,14 @@
 // Fase 4.1 Bloques 8-9 — ORQUESTADOR del pipeline de selección IA, 100 % en el
 // CLIENTE (las previews viven en IndexedDB). album-engine es un proxy sin estado
 // por lote. Cada lote se persiste → el trabajo sobrevive al cierre de la app y es
-// REANUDABLE (E4/E5 solo re-procesan lo que falta). E2/E3 son locales y gratuitos.
+// REANUDABLE (E4/E5 solo re-procesan lo que falta). E2/E3 son locales y gratuitos,
+// salvo las fronteras AMBIGUAS de E3 que resuelve la visión en lotes pequeños.
 import { base44 } from "@/api/base44Client";
 import { getTierPreview } from "@/modules/album/lib/previewStore";
 import { sanitizeForAi } from "./sanitizer";
 import { analyzeTechnical } from "@/modules/album/analysis/localTechnical";
 import { buildGroups } from "@/modules/album/similarity/groupBuilder";
+import { computeFrameSignal } from "@/modules/album/similarity/frameSignal";
 
 const E4_BATCH = 20;
 const E5_MAX = 12;
@@ -132,14 +134,50 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     checkAlive();
     const thumbData = await sanitizedThumb(projectId, photo);
     const tech = thumbData ? await analyzeTechnical(thumbData.dataUrl).catch(() => null) : null;
-    const item = { photo, thumb: thumbData?.dataUrl || null, tech };
+    // Señal visual 16×16 (barata, canvas): alimenta la agrupación de ráfagas E3.
+    const signal = thumbData ? await computeFrameSignal(thumbData.dataUrl).catch(() => null) : null;
+    const item = { photo, thumb: thumbData?.dataUrl || null, tech, signal };
     items.push(item);
     itemsById.set(photo.id, item);
   }
   onProgress?.({ stage: "e2", done: photos.length, total: photos.length });
 
-  // ---- E3: grupos locales (ráfagas por Δt + pHash) ----
-  const groups = buildGroups(photos);
+  // ---- E3: grupos por CONTINUIDAD de momento (V2) ----
+  // Local (gratis): Δt como señal + pHash (escena) + frameSignal (encuadre y
+  // sujetos). La visión SOLO resuelve fronteras ambiguas — pares consecutivos con
+  // misma escena y cambio moderado (posible giro de cabeza/pose/expresión/sujeto
+  // que entra o sale) — en lotes de 12 pares. El tiempo NUNCA une por sí solo y
+  // no hay tope de tamaño: las cadenas se rompen por continuidad (deriva del
+  // ancla), no por un límite arbitrario. Los ids y el orden temporal no cambian.
+  const signals = new Map(items.filter((it) => it.signal).map((it) => [it.photo.id, it.signal]));
+  const groups = await buildGroups({
+    photos,
+    signals,
+    thumbOf: (id) => itemsById.get(id)?.thumb || null,
+    resolveContinuity: async (pairs) => {
+      const decisions = [];
+      const PAIR_BATCH = 12; // tope de imágenes del motor: 24 → 12 pares por lote
+      for (let i = 0; i < pairs.length; i += PAIR_BATCH) {
+        const batch = pairs.slice(i, i + PAIR_BATCH);
+        let out = null;
+        try {
+          out = await withRetry(() =>
+            callEngine("e3-continuity", {
+              event_type: eventType,
+              pairs: batch.map((p) => ({ a: p.prevThumb, b: p.curThumb })),
+            })
+          );
+        } catch {
+          out = null; // sin visión disponible: unión conservadora (no se parte la ráfaga)
+        }
+        batch.forEach((p, j) => {
+          const d = (out?.decisions || []).find((x) => Number(x.pair) === j);
+          decisions.push(d ? d.same_moment !== false : true);
+        });
+      }
+      return decisions;
+    },
+  });
   onProgress?.({ stage: "e3", done: groups.length, total: groups.length });
 
   // ---- E4: triaje por lotes (remoto, persistido por lote → reanudable) ----
