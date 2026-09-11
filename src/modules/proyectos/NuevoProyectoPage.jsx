@@ -330,6 +330,13 @@ export default function NuevoProyectoPage() {
         }))
       );
 
+      // Si la selección IA corrió ANTES de guardar (proyecto nuevo sin ID), la traza
+      // quedó en window.__lastSelectionTrace. Ahora que ya hay ID, se persiste.
+      if (window.__lastSelectionTrace) {
+        base44.entities.Project.update(savedId, { ai_config_snapshot: { selection_trace: window.__lastSelectionTrace } }).catch(() => {});
+        delete window.__lastSelectionTrace;
+      }
+
       // Pasa las previews ya extraídas al detalle para no volver a procesarlas al abrir.
       setPendingProjectPreviews(
         savedId,
