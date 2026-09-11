@@ -1,6 +1,7 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import { uploadPreviewBatch } from '../../shared/rawAiStudioEngine.ts';
 import { runWithConcurrency } from '../../shared/concurrency.ts';
+import { invokeVision } from '../../shared/aiProviderAdapter.ts';
 
 // RAW AI Studio — POST /rawAiDedupCompare
 //
@@ -13,10 +14,11 @@ import { runWithConcurrency } from '../../shared/concurrency.ts';
 //  - Si duplicate=true: conserva el de mejor momento/expresión/ojos; rebaja el otro.
 // NUNCA elimina por overall numérico. Sin auto-rebaja ciega.
 //
-// Modelo: claude_sonnet_4_6. Concurrencia MAX_CONCURRENT=3. Los RAW nunca salen del
-// equipo del usuario: solo su preview JPEG embebida.
+// Proveedor: el activo para Selección IA (active_seleccion / active_model_seleccion),
+// enrutado por aiProviderAdapter.invokeVision — NUNCA Core.InvokeLLM ni Base44 AI.
+// Concurrencia MAX_CONCURRENT=3. Los RAW nunca salen del equipo del usuario: solo su
+// preview JPEG embebida.
 
-const MODEL = 'claude_sonnet_4_6';
 const MAX_CONCURRENT = 3;
 
 export default async function(req: Request): Promise<Response> {
@@ -58,9 +60,10 @@ Decide:
 
 Return JSON: { duplicate: boolean, keep: "a"|"b"|"both", demote: "a"|"b"|"none", reason: string }.`;
 
-        const result: any = await base44.integrations.Core.InvokeLLM({
+        const trace: any = {};
+        const result: any = await invokeVision(base44, {
+          task: 'seleccion',
           prompt,
-          model: MODEL,
           file_urls: fileUrls,
           response_json_schema: {
             type: 'object',
@@ -72,6 +75,7 @@ Return JSON: { duplicate: boolean, keep: "a"|"b"|"both", demote: "a"|"b"|"none",
             },
             required: ['duplicate', 'keep', 'reason'],
           },
+          _trace: trace,
         });
 
         decisions[pairId] = {
@@ -79,6 +83,12 @@ Return JSON: { duplicate: boolean, keep: "a"|"b"|"both", demote: "a"|"b"|"none",
           keep: result.keep || 'both',
           demote: result.demote && result.demote !== 'none' ? result.demote : null,
           reason: result.reason || '',
+          _meta: {
+            provider: trace.provider || trace.active_provider || null,
+            model: trace.model || null,
+            attempts: Array.isArray(trace.attempts) ? trace.attempts : [],
+            fallback: Array.isArray(trace.attempts) && trace.attempts.some((a: any) => !a.ok),
+          },
         };
       } catch (e: any) {
         // IA no disponible: NO se rebaja nada (conservador). Se conservan ambas.

@@ -300,13 +300,17 @@ async function callProvider(base44: any, provider: string, opts: InvokeOpts): Pr
 }
 
 // Cadena de failover: el proveedor activo primero, luego el resto de proveedores
-// habilitados (personalizados + integrados), y base44 como ultimo recurso. Si el
-// proveedor activo falla, el proceso no se detiene: reintenta con el siguiente.
+// habilitados (personalizados + integrados). Si el proveedor activo falla, el
+// proceso no se detiene: reintenta con el siguiente proveedor configurado.
+//
+// SELECCIÓN INTELIGENTE: para task="seleccion" NO se incluye base44 (Core.InvokeLLM)
+// como ultimo recurso — el failover ocurre SOLO entre proveedores configurados.
+// Nunca consume créditos de IA de Base44. Otras tareas (ajustes) conservan base44.
 //
 // GEMINI EXCLUSIVO: si Gemini es el proveedor activo (seleccion/ajustes), NO hay
 // failover — se usa unicamente la nueva API key (GEMINI_API_KEY) con el modelo
 // gemini-2.5-flash. Nunca cae a Qwen/NVIDIA/Base44 ni a otras keys.
-async function buildFailoverChain(base44: any, active: string): Promise<string[]> {
+async function buildFailoverChain(base44: any, active: string, task?: AiTask): Promise<string[]> {
   if (active === "gemini") return ["gemini"];
   const chain: string[] = [];
   const push = (p: string) => { if (p && p !== "none" && !chain.includes(p)) chain.push(p); };
@@ -323,7 +327,10 @@ async function buildFailoverChain(base44: any, active: string): Promise<string[]
     if (cfg.gemini_enabled) push("gemini");
     if (cfg.nvidia_enabled) push("nvidia");
   }
-  push("base44"); // ultimo recurso: siempre disponible
+  // Base44 AI (Core.InvokeLLM) queda EXCLUIDO de Selección Inteligente: el failover
+  // solo ocurre entre proveedores configurados/habilitados. Para otras tareas se
+  // conserva como ultimo recurso (sin cambio funcional en ajustes).
+  if (task !== "seleccion") push("base44");
   return chain;
 }
 
@@ -339,7 +346,7 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
     return callProvider(base44, opts.forceProvider, opts);
   }
   const active = await activeProviderFor(base44, opts.task);
-  const chain = await buildFailoverChain(base44, active);
+  const chain = await buildFailoverChain(base44, active, opts.task);
   if (opts._trace) { opts._trace.active_provider = active; if (!Array.isArray(opts._trace.attempts)) opts._trace.attempts = []; }
   let lastErr: any;
   for (const provider of chain) {

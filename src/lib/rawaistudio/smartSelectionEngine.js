@@ -321,7 +321,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   // expresión, composición, sujeto) y solo rebaja si es un duplicado REAL. Diferencia
   // significativa de momento/expresión/composición → NO se consideran duplicados.
   trace.stages.dedup = { start_ms: Date.now() };
-  await dedupAcrossGroups(keep, meta, withPreview);
+  await dedupAcrossGroups(keep, meta, withPreview, trace);
   trace.stages.dedup.end_ms = Date.now();
   trace.stages.dedup.duration_ms = trace.stages.dedup.end_ms - trace.stages.dedup.start_ms;
 
@@ -361,7 +361,7 @@ function ctxOf(m) {
 
 // Detecta pares con pHash cercano entre grupos y pide a la IA una comparación visual.
 // Solo rebaja a REVIEW si la IA confirma duplicado real; conserva ambas en caso contrario.
-async function dedupAcrossGroups(keep, meta, withPreview) {
+async function dedupAcrossGroups(keep, meta, withPreview, trace) {
   const selectedIds = Array.from(keep);
   const byId = new Map(withPreview.map((p) => [p.id, p]));
   const pairs = [];
@@ -385,11 +385,20 @@ async function dedupAcrossGroups(keep, meta, withPreview) {
     }
   }
   if (!pairs.length) return;
+  let dedupProvider = null, dedupModel = null, dedupFallback = false;
+  const dedupAttempts = [];
   try {
     const { data } = await base44.functions.invoke("rawAiDedupCompare", { pairs });
     const decisions = data?.decisions || {};
     for (const pair of pairs) {
       const dec = decisions[pair.pair_id];
+      const pm = dec?._meta;
+      if (pm) {
+        if (dedupProvider === null && pm.provider) dedupProvider = pm.provider;
+        if (dedupModel === null && pm.model) dedupModel = pm.model;
+        if (pm.fallback) dedupFallback = true;
+        if (Array.isArray(pm.attempts)) dedupAttempts.push(...pm.attempts);
+      }
       if (!dec || !dec.duplicate || !dec.demote) continue;
       const loserId = dec.demote === "a" ? pair.id_a : pair.id_b;
       keep.delete(loserId);
@@ -402,6 +411,13 @@ async function dedupAcrossGroups(keep, meta, withPreview) {
     }
   } catch {
     // IA no disponible: no se rebaja nada (conservador). Se conservan ambas.
+  }
+  if (trace) {
+    trace.stages.dedup.provider = dedupProvider;
+    trace.stages.dedup.model = dedupModel;
+    trace.stages.dedup.fallback = dedupFallback;
+    trace.stages.dedup.attempts = dedupAttempts;
+    trace.stages.dedup.pairs = pairs.length;
   }
 }
 
