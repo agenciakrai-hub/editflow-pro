@@ -69,12 +69,24 @@ async function getPlatformConfig(base44) {
   }
 }
 
-// Config de Álbum (Proveedores IA → Álbum): proveedor activo y modelo exacto elegidos
-// por el administrador. active_album vacío = cadena por defecto (gemini_paid → qwen →
-// nvidia). "custom:<id>" es un proveedor propio de CustomAiProvider.
-async function getAlbumActive(base44) {
+// Resolución del proveedor activo + modelo exacto SEGÚN LA TAREA.
+//   task = "seleccion" → fuente de verdad: active_seleccion / active_model_seleccion
+//                        (la config de "Proveedor activo por herramienta → Selección IA").
+//   task = "album"     → fuente de verdad: active_album / active_model_album
+//                        (funciones propias del módulo Álbum que NO son selección:
+//                         E6 narrativa, visual-profile).
+// Esto evita que las etapas de selección (E3/E4/E5/E7) usen la config de "Álbum" y
+// viceversa. Sin defaults ocultos: si el usuario no eligió proveedor para la tarea,
+// se devuelve vacío y la cadena de failover de selección no se inventa un proveedor.
+async function getActiveForTask(base44, task) {
   try {
     const cfg = await getPlatformConfig(base44);
+    if (task === "seleccion") {
+      return {
+        active: String(cfg?.active_seleccion || "").trim(),
+        exactModel: String(cfg?.active_model_seleccion || "").trim(),
+      };
+    }
     return {
       active: String(cfg?.active_album || "").trim(),
       exactModel: String(cfg?.active_model_album || "").trim(),
@@ -86,9 +98,10 @@ async function getAlbumActive(base44) {
 
 // Transporte AISLADO para proveedores propios (OpenAI-compatible): las previews van
 // como data URLs inline (image_url), igual que NVIDIA — NUNCA UploadFile (privacidad).
-// Modelos: SOLO los marcados para Álbum (album_models); el modelo EXACTO del admin
-// prevalece si está en la lista; si no, el mejor marcado; fallback: modelo legado.
-async function callCustomAlbum(base44, customId, prompt, fileUrls, modelOverride) {
+// Modelos: SOLO los marcados para la TAREA del proveedor (seleccion_models para
+// selección, album_models para álbum); el modelo EXACTO del admin prevalece si está
+// en la lista; si no, el mejor marcado; fallback: modelo legado del proveedor.
+async function callCustomAlbum(base44, customId, prompt, fileUrls, modelOverride, task) {
   const rec = await base44.asServiceRole.entities.CustomAiProvider.get(customId).catch(() => null);
   if (!rec) throw new Error(`album custom: proveedor no encontrado (${customId})`);
   if (rec.enabled === false) throw new Error(`album custom: proveedor deshabilitado (${rec.name})`);
@@ -99,13 +112,15 @@ async function callCustomAlbum(base44, customId, prompt, fileUrls, modelOverride
   if (!apiKey) throw new Error(`album custom: "${rec.name}" no tiene API key`);
   const base = String(rec.endpoint || "").trim().replace(/\/+$/, "");
   if (!base) throw new Error(`album custom: "${rec.name}" no tiene endpoint`);
-  const marked = (Array.isArray(rec.album_models) ? rec.album_models : []).map((m) => String(m || "").trim()).filter(Boolean);
+  const markedRaw = task === "seleccion" ? rec.seleccion_models : rec.album_models;
+  const marked = (Array.isArray(markedRaw) ? markedRaw : []).map((m) => String(m || "").trim()).filter(Boolean);
   const legacy = String(rec.model || "").trim();
   let model = "";
   if (modelOverride && (!marked.length || marked.includes(modelOverride))) model = modelOverride;
   else if (marked.length) model = pickBestVisionModel(marked);
   else if (legacy) model = legacy;
-  if (!model) throw new Error(`album custom: "${rec.name}" no tiene modelos marcados para Álbum (márcalos en Proveedores IA)`);
+  const taskLabel = task === "seleccion" ? "Selección IA" : "Álbum";
+  if (!model) throw new Error(`album custom: "${rec.name}" no tiene modelos marcados para ${taskLabel} (márcalos en Proveedores IA)`);
   const content = [{ type: "text", text: prompt }];
   for (const u of fileUrls) content.push({ type: "image_url", image_url: { url: u } });
   const res = await fetchWithTimeout(base + "/chat/completions", {
@@ -216,15 +231,63 @@ async function callGeminiPaid(base44, prompt, fileUrls, modelOverride) {
 // SIMULAR caídas (Checkpoint 7). Cada eslabón registra su fallo; el pipeline
 // del cliente decide reintentos por lote.
 // ---------------------------------------------------------------------------
-async function invokeAlbumVision(base44, action, prompt, fileUrls, skip, useUserConfig) {
+// Cadena de failover para SELECCIÓN (task="seleccion"). Fuente de verdad:
+// active_seleccion (Proveedor activo por herramienta → Selección IA). El proveedor
+// activo SIEMPRE va primero y nunca se filtra. El failover son únicamente otros
+// proveedores HABILITADOS para Selección IA:
+//   - customs con seleccion_models no vacío (excluyendo el activo)
+//   - qwen si qwen_enabled
+//   - nvidia si nvidia_enabled
+// NO incluye gemini_paid (no es una opción de Selección IA), NO base44 (privacidad
+// álbum: UploadFile), NO gemini free (términos de datos). Así no existe ningún
+// proveedor/modelo oculto que sustituya la elección explícita del usuario.
+async function buildSelectionChain(base44, active) {
+  let chain = [];
+  const push = (p) => { if (p && p !== "none" && p !== "base44" && p !== "gemini_paid" && !chain.includes(p)) chain.push(p); };
+  push(active);
+  try {
+    const customs = await base44.asServiceRole.entities.CustomAiProvider.list();
+    for (const c of (Array.isArray(customs) ? customs : [])) {
+      if (c.enabled === false) continue;
+      const hasSeleccion = Array.isArray(c.seleccion_models) && c.seleccion_models.some((m) => String(m || "").trim());
+      if (hasSeleccion) push(`custom:${c.id}`);
+    }
+  } catch {}
+  const cfg = await getPlatformConfig(base44);
+  if (cfg?.qwen_enabled) push("qwen");
+  if (cfg?.nvidia_enabled) push("nvidia");
+  // Consentimiento (AlbumAIConfig.allowed_providers): filtra los proveedores
+  // integrados del failover a los que el fotógrafo permitió. El activo y los
+  // customs siempre se respetan (consentimiento puntual dado en cada ejecución).
+  try {
+    const list = await base44.entities.AlbumAIConfig.list();
+    const acfg = Array.isArray(list) && list.length ? list[0] : null;
+    if (acfg?.revoked) throw new Error("consent_revoked: consentimiento revocado; concede uno nuevo antes de iniciar un análisis remoto");
+    if (Array.isArray(acfg?.allowed_providers) && acfg.allowed_providers.length) {
+      const allowed = new Set(acfg.allowed_providers);
+      chain = chain.filter((p) => p === active || p.startsWith("custom:") || allowed.has(p));
+    }
+  } catch (e) {
+    if (String(e?.message || "").includes("consent_revoked")) throw e;
+  }
+  return chain;
+}
+
+// action = etiqueta de la acción (logs). task = "seleccion" | "album".
+//   - "seleccion" → respeta active_seleccion / active_model_seleccion (E3/E4/E5/E7).
+//   - "album"     → respeta active_album / active_model_album (E6, visual-profile).
+async function invokeAlbumVision(base44, action, prompt, fileUrls, skip, useUserConfig, task = "album") {
   const errors = [];
-  const albumCfg = await getAlbumActive(base44);
-  let chain = useUserConfig ? await userChain(base44) : CHAIN;
-  // Proveedor ACTIVO de Álbum (Proveedores IA): SIEMPRE primero en la cadena. Un
-  // proveedor propio ("custom:<id>") se antepone aunque no pertenezca a la cadena
-  // legada; el resto de la cadena sigue como failover si el activo falla.
-  if (albumCfg.active) {
-    chain = [albumCfg.active, ...chain.filter((p) => p !== albumCfg.active)];
+  const taskCfg = await getActiveForTask(base44, task);
+  let chain;
+  if (task === "seleccion") {
+    chain = await buildSelectionChain(base44, taskCfg.active);
+  } else {
+    // Álbum: cadena legada sin cambios (gemini_paid → qwen → nvidia), activo prepuesto.
+    chain = useUserConfig ? await userChain(base44) : CHAIN;
+    if (taskCfg.active) {
+      chain = [taskCfg.active, ...chain.filter((p) => p !== taskCfg.active)];
+    }
   }
   for (const provider of chain) {
     if (skip && skip.includes(provider)) {
@@ -232,18 +295,20 @@ async function invokeAlbumVision(base44, action, prompt, fileUrls, skip, useUser
       continue;
     }
     const t0 = Date.now();
-    // Modelo EXACTO de Álbum: SOLO se aplica al proveedor activo.
-    const exact = provider === albumCfg.active ? albumCfg.exactModel : "";
+    // Modelo EXACTO de la tarea: SOLO se aplica al proveedor activo.
+    const exact = provider === taskCfg.active ? taskCfg.exactModel : "";
     try {
       let result;
       let model = "";
       let providerLabel = provider;
       if (provider === "gemini_paid") {
+        // Solo aparece en la cadena de Álbum (E6/visual-profile). Selección nunca
+        // usa gemini_paid, por lo que no hay default gemini-2.5-flash en selección.
         result = await callGeminiPaid(base44, prompt, fileUrls, exact);
         const cfg = await getPlatformConfig(base44);
         model = exact || cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
       } else if (String(provider).startsWith("custom:")) {
-        const out = await callCustomAlbum(base44, provider.slice("custom:".length), prompt, fileUrls, exact);
+        const out = await callCustomAlbum(base44, provider.slice("custom:".length), prompt, fileUrls, exact, task);
         result = out.result;
         model = out.model;
         providerLabel = out.name || provider;
@@ -254,9 +319,10 @@ async function invokeAlbumVision(base44, action, prompt, fileUrls, skip, useUser
         const cfg = await getPlatformConfig(base44);
         model = exact || (provider === "qwen" ? (cfg?.qwen_model || "qwen3-vl-plus") : (cfg?.nvidia_model || "minimaxai/minimax-m3"));
       }
+      console.log(`[album-engine] ${action} task=${task} served_by=${providerLabel} model=${model}`);
       return { result, provider: providerLabel, model, latency_ms: Date.now() - t0 };
     } catch (e) {
-      console.log(`[album-engine] ${action} provider=${provider} fallo: ${e?.message || e}`);
+      console.log(`[album-engine] ${action} task=${task} provider=${provider} fallo: ${e?.message || e}`);
       errors.push({ provider, error: String(e?.message || e) });
     }
   }
@@ -405,7 +471,7 @@ async function actionE4(base44, body) {
   if (!batch.length || batch.length > MAX_IMAGES) throw new Error("e4-triage: lote de 1-20 fotos requerido");
   assertImageDataUrls(batch.map((p) => p.thumb), "e4-triage");
   const aliases = batch.map((p) => p.alias);
-  const out = await invokeAlbumVision(base44, "e4-triage", e4Prompt(body.event_type || "boda", batch), batch.map((p) => p.thumb), body.skip, true);
+  const out = await invokeAlbumVision(base44, "e4-triage", e4Prompt(body.event_type || "boda", batch), batch.map((p) => p.thumb), body.skip, true, "seleccion");
   const byAlias = new Map((out.result?.analyses || []).map((a) => [a.alias, a]));
   // SOLO se devuelven las fotos que la IA analizó de verdad. Las que el proveedor
   // omitió viajan en "missing": el cliente las cuenta como fallidas y las reintenta
@@ -425,7 +491,7 @@ async function actionE3Continuity(base44, body) {
   const urls = [];
   for (const p of pairs) urls.push(p.a, p.b);
   assertImageDataUrls(urls, "e3-continuity");
-  const out = await invokeAlbumVision(base44, "e3-continuity", e3ContinuityPrompt(pairs), urls, body.skip, true);
+  const out = await invokeAlbumVision(base44, "e3-continuity", e3ContinuityPrompt(pairs), urls, body.skip, true, "seleccion");
   // Cada par SIEMPRE devuelve decisión; si el proveedor omite una, se conserva la
   // unión (conservador: no se parte una ráfaga dudosa sin pruebas).
   const decisions = pairs.map((_, i) => {
@@ -444,7 +510,7 @@ async function actionE5(base44, body) {
   const group = Array.isArray(body.group) ? body.group : [];
   if (!group.length || group.length > 12) throw new Error("e5-group: grupo de 2-12 fotos requerido (grupos mayores se dividen en sub-lotes)");
   assertImageDataUrls(group.map((p) => p.thumb), "e5-group");
-  const out = await invokeAlbumVision(base44, "e5-group", e5Prompt(body.event_type || "boda", group, body.group_kind || "burst"), group.map((p) => p.thumb), body.skip, true);
+  const out = await invokeAlbumVision(base44, "e5-group", e5Prompt(body.event_type || "boda", group, body.group_kind || "burst"), group.map((p) => p.thumb), body.skip, true, "seleccion");
   const perPhoto = out.result?.per_photo || [];
   let promoted = out.result?.promoted || (perPhoto.length ? perPhoto.slice().sort((a, b) => (a.group_rank || 99) - (b.group_rank || 99))[0]?.alias : null);
   if (!promoted || !group.some((p) => p.alias === promoted)) promoted = group[0].alias;
@@ -479,7 +545,7 @@ async function actionE7(base44, body) {
   const blocked = Array.isArray(body.blocked) ? body.blocked : [];
   const target = body.album_target || { total: 60, per_spread: 3, spreads: 20 };
   // SOLO TEXTO: E7 no envía ninguna imagen (coste mínimo, privacidad máxima).
-  const out = await invokeAlbumVision(base44, "e7-assembly", e7Prompt(body.event_type || "boda", target, descriptors, forced, blocked), [], body.skip, true);
+  const out = await invokeAlbumVision(base44, "e7-assembly", e7Prompt(body.event_type || "boda", target, descriptors, forced, blocked), [], body.skip, true, "seleccion");
   const selection = Array.isArray(out.result?.selection) ? out.result.selection : [];
   const valid = new Set(descriptors.map((d) => d.alias));
   return json(200, {
