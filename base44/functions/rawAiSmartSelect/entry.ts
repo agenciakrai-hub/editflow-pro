@@ -282,7 +282,7 @@ Return JSON: finalists (array, one entry per candidate id), each with id, rank (
 }
 
 // Tercera llamada IA entre finalistas. Devuelve byId de los finalistas re-analizados.
-async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>, category: string | null = null): Promise<Record<string, any>> {
+async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>, category: string | null = null, trace?: any): Promise<Record<string, any>> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildFinalPrompt(ids, byIdAll);
   const result: any = await invokeVision(base44, {
@@ -295,6 +295,7 @@ async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<str
       properties: { finalists: { type: 'array', items: rankingItemSchema() } },
       required: ['finalists'],
     },
+    _trace: trace,
   });
   const arr = Array.isArray(result?.finalists) ? result.finalists : [];
   const out: Record<string, any> = {};
@@ -339,7 +340,7 @@ function mergeConsolidation(candidateIds: string[], h1: any, h2: any, finals: Re
 }
 
 // Llama a la IA para un subconjunto de candidatos y devuelve byId + meta del subgrupo.
-async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: Record<string, string>, isSingleton: boolean): Promise<any> {
+async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: Record<string, string>, isSingleton: boolean, trace?: any): Promise<any> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildPrompt(ids, isSingleton);
   const result: any = await invokeVision(base44, {
@@ -352,6 +353,7 @@ async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: 
       properties: { [key]: groupSchemaFor() },
       required: [key],
     },
+    _trace: trace,
   });
   const g = result[key] || {};
   const category = typeof g.category === 'string' ? g.category : null;
@@ -412,7 +414,7 @@ Candidate photo ids: ${ids.join(', ')}. The images are attached in the same orde
 Return JSON: keep_ids (all SELECT+TOP_PICK ids), category (dominant genre or null), reason (short), and rankings (one object per candidate with id, rank (always 1), status, reject_reasons, note, analysis_complete, and the ${SCORE_KEYS.join(', ')} scores).`;
 }
 
-async function analyzeIndependent(base44: any, key: string, ids: string[], uploaded: Record<string, string>): Promise<any> {
+async function analyzeIndependent(base44: any, key: string, ids: string[], uploaded: Record<string, string>, trace?: any): Promise<any> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildIndependentPrompt(ids);
   const result: any = await invokeVision(base44, {
@@ -425,6 +427,7 @@ async function analyzeIndependent(base44: any, key: string, ids: string[], uploa
       properties: { [key]: groupSchemaFor() },
       required: [key],
     },
+    _trace: trace,
   });
   const g = result[key] || {};
   const rankings = Array.isArray(g.rankings) ? g.rankings : [];
@@ -519,12 +522,13 @@ export default async function(req: Request): Promise<Response> {
           "seleccion"
         );
 
+        const trace: any = {};
         let result: any;
         if (burst.independent) {
           // Lote de singletons: cada foto juzgada por mérito propio, sin límite de un
           // único TOP_PICK (varias pueden ser TOP_PICK/SELECT independientemente).
           iaCalls = 1;
-          const sub = await analyzeIndependent(base44, `group_0`, candidateIds, uploaded);
+          const sub = await analyzeIndependent(base44, `group_0`, candidateIds, uploaded, trace);
           result = {
             keep_ids: sub.keep_ids,
             category: sub.category,
@@ -534,7 +538,7 @@ export default async function(req: Request): Promise<Response> {
         } else if (candidateIds.length <= MAX_IMAGES_PER_CALL) {
           iaCalls = 1;
           const isSingleton = candidateIds.length === 1;
-          const sub = await analyzeSubset(base44, `group_0`, candidateIds, uploaded, isSingleton);
+          const sub = await analyzeSubset(base44, `group_0`, candidateIds, uploaded, isSingleton, trace);
           result = {
             keep_ids: sub.keep_ids,
             category: sub.category,
@@ -551,15 +555,15 @@ export default async function(req: Request): Promise<Response> {
           const h1Ids = candidateIds.slice(0, mid);
           const h2Ids = candidateIds.slice(mid);
           const [h1, h2] = await Promise.all([
-            analyzeSubset(base44, `group_0`, h1Ids, uploaded, false),
-            analyzeSubset(base44, `group_1`, h2Ids, uploaded, false),
+            analyzeSubset(base44, `group_0`, h1Ids, uploaded, false, trace),
+            analyzeSubset(base44, `group_1`, h2Ids, uploaded, false, trace),
           ]);
           const f1 = pickFinalists(h1Ids, h1.byId, FINALISTS_PER_HALF);
           const f2 = pickFinalists(h2Ids, h2.byId, FINALISTS_PER_HALF);
           finalistIds = [...f1, ...f2];
           if (finalistIds.length >= 2) {
             try {
-              const finals = await analyzeFinalists(base44, finalistIds, uploaded, { ...h1.byId, ...h2.byId }, h1.category || h2.category || null);
+              const finals = await analyzeFinalists(base44, finalistIds, uploaded, { ...h1.byId, ...h2.byId }, h1.category || h2.category || null, trace);
               finalRan = true;
               iaCalls = 3;
               result = mergeConsolidation(candidateIds, h1, h2, finals);
@@ -603,11 +607,11 @@ export default async function(req: Request): Promise<Response> {
           category: result.category,
           reason: result.reason,
           rankings,
-          _meta: { ia_calls: iaCalls, finalist_ids: finalistIds, final_ran: finalRan, fallback: false },
+          _meta: { ia_calls: iaCalls, finalist_ids: finalistIds, final_ran: finalRan, fallback: false, provider: trace.provider || null, model: trace.model || null },
         };
       } catch (e: any) {
         // Fallback técnico conservador (no simula decisión IA).
-        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true } };
+        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null } };
       }
     });
 

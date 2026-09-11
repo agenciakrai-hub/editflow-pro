@@ -124,8 +124,22 @@ function technicalFallbackForGroup(group) {
 
 // withPreview -> { keep: Set<id>, meta: Map<id, {...}> }
 export async function runAiBurstSelection(withPreview, onProgress) {
+  const trace = {
+    started_at: new Date().toISOString(),
+    started_ms: Date.now(),
+    photo_count: withPreview.length,
+    stages: {},
+    bursts: [],
+  };
+  trace.stages.grouping = { start_ms: Date.now() };
   const valid = withPreview.filter((p) => p.preview && !p.preview.isPlaceholder);
   const groups = groupIntoScenes(valid);
+  trace.stages.grouping.end_ms = Date.now();
+  trace.stages.grouping.duration_ms = trace.stages.grouping.end_ms - trace.stages.grouping.start_ms;
+  trace.stages.grouping.scene_count = groups.length;
+  trace.stages.grouping.real_bursts = groups.filter((g) => g.files.length > 1).length;
+  trace.stages.grouping.singletons = groups.filter((g) => g.files.length === 1).length;
+  trace.stages.grouping.corrupt = withPreview.length - valid.length;
 
   // Fotos corruptas (sin preview analizable): REVIEW, no se seleccionan ni se mandan a la IA.
   const keep = new Set();
@@ -163,9 +177,12 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   let resolved = 0;
   onProgress?.(resolved, totalBursts);
 
+  trace.stages.ai_analysis = { start_ms: Date.now(), bursts_total: bursts.length };
   await runPool(bursts, BATCH_CONCURRENCY, async (burst) => {
+    const bStart = Date.now();
     const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
     const groupSizeFor = () => (burst.independent ? 1 : burst.files.length);
+    let burstProvider = null, burstModel = null, burstFallback = false, burstIaCalls = 0;
     try {
       const { data } = await base44.functions.invoke("rawAiSmartSelect", {
         bursts: [{
@@ -183,6 +200,10 @@ export async function runAiBurstSelection(withPreview, onProgress) {
         }],
       });
       const g = data?.groups?.[burst.id];
+      burstProvider = g?._meta?.provider || null;
+      burstModel = g?._meta?.model || null;
+      burstFallback = !!g?._meta?.fallback;
+      burstIaCalls = g?._meta?.ia_calls || 0;
       const rankings = Array.isArray(g?.rankings) ? g.rankings : [];
       const byId = new Map(rankings.map((r) => [String(r.id), r]));
       const category = g?.category || null;
@@ -212,6 +233,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
         });
       });
     } catch {
+      burstFallback = true;
       // Fallo de IA: fallback técnico conservador POR RÁFAGA.
       const fb = technicalFallbackForGroup(burst);
       fb.forEach((m, i) => {
@@ -227,25 +249,51 @@ export async function runAiBurstSelection(withPreview, onProgress) {
         });
       });
     }
+    trace.bursts.push({
+      burst_id: burst.id, independent: burst.independent, photo_count: burst.files.length,
+      start_ms: bStart, end_ms: Date.now(), duration_ms: Date.now() - bStart,
+      provider: burstProvider, model: burstModel, ia_calls: burstIaCalls, fallback: burstFallback,
+    });
     resolved += 1;
     onProgress?.(resolved, totalBursts);
   }, () => {});
+  trace.stages.ai_analysis.end_ms = Date.now();
+  trace.stages.ai_analysis.duration_ms = trace.stages.ai_analysis.end_ms - trace.stages.ai_analysis.start_ms;
 
   // DEDUP entre grupos: pHash detecta candidatos; la IA compara visualmente (momento,
   // expresión, composición, sujeto) y solo rebaja si es un duplicado REAL. Diferencia
   // significativa de momento/expresión/composición → NO se consideran duplicados.
+  trace.stages.dedup = { start_ms: Date.now() };
   await dedupAcrossGroups(keep, meta, withPreview);
+  trace.stages.dedup.end_ms = Date.now();
+  trace.stages.dedup.duration_ms = trace.stages.dedup.end_ms - trace.stages.dedup.start_ms;
 
   // ORDEN: dedup → cobertura por grupo → mínimo 1 TOP_PICK global.
+  trace.stages.coverage = { start_ms: Date.now() };
   const coverage = ensureCoveragePerGroup(keep, meta, withPreview);
-  const fallback = ensureAtLeastOneTopPick(keep, meta, withPreview);
+  trace.stages.coverage.end_ms = Date.now();
+  trace.stages.coverage.duration_ms = trace.stages.coverage.end_ms - trace.stages.coverage.start_ms;
+  trace.stages.coverage.promotions = coverage.promotions?.length || 0;
 
+  trace.stages.fallback = { start_ms: Date.now() };
+  const fallback = ensureAtLeastOneTopPick(keep, meta, withPreview);
+  trace.stages.fallback.end_ms = Date.now();
+  trace.stages.fallback.duration_ms = trace.stages.fallback.end_ms - trace.stages.fallback.start_ms;
+  trace.stages.fallback.used = !!fallback.selection_fallback;
+
+  trace.ended_ms = Date.now();
+  trace.total_duration_ms = trace.ended_ms - trace.started_ms;
+  trace.result = {
+    kept: keep.size,
+    statuses: Array.from(meta.values()).reduce((acc, m) => { acc[m.status] = (acc[m.status] || 0) + 1; return acc; }, {}),
+  };
   return {
     keep, meta,
     selection_fallback: fallback.selection_fallback,
     fallback_reason: fallback.fallback_reason,
     selection_coverage_fallback: coverage.selection_coverage_fallback,
     coverage_promotions: coverage.promotions,
+    trace,
   };
 }
 

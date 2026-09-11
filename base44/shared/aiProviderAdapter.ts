@@ -116,6 +116,7 @@ async function callQwen(cfg: any, opts: InvokeOpts): Promise<any> {
   if (!base) throw new Error("qwen_endpoint no configurado");
   const endpoint = base + "/chat/completions";
   const model = opts.forceModel || cfg?.qwen_model || "qwen3-vl-plus";
+  if (opts._trace) opts._trace.model = model;
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
 
   const content: any[] = [{ type: "text", text: opts.prompt }];
@@ -150,6 +151,7 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
   if (!base) throw new Error("nvidia_endpoint no configurado");
   const endpoint = base + "/chat/completions";
   const model = opts.forceModel || cfg?.nvidia_model || NVIDIA_DEFAULT_MODEL;
+  if (opts._trace) opts._trace.model = model;
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
 
   const content: any[] = [{ type: "text", text: opts.prompt }];
@@ -193,6 +195,7 @@ async function callNvidia(cfg: any, opts: InvokeOpts): Promise<any> {
 async function callGeminiOnce(apiKey: string, cfg: any, opts: InvokeOpts): Promise<any> {
   const base = String(cfg?.gemini_endpoint || GEMINI_DEFAULT_ENDPOINT).trim().replace(/\/+$/, "");
   const model = opts.forceModel || cfg?.gemini_model || GEMINI_DEFAULT_MODEL;
+  if (opts._trace) opts._trace.model = model;
   const endpoint = `${base}/models/${model}:generateContent?key=${apiKey}`;
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
 
@@ -261,6 +264,7 @@ async function callGemini(cfg: any, opts: InvokeOpts): Promise<any> {
 // Punto unico de ruteo. SIN FAILOVER.
 // Despacha a un proveedor concreto. Sin failover (lo gestiona invokeVision).
 async function callProvider(base44: any, provider: string, opts: InvokeOpts): Promise<any> {
+  if (opts._trace) opts._trace.provider = provider;
   if (typeof provider === "string" && provider.startsWith("custom:")) {
     const id = provider.slice("custom:".length);
     console.log(`[aiProvider] task=${opts.task} provider=custom:${id}`);
@@ -285,6 +289,7 @@ async function callProvider(base44: any, provider: string, opts: InvokeOpts): Pr
     throw new Error(`No hay proveedor configurado para task=${opts.task} (active=none)`);
   }
   // base44 (por defecto y retrocompatible)
+  if (opts._trace) opts._trace.model = opts.model || "auto";
   console.log(`[aiProvider] task=${opts.task} provider=base44 model=${opts.model || "auto"}`);
   return base44.integrations.Core.InvokeLLM({
     prompt: opts.prompt,
@@ -389,6 +394,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   } catch {}
   const useExact = exactModel && marked.includes(exactModel);
   const model = useExact ? exactModel : (marked.length ? pickBestVisionModel(marked) : legacy);
+  if (opts._trace) opts._trace.model = model;
   console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${useExact ? "exacto" : marked.length ? "auto" : "legado"})`);
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
   const content: any[] = [{ type: "text", text: opts.prompt }];

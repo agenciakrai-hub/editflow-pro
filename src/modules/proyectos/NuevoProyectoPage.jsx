@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, FileText, Loader2, ArrowLeft } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
@@ -394,10 +395,17 @@ export default function NuevoProyectoPage() {
           technical: it.technical || { sharpness: 0, exposureScore: 0.5, corrupt: false },
         };
       });
-      const { keep, meta } = await selectBursts(aiItems, (d, t) => {
+      const { keep, meta, trace } = await selectBursts(aiItems, (d, t) => {
         setAiDone(d);
         if (typeof t === "number") setAiTotal(t);
       });
+      // Persiste la traza completa de la ejecución en el proyecto para auditarla.
+      const traceProjectId = existing?.projectId || projectIdParam;
+      if (trace && traceProjectId) {
+        base44.entities.Project.update(traceProjectId, { ai_config_snapshot: { selection_trace: trace } }).catch(() => {});
+      } else if (trace) {
+        window.__lastSelectionTrace = trace;
+      }
       setItems((prev) => prev.map((it) => {
         if (!selectedIds.has(it.id)) return it; // solo participan las marcadas
         const m = meta.get(it.id);
