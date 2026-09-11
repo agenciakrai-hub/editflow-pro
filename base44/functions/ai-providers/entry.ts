@@ -429,8 +429,17 @@ export default async function(req: Request): Promise<Response> {
           res = await fetch(`${rec.endpoint}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal });
         } finally { clearTimeout(timer); }
         const data: any = await res.json().catch(() => null);
+        // Si se pide un modelo concreto, se fetchea /models/{id} además para ver si el
+        // endpoint individual declara capacidades que la lista no trae.
+        let single: any = null;
+        if (typeof body.model === "string" && body.model.trim()) {
+          try {
+            const rs = await fetch(`${rec.endpoint}/models/${encodeURIComponent(body.model.trim())}`, { headers: { Authorization: `Bearer ${key}` } });
+            single = { status: rs.status, body: await rs.json().catch(() => null) };
+          } catch (e: any) { single = { error: String(e?.message || e) }; }
+        }
         const arr = (data?.data || data?.models || []).slice(0, limit);
-        return Response.json({ ok: res.ok, status: res.status, endpoint: rec.endpoint, sample: arr, total: (data?.data || data?.models || []).length });
+        return Response.json({ ok: res.ok, status: res.status, endpoint: rec.endpoint, sample: arr, total: (data?.data || data?.models || []).length, single });
       } catch (e: any) {
         return Response.json({ ok: false, reason: String(e?.message || e) });
       }
