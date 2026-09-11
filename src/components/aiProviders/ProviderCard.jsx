@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CheckCircle2, KeyRound, Loader2, Power, RefreshCw, Save, Search, Trash2, XCircle, Zap } from "lucide-react";
+import { CheckCircle2, KeyRound, Loader2, Power, RefreshCw, RotateCw, Save, Search, Trash2, XCircle } from "lucide-react";
 import { checkboxState, taskCandidate } from "@/lib/ai/modelCapabilities";
 
 // Tarjeta de proveedor (unificada). Las casillas de modelo/tarea se habilitan o
@@ -30,37 +30,7 @@ const COL_LABELS = {
   album: "Álbum",
 };
 
-// Imagen de prueba representativa (JPEG 512×384, NO 1×1, NO fotos originales): una
-// escena sintética con formas reconocibles. Se envía como data URL al backend, que la
-// pasa al modelo con el MISMO formato que la producción (image_url). Generada en el
-// navegador; nunca se sube a almacenamiento.
-function makeTestImage() {
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 384;
-  const ctx = canvas.getContext("2d");
-  const g = ctx.createLinearGradient(0, 0, 512, 384);
-  g.addColorStop(0, "#dbeafe");
-  g.addColorStop(1, "#fef3c7");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 512, 384);
-  ctx.fillStyle = "#dc2626";
-  ctx.beginPath();
-  ctx.arc(150, 200, 70, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "#2563eb";
-  ctx.fillRect(300, 130, 140, 140);
-  ctx.fillStyle = "#16a34a";
-  ctx.beginPath();
-  ctx.moveTo(400, 330);
-  ctx.lineTo(470, 210);
-  ctx.lineTo(330, 210);
-  ctx.closePath();
-  ctx.fill();
-  return canvas.toDataURL("image/jpeg", 0.85);
-}
-
-export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey, onProbeVision }) {
+export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey }) {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState("todos");
   const [selDraft, setSelDraft] = useState(provider.seleccion_models || []);
@@ -70,7 +40,6 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
   const [albDraft, setAlbDraft] = useState(provider.album_models || []);
   const [showKey, setShowKey] = useState(false);
   const [newKey, setNewKey] = useState("");
-  const [probing, setProbing] = useState(null); // model id en sondeo
 
   const models = provider.available_models || [];
   const metaMap = useMemo(() => {
@@ -139,16 +108,6 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
     }
   };
 
-  const probeVision = async (model) => {
-    setProbing(model);
-    try {
-      const image = makeTestImage();
-      await onProbeVision(provider.id, model, image);
-    } finally {
-      setProbing(null);
-    }
-  };
-
   return (
     <div className="rounded-xl border border-border bg-card p-5 space-y-4">
       <div className="flex items-start gap-3">
@@ -175,9 +134,13 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
           {provider.last_reason && <p className="mt-0.5 text-xs text-red-500">{provider.last_reason}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button onClick={() => onRetest(provider.id)} disabled={busy("retest")} title="Re-test de conexión (refresca modelos y capacidades declaradas; conserva las pruebas empíricas)"
+          <button onClick={() => onRetest(provider.id)} disabled={busy("retest") || busy("reclassify")} title="Re-test: refresca modelos y clasifica capacidades automáticamente (A→B→C). Los modelos ya clasificados no se vuelven a probar."
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40">
             {busy("retest") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />} Re-test
+          </button>
+          <button onClick={() => onRetest(provider.id, true)} disabled={busy("retest") || busy("reclassify")} title="Reclasificar: vuelve a sondear TODOS los modelos (incluidos los ya clasificados). Úsalo solo si crees que una clasificación es incorrecta."
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40">
+            {busy("reclassify") ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />} Reclasificar
           </button>
           <button onClick={() => onToggle(provider.id, !provider.enabled)} title={provider.enabled ? "Deshabilitar" : "Habilitar"}
             className="inline-flex items-center justify-center rounded-md border border-border p-1.5 hover:bg-secondary">
@@ -287,16 +250,6 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
                     );
                   })}
                   <div className="flex w-20 items-center justify-center">
-                    {vState === null && (
-                      <button
-                        onClick={() => probeVision(m)}
-                        disabled={probing === m}
-                        title="Probar capacidad de visión con una imagen de prueba representativa (mismo formato que en producción)"
-                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] font-medium hover:bg-secondary disabled:opacity-40"
-                      >
-                        {probing === m ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />} Probar
-                      </button>
-                    )}
                     {vState === false && <XCircle className="h-3.5 w-3.5 text-red-400" title="Visión rechazada" />}
                     {vState === true && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" title="Visión verificada" />}
                   </div>
@@ -319,7 +272,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
               {busy("save") ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Guardar
             </button>
             <p className="text-xs text-muted-foreground">
-              Las casillas se habilitan solo si el modelo es compatible (capacidad verificada o declarada). Los modelos sin verificar deben probarse con «Probar». La selección solo se guarda al pulsar Guardar.
+              Las casillas se habilitan solo si el modelo es compatible (visión verificada o declarada). Los modelos «Sin verificar» se clasifican automáticamente al pulsar Re-test. La selección solo se guarda al pulsar Guardar.
             </p>
           </div>
         </>

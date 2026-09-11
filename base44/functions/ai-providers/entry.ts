@@ -10,7 +10,7 @@ import {
   isGeminiKeyPresent,
   pickBestVisionModel,
 } from '../../shared/aiProviderAdapter.ts';
-import { buildModelsMeta } from '../../shared/modelCapabilities.ts';
+import { resolveCapabilitiesFull } from '../../shared/capabilityResolver.ts';
 
 // Proveedores IA — admin-only. UNA SOLA herramienta de proveedores: se añade un
 // proveedor con endpoint + API key, la función autodetecta el nombre (dominio), normaliza
@@ -92,28 +92,9 @@ async function fetchModels(
   }
 }
 
-// Reconstruye available_models_meta preservando los resultados de pruebas empíricas
-// (probe) de modelos que siguen presentes tras un re-test. Las caps declaradas se
-// re-resuelven desde los metadatos crudos frescos; las caps verificadas por probe se
-// conservan (source='verified', vision true/false, probe_status) para no perder la
-// evidencia empírica al refrescar la lista de modelos.
-function rebuildMetaPreservingProbes(prevMeta: any[] | undefined, rawModels: any[]): any[] {
-  const built = buildModelsMeta(rawModels);
-  if (!Array.isArray(prevMeta) || !prevMeta.length) return built;
-  const prevById = new Map(prevMeta.map((m: any) => [String(m?.id || ''), m]));
-  return built.map((entry: any) => {
-    const p = prevById.get(entry.id);
-    if (!p || p.source !== "verified") return entry;
-    // Conservar la evidencia empírica de visión sobre la caps re-resuelta.
-    return {
-      ...entry,
-      caps: { ...entry.caps, vision: p.caps?.vision ?? entry.caps.vision },
-      source: "verified",
-      probed_at: p.probed_at || null,
-      probe_status: p.probe_status || null,
-    };
-  });
-}
+// La reconstrucción de available_models_meta (preservando true/false y re-sondeando
+// solo null/nuevos) la orquesta resolveCapabilitiesFull (cadena A→B→C) en
+// base44/shared/capabilityResolver.ts. Esta función ya no se necesita aquí.
 
 function maskKey(key: string): string {
   if (!key) return '';
@@ -167,7 +148,7 @@ async function ensureBuiltinRows(base44: any) {
       const check = await fetchModels(endpoint, key).catch(() => null);
       const models = check?.ok ? check.models.map((m: string) => m.replace(/^models\//, '')) : [def.model];
       const rawModels = check?.ok ? check.raw.map((m: any) => ({ ...m, id: String(m?.id || m?.name || '').replace(/^models\//, '') })) : [];
-      const meta = check?.ok ? buildModelsMeta(rawModels) : [];
+      const meta = check?.ok ? await resolveCapabilitiesFull(rawModels, undefined, endpoint, key, { skipProbe: true }) : [];
       const marks = [models.includes(def.model) ? def.model : models[0]];
       const rec: any = await base44.asServiceRole.entities.CustomAiProvider.create({
         name: def.name,
@@ -334,7 +315,7 @@ export default async function(req: Request): Promise<Response> {
         const models = check.models.map((m: string) => m.replace(/^models\//, ''));
         const rawModels = check.raw.map((m: any) => ({ ...m, id: String(m?.id || m?.name || '').replace(/^models\//, '') }));
         // Capacidades resueltas desde metadatos declarados (fuente única de verdad).
-        const meta = buildModelsMeta(rawModels);
+        const meta = await resolveCapabilitiesFull(rawModels, undefined, endpoint, apiKey);
         // Preferencia del proyecto: los motores Gemini se limitan a gemini-2.5-flash.
         const flash = models.includes('gemini-2.5-flash') ? ['gemini-2.5-flash'] : [];
         const rec = await base44.asServiceRole.entities.CustomAiProvider.create({
@@ -393,7 +374,7 @@ export default async function(req: Request): Promise<Response> {
       const updated = await base44.asServiceRole.entities.CustomAiProvider.update(id, {
         api_key: apiKey,
         available_models: models,
-        available_models_meta: rebuildMetaPreservingProbes(rec.available_models_meta, rawModels),
+        available_models_meta: await resolveCapabilitiesFull(rawModels, rec.available_models_meta, rec.endpoint, apiKey),
         last_ok: true,
         last_reason: '',
         last_checked: new Date().toISOString(),
@@ -441,10 +422,10 @@ export default async function(req: Request): Promise<Response> {
       if (check.ok) {
         const rawModels = check.raw.map((m: any) => ({ ...m, id: String(m?.id || m?.name || '').replace(/^models\//, '') }));
         patch.available_models = check.models.map((m: string) => m.replace(/^models\//, ''));
-        // Re-resuelve caps declaradas y CONSERVA las pruebas empíricas (probe) de
-        // modelos que siguen presentes: no se pierde la evidencia verificada al
-        // refrescar la lista.
-        patch.available_models_meta = rebuildMetaPreservingProbes(rec.available_models_meta, rawModels);
+        // Cadena A→B→C: re-resuelve caps declaradas (A), cross-ref OpenRouter (B) y
+        // sondea automáticamente los modelos que siguen null (C). CONSERVA true/false
+        // de modelos ya clasificados (no los re-sondea). force=true los reclasifica todos.
+        patch.available_models_meta = await resolveCapabilitiesFull(rawModels, rec.available_models_meta, rec.endpoint, effectiveKey(rec), { forceReprobe: !!body.force });
       }
       const updated = await base44.asServiceRole.entities.CustomAiProvider.update(id, patch);
       return Response.json({ ok: check.ok, reason: check.reason, provider: maskProvider(updated), total_models: check.models.length });

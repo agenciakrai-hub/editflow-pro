@@ -82,15 +82,15 @@ export default function AIProviders() {
     setBusyAction(null);
   };
 
-  const retestProvider = async (id) => {
-    setBusyAction({ id, action: "retest" });
+  const retestProvider = async (id, force = false) => {
+    setBusyAction({ id, action: force ? "reclassify" : "retest" });
     try {
-      const res = await base44.functions.invoke("ai-providers", { action: "retest", id });
+      const res = await base44.functions.invoke("ai-providers", { action: "retest", id, force });
       const data = res?.data ?? res;
       if (data.provider) setProviders((prev) => prev.map((p) => (p.id === id ? data.provider : p)));
       toast({
-        title: data.ok ? "Conexión correcta" : "Falló la conexión",
-        description: data.ok ? `${data.total_models} modelos detectados` : data.reason,
+        title: data.ok ? (force ? "Reclasificación completa" : "Re-test completo") : "Falló la conexión",
+        description: data.ok ? `${data.total_models} modelos — capacidades clasificadas automáticamente` : data.reason,
         variant: data.ok ? "default" : "destructive",
       });
     } catch (e) {
@@ -145,32 +145,6 @@ export default function AIProviders() {
     }
     setBusyAction(null);
     return ok;
-  };
-
-  // Probar capacidad de visión de un modelo (sondeo empírico bajo demanda). Envía
-  // una imagen de prueba representativa (generada en el navegador) al backend, que la
-  // pasa al modelo con el mismo formato que la producción y persiste el resultado en
-  // available_models_meta (caché). Refresca la lista de proveedores para reflejar la
-  // casilla habilitada/deshabilitada.
-  const probeVision = async (id, model, image) => {
-    setBusyAction({ id, action: "probe" });
-    try {
-      const res = await base44.functions.invoke("ai-providers", { action: "probe-vision", id, model, image });
-      const data = res?.data ?? res;
-      if (data.vision === true) {
-        toast({ title: "Visión verificada", description: `${model}: compatible con imágenes. Ya puedes marcarlo para Selección/Ajustes/Álbum.` });
-      } else if (data.vision === false) {
-        toast({ title: "Visión no soportada", description: `${model} rechazó la imagen (modelo de texto). Casilla deshabilitada.`, variant: "destructive" });
-      } else {
-        toast({ title: "Prueba no concluyente", description: `${model}: ${data.reason || "error"}. NO se clasificó como sin visión — repítelo más tarde.`, variant: "destructive" });
-      }
-      const resList = await base44.functions.invoke("ai-providers", { action: "list" });
-      const dataList = resList?.data ?? resList;
-      setProviders(Array.isArray(dataList?.providers) ? dataList.providers : []);
-    } catch (e) {
-      toast({ title: "Falló la prueba de capacidad", description: e.message, variant: "destructive" });
-    }
-    setBusyAction(null);
   };
 
   const save = async () => {
@@ -288,7 +262,6 @@ export default function AIProviders() {
             onToggle={toggleProvider}
             onDelete={deleteProvider}
             onUpdateKey={updateKey}
-            onProbeVision={probeVision}
           />
         ))}
       </section>
