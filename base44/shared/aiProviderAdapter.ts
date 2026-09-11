@@ -41,6 +41,13 @@ interface InvokeOpts {
   forceModel?: string;
 }
 
+// Error tipado para fallos de resolución de modelo (modelo no marcado, no vision-capable
+// o sin modelos válidos para la tarea). Se propaga como error EXPLÍCITO y auditable;
+// nunca como sustitución silenciosa por otro modelo.
+class ModelResolutionError extends Error {
+  constructor(msg: string) { super(msg); this.name = "ModelResolutionError"; }
+}
+
 // Lee el unico registro de configuracion (admin-only entity, accedido via service role).
 async function getConfig(base44: any): Promise<any> {
   try {
@@ -57,6 +64,20 @@ export async function activeProviderFor(base44: any, task: AiTask): Promise<stri
   const field: any = task === "seleccion" ? cfg.active_seleccion : cfg.active_ajustes;
   if (typeof field === "string" && field.trim()) return field.trim();
   return "base44";
+}
+
+// Devuelve el proveedor activo y el MODELO EXACTO configurado para una tarea. El modelo
+// exacto (active_model_seleccion/ajustes) es la fuente de verdad del usuario: si está
+// fijado, invokeVision NO hace failover (no sustituye el modelo por otro proveedor).
+async function getTaskConfig(base44: any, task: AiTask): Promise<{ active: string; exact: string }> {
+  const cfg = await getConfig(base44);
+  if (!cfg) return { active: "base44", exact: "" };
+  const active: any = task === "seleccion" ? cfg.active_seleccion : cfg.active_ajustes;
+  const exact: any = task === "seleccion" ? cfg.active_model_seleccion : cfg.active_model_ajustes;
+  return {
+    active: (typeof active === "string" && active.trim()) ? active.trim() : "base44",
+    exact: (typeof exact === "string") ? exact.trim() : "",
+  };
 }
 
 // Parse robusto del JSON que devuelve el modelo (string en choices[0].message.content).
@@ -314,7 +335,9 @@ async function buildFailoverChain(base44: any, active: string, task?: AiTask): P
   if (active === "gemini") return ["gemini"];
   const chain: string[] = [];
   const push = (p: string) => { if (p && p !== "none" && !chain.includes(p)) chain.push(p); };
-  push(active);
+  // Selección Inteligente NUNCA usa Base44 AI (Core.InvokeLLM): se excluye siempre, incluso
+  // si quedó como activo (legacy). El fallback tampoco lo incluye.
+  if (!(task === "seleccion" && active === "base44")) push(active);
   try {
     const customs = await base44.asServiceRole.entities.CustomAiProvider.list();
     for (const c of (Array.isArray(customs) ? customs : [])) {
@@ -334,33 +357,70 @@ async function buildFailoverChain(base44: any, active: string, task?: AiTask): P
   return chain;
 }
 
-// Punto unico de ruteo. CON FAILOVER: si el proveedor activo falla, reintenta con el
-// siguiente proveedor habilitado de la cadena. Si se fuerza un proveedor
-// (forceProvider), no hay failover (comportamiento original garantizado).
+// Punto unico de ruteo. CON FAILOVER EXPLÍCITO y AUDITABLE: cada intento se registra en
+// opts._trace.attempts (proveedor, modelo, ok, error, http_status, duración). Si el
+// usuario fijó un MODELO EXACTO, NO hay failover (no se sustituye el modelo); si falla,
+// se lanza un error explícito. Si se fuerza un proveedor (forceProvider), un único
+// intento sin failover. La traza nunca oculta un fallback: expone proveedor/modelo
+// configurado, intentos, failover, proveedor/modelo finales y motivo.
 export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
-  // Traza de intentos: distingue proveedor activo, cada intento (con su duración), qué
-  // proveedor falló, el motivo y el proveedor que finalmente respondió (provider/model
-  // los fija callProvider/callCustom). Solo diagnóstico; no cambia ningún comportamiento.
+  if (opts._trace && !Array.isArray(opts._trace.attempts)) opts._trace.attempts = [];
+  // Modo forzado (forceProvider): un único intento, sin failover.
   if (opts.forceProvider) {
-    if (opts._trace) { opts._trace.active_provider = opts.forceProvider; if (!Array.isArray(opts._trace.attempts)) opts._trace.attempts = []; }
-    return callProvider(base44, opts.forceProvider, opts);
+    const provider = opts.forceProvider;
+    if (opts._trace) opts._trace.active_provider = provider;
+    const t0 = Date.now();
+    try {
+      const out = await callProvider(base44, provider, opts);
+      if (opts._trace) {
+        opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: true, http_status: opts._trace.http_status ?? null, latency_ms: Date.now() - t0 });
+        opts._trace.failover = false;
+        opts._trace.final_provider = provider;
+        opts._trace.final_model = opts._trace.model || null;
+      }
+      return out;
+    } catch (e: any) {
+      if (opts._trace) opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: false, error: String(e?.message || e).slice(0, 300), http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0 });
+      throw e;
+    }
   }
-  const active = await activeProviderFor(base44, opts.task);
-  const chain = await buildFailoverChain(base44, active, opts.task);
-  if (opts._trace) { opts._trace.active_provider = active; if (!Array.isArray(opts._trace.attempts)) opts._trace.attempts = []; }
+  const { active, exact } = await getTaskConfig(base44, opts.task);
+  if (opts._trace) { opts._trace.active_provider = active; opts._trace.configured_model = exact || "(auto)"; }
+  // MODELO EXACTO fijado por el usuario: NO hay failover. Se intenta ÚNICAMENTE el
+  // proveedor activo con ese modelo. Si falla, se registra el error y se lanza — nunca
+  // se sustituye silenciosamente por otro modelo/proveedor.
+  const allowFailover = !exact;
+  const chain = allowFailover ? await buildFailoverChain(base44, active, opts.task) : [active];
   let lastErr: any;
   for (const provider of chain) {
     const t0 = Date.now();
     try {
       const out = await callProvider(base44, provider, opts);
-      if (opts._trace) opts._trace.attempts.push({ provider, ok: true, latency_ms: Date.now() - t0 });
+      const m = opts._trace?.model || null;
+      if (opts._trace) opts._trace.attempts.push({ provider, model: m, ok: true, http_status: opts._trace.http_status ?? null, latency_ms: Date.now() - t0 });
+      if (opts._trace) {
+        opts._trace.failover = opts._trace.attempts.length > 1;
+        opts._trace.final_provider = provider;
+        opts._trace.final_model = m;
+        opts._trace.failover_reason = null;
+      }
       return out;
     } catch (e: any) {
       const msg = String(e?.message || e);
-      console.log(`[aiProvider] failover: provider=${provider} fallo: ${msg}`);
-      if (opts._trace) opts._trace.attempts.push({ provider, ok: false, error: msg.slice(0, 300), latency_ms: Date.now() - t0 });
+      const m = opts._trace?.model || null;
+      if (opts._trace) opts._trace.attempts.push({ provider, model: m, ok: false, error: msg.slice(0, 300), http_status: e?.httpStatus ?? opts._trace?.http_status ?? null, latency_ms: Date.now() - t0 });
+      console.log(`[aiProvider] ${allowFailover ? "failover" : "exact-model (sin failover)"}: provider=${provider} fallo: ${msg}`);
       lastErr = e;
     }
+  }
+  if (opts._trace) {
+    opts._trace.failover = allowFailover && opts._trace.attempts.length > 1;
+    opts._trace.final_provider = null;
+    opts._trace.final_model = null;
+    opts._trace.failover_reason = lastErr ? String(lastErr?.message || lastErr).slice(0, 300) : "todos los proveedores fallaron";
+  }
+  if (!allowFailover && lastErr) {
+    throw new Error(`El modelo exacto configurado (${exact}) falló en el proveedor activo (${active}) y NO se sustituyó. Causa: ${String(lastErr?.message || lastErr).slice(0, 300)}`);
   }
   throw lastErr || new Error(`Todos los proveedores fallaron para task=${opts.task}`);
 }
@@ -388,31 +448,55 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   const base = String(rec.endpoint || "").trim().replace(/\/+$/, "");
   if (!base) throw new Error(`El proveedor "${rec.name}" no tiene endpoint configurado`);
   const endpoint = base + "/chat/completions";
-  // Modelo por tarea: usa SOLO los modelos que el administrador marcó para esta
-  // tarea en Proveedores IA (seleccion_models / ajustes_models). Con varios marcados,
-  // "Auto" elige el mejor modelo de visión de la lista. Fallback: el modelo legado V1
-  // (proveedores con modelo único). Nunca usa modelos fuera de la lista marcada.
+  // Resolución DETERMINISTA del modelo para una tarea de VISIÓN. Reglas (auditable):
+  // - Modelo EXACTO (active_model_seleccion/ajustes): debe estar marcado Y ser
+  //   vision-capable. Si no está marcado o no soporta imágenes → error explícito; NO se
+  //   sustituye silenciosamente ni se ejecuta con un modelo de texto.
+  // - Auto: SOLO entre los marcados que sean vision-capable. Si ninguno → error explícito.
+  // - Legado V1: sólo si es vision-capable.
+  // NUNCA return models[0]: un modelo de texto no puede seleccionarse para visión.
+  const taskLabel = opts.task === "ajustes" ? "Ajustes IA" : "Selección IA";
   const markedRaw: any = opts.task === "ajustes" ? rec.ajustes_models : rec.seleccion_models;
   const marked = (Array.isArray(markedRaw) ? markedRaw : [])
     .map((m: any) => String(m || "").trim())
     .filter(Boolean);
   const legacy = String(rec.model || "").trim();
-  if (!marked.length && !legacy) {
-    throw new Error(`El proveedor "${rec.name}" no tiene modelos marcados para ${opts.task === "ajustes" ? "Ajustes IA" : "Selección IA"} (márcalos en Proveedores IA)`);
-  }
-  // Modelo EXACTO por tarea: el que el administrador eligió en Proveedores IA →
-  // "Modelo exacto". Se usa SIEMPRE que pertenezca a la lista marcada del proveedor;
-  // si está vacío o desactualizado, se usa el automático (mejor modelo marcado).
   let exactModel = "";
   try {
     const cfg = await getConfig(base44);
     const exactRaw = opts.task === "ajustes" ? cfg?.active_model_ajustes : cfg?.active_model_seleccion;
     exactModel = String(exactRaw || "").trim();
   } catch {}
-  const useExact = exactModel && marked.includes(exactModel);
-  const model = useExact ? exactModel : (marked.length ? pickBestVisionModel(marked) : legacy);
-  if (opts._trace) opts._trace.model = model;
-  console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${useExact ? "exacto" : marked.length ? "auto" : "legado"})`);
+  let model: string;
+  let modelSource: "exacto" | "auto" | "legado" = "auto";
+  if (exactModel) {
+    if (!marked.includes(exactModel)) {
+      throw new ModelResolutionError(`El modelo exacto "${exactModel}" no está marcado para ${taskLabel} en el proveedor "${rec.name}". Márcalo en Proveedores IA o elige "Auto".`);
+    }
+    if (!isVisionModel(exactModel)) {
+      throw new ModelResolutionError(`El modelo exacto "${exactModel}" no soporta entrada de imágenes; no puede usarse para ${taskLabel}. Selecciona un modelo multimodal (vision-capable).`);
+    }
+    model = exactModel;
+    modelSource = "exacto";
+  } else {
+    const visionMarked = marked.filter((m) => isVisionModel(m));
+    if (visionMarked.length) {
+      model = pickBestVisionModel(visionMarked) || visionMarked[0];
+      modelSource = "auto";
+    } else if (legacy && isVisionModel(legacy)) {
+      model = legacy;
+      modelSource = "legado";
+    } else {
+      throw new ModelResolutionError(`Ninguno de los modelos marcados para "${rec.name}" soporta entrada de imágenes. Auto no puede seleccionar un modelo de texto para ${taskLabel}. Marca al menos un modelo vision-capable (gemma-3/4, qwen-vl, gemini, gpt-4o, llava, etc.).`);
+    }
+  }
+  if (opts._trace) { opts._trace.model = model; opts._trace.configured_model = exactModel || "(auto)"; }
+  console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${modelSource})`);
+  // Validación PRE-FLIGHT (antes de enviar imágenes): endpoint http/https y presencia de
+  // imágenes. La clave, el endpoint no vacío y el modelo vision-capable ya se validaron
+  // arriba. Si algo falla aquí, se detecta ANTES de la llamada al proveedor.
+  if (!/^https?:\/\/.+/.test(base)) throw new Error(`El proveedor "${rec.name}" no tiene un endpoint válido (debe empezar por http:// o https://)`);
+  if (!Array.isArray(opts.file_urls) || !opts.file_urls.filter(Boolean).length) throw new Error(`Sin imágenes que enviar a "${rec.name}" para ${taskLabel}`);
   // Google Gemini (endpoint OpenAI-compat de generativelanguage.googleapis.com) NO acepta
   // imágenes como URL http externa en image_url (HTTP 400 INVALID_ARGUMENT): exige imagen
   // INLINE (data URL base64). Se convierten aquí las URLs http a data URL SOLO para este
@@ -444,7 +528,9 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   if (opts._trace) { opts._trace.request_ms = latency; opts._trace.http_status = res.status; opts._trace.endpoint = endpoint; }
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
-    throw new Error(`[${rec.name}] HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
+    const err: any = new Error(`[${rec.name}] HTTP ${res.status} (${latency}ms): ${txt.slice(0, 300)}`);
+    err.httpStatus = res.status;
+    throw err;
   }
   const data: any = await res.json();
   if (opts._trace) {
@@ -494,15 +580,15 @@ export async function testCustomConnection(base44: any, creds: { endpoint?: stri
   }
 }
 
-// Heuristica para elegir el mejor modelo de vision de un proveedor OpenAI-compatible que
-// expone muchos modelos (OpenRouter, OpenAI, etc.). Prioriza modelos conocidos por su
-// calidad en vision; si ninguno coincide, devuelve el primero disponible.
+// Heuristica para ORDENAR modelos de vision conocidos por calidad. SOLO para
+// SUGERENCIAS de la UI (p. ej. detectBestModel). NUNCA se usa para EJECUCION de tareas
+// de vision: para ejecucion se usa pickVisionModel, que descarta los no vision-capable.
 const VISION_MODEL_PRIORITY = [
   "gpt-4o", "gpt-4-turbo", "gpt-4-vision", "gpt-4o-mini",
   "claude-3-opus", "claude-3.5-sonnet", "claude-3-sonnet", "claude-3-haiku",
   "qwen-vl-max", "qwen2.5-vl", "qwen3-vl", "qwen2-vl",
   "gemini-3", "gemini-2", "gemini-1.5",
-  "llava", "vision", "vl", "visual", "image",
+  "llava", "vision", "vl", "visual",
 ];
 export function pickBestVisionModel(models: string[]): string {
   const lower = models.map((m) => String(m || "").toLowerCase());
@@ -511,6 +597,37 @@ export function pickBestVisionModel(models: string[]): string {
     if (idx >= 0) return models[idx];
   }
   return models[0] || "";
+}
+
+// ---- Determinacion de capacidad de vision (EJECUCION) ----
+// Modelos con soporte CONFIRMADO de entrada de imagen (multimodal). Para tareas de
+// vision, Auto SOLO puede elegir modelos que coincidan con estos patrones. Cualquier
+// modelo NO listado se considera SOLO DE TEXTO (conservador): no se selecciona para
+// vision ni se prueba enviandole imagenes. Esto corrige el bug de seleccionar
+// moonshotai/kimi-k3 (texto) para vision: kimi-k3 no coincide con ningun patron.
+const VISION_CAPABLE_PATTERNS: RegExp[] = [
+  /\bgpt-?4o\b/i, /\bgpt-4-vision\b/i, /\bgpt-4-turbo\b/i, /\bgpt-4o-mini\b/i,
+  /\bclaude-3\b/i, /\bclaude-3\.5\b/i, /\bclaude-3\.7\b/i, /\bclaude-sonnet\b/i, /\bclaude-opus\b/i, /\bclaude-haiku\b/i,
+  /\bgemini\b/i,
+  /\bqwen-?vl\b/i, /\bqwen2\.?-?vl\b/i, /\bqwen3-?vl\b/i, /\bqwen-?vision\b/i, /\bvl-?max\b/i, /\bvl-?plus\b/i, /\bvl-?72b\b/i,
+  /\bllava\b/i, /\bpixtral\b/i, /\bminicpm-?v\b/i,
+  /\bgemma-?3\b/i, /\bgemma-?3n\b/i, /\bgemma-?4\b/i,
+  /\bllama-?3\.2-?vision\b/i, /\bllama-?vision\b/i, /\bphi-?3-?vision\b/i, /\bphi-?4-?multimodal\b/i, /\bphi-?4-?v\b/i,
+  /\binternvl\b/i, /\bdeepseek-?vl\b/i, /\bcogvlm\b/i, /\bglm-?4v\b/i,
+  /\bvl\b/i, /\bvision\b/i, /\bmultimodal\b/i,
+];
+// Devuelve true solo si el modelo es reconocido como vision-capable. Desconocido -> false.
+export function isVisionModel(model: string): boolean {
+  if (!model) return false;
+  const m = String(model);
+  return VISION_CAPABLE_PATTERNS.some((re) => re.test(m));
+}
+// Devuelve el mejor modelo vision-capable de la lista, o null si ninguno lo es.
+// NUNCA devuelve un modelo de texto (no hay return models[0] peligroso).
+export function pickVisionModel(models: string[]): string | null {
+  const vision = (Array.isArray(models) ? models : []).filter((m) => isVisionModel(String(m || "")));
+  if (!vision.length) return null;
+  return pickBestVisionModel(vision) || vision[0];
 }
 
 // Detecta el mejor modelo de vision de un proveedor consultando su endpoint /models.

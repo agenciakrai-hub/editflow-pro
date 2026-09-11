@@ -192,6 +192,8 @@ export async function runAiBurstSelection(withPreview, onProgress) {
     const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
     const groupSizeFor = () => (burst.independent ? 1 : burst.files.length);
     let burstProvider = null, burstModel = null, burstFallback = false, burstIaCalls = 0;
+    let beActiveProvider = null, beConfiguredModel = null, beFinalProvider = null, beFinalModel = null;
+    let beProviderFailover = false, beFailoverReason = null, beAttempts = [];
     // Telemetría por llamada (solo medición; no cambia comportamiento). Las previews ya
     // fueron extraídas en Pass 1 (base64 + dimensiones en f.preview); aquí solo se
     // registran bytes/dimensiones/MIME. La conversión base64 ya ocurrió → prep_duration_ms
@@ -249,6 +251,13 @@ export async function runAiBurstSelection(withPreview, onProgress) {
       beTokensIn = g?._meta?.tokens_in ?? null;
       beTokensOut = g?._meta?.tokens_out ?? null;
       beEndpoint = g?._meta?.endpoint ?? null;
+      beActiveProvider = g?._meta?.active_provider ?? null;
+      beConfiguredModel = g?._meta?.configured_model ?? null;
+      beFinalProvider = g?._meta?.final_provider ?? null;
+      beFinalModel = g?._meta?.final_model ?? null;
+      beProviderFailover = !!g?._meta?.provider_failover;
+      beFailoverReason = g?._meta?.failover_reason ?? null;
+      beAttempts = Array.isArray(g?._meta?.attempts) ? g?._meta.attempts : [];
       const rankings = Array.isArray(g?.rankings) ? g.rankings : [];
       const byId = new Map(rankings.map((r) => [String(r.id), r]));
       const category = g?.category || null;
@@ -305,6 +314,10 @@ export async function runAiBurstSelection(withPreview, onProgress) {
       burst_id: burst.id, independent: burst.independent, photo_count: burst.files.length,
       start_ms: bStart, end_ms: Date.now(), duration_ms: Date.now() - bStart,
       provider: burstProvider, model: burstModel, ia_calls: burstIaCalls, fallback: burstFallback,
+      active_provider: beActiveProvider, configured_model: beConfiguredModel,
+      final_provider: beFinalProvider, final_model: beFinalModel,
+      provider_failover: beProviderFailover, failover_reason: beFailoverReason,
+      attempts: beAttempts,
       concurrency_at_start: concAtStart,
       prep: { duration_ms: prepDurationMs, photos: prepPhotos },
       transport: { invoke_ms: invokeDurationMs, upload_ms: beUploadMs, base64_convert_ms: beBase64Ms },

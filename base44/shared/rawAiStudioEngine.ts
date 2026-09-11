@@ -184,6 +184,20 @@ export async function uploadPreviewBatch(
         for (const p of previews) urls[p.id] = `data:image/jpeg;base64,${p.previewBase64}`;
         return urls;
       }
+      // Proveedores personalizados: NVIDIA NIM y Gemini (generativelanguage) aceptan y
+      // prefieren data URLs inline (evita que el proveedor tenga que fetchear una URL http
+      // externa, que puede colgarse o fallar). Otros custom (OpenRouter, etc.) siguen
+      // usando UploadFile (URL http).
+      if (typeof provider === "string" && provider.startsWith("custom:")) {
+        const id = provider.slice("custom:".length);
+        const rec = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
+        const ep = String(rec?.endpoint || "").toLowerCase();
+        if (/integrate\.api\.nvidia\.com/.test(ep) || /generativelanguage\.googleapis\.com/.test(ep)) {
+          const urls: Record<string, string> = {};
+          for (const p of previews) urls[p.id] = `data:image/jpeg;base64,${p.previewBase64}`;
+          return urls;
+        }
+      }
     } catch {
       // Si no se puede leer la config, se cae al flujo por defecto (UploadFile).
     }

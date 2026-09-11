@@ -528,6 +528,7 @@ export default async function(req: Request): Promise<Response> {
       let iaCalls = 0;
       let finalistIds: string[] = [];
       let finalRan = false;
+      const trace: any = {};
 
       try {
         const tUpload0 = Date.now();
@@ -538,7 +539,6 @@ export default async function(req: Request): Promise<Response> {
         );
         const uploadMs = Date.now() - tUpload0;
 
-        const trace: any = {};
         let result: any;
         if (burst.independent) {
           // Lote de singletons: cada foto juzgada por mérito propio, sin límite de un
@@ -626,6 +626,13 @@ export default async function(req: Request): Promise<Response> {
           _meta: {
             ia_calls: iaCalls, finalist_ids: finalistIds, final_ran: finalRan, fallback: false,
             provider: trace.provider || null, model: trace.model || null,
+            active_provider: trace.active_provider ?? null,
+            configured_model: trace.configured_model ?? null,
+            final_provider: trace.final_provider ?? null,
+            final_model: trace.final_model ?? null,
+            provider_failover: !!trace.failover,
+            failover_reason: trace.failover_reason ?? null,
+            attempts: Array.isArray(trace.attempts) ? trace.attempts : [],
             upload_ms: uploadMs,
             request_ms: trace.request_ms ?? null,
             base64_convert_ms: trace.base64_convert_ms ?? null,
@@ -640,7 +647,7 @@ export default async function(req: Request): Promise<Response> {
         // Fallback técnico conservador (no simula decisión IA). Se registra el motivo
         // para que la traza/logs permitan auditar POR QUÉ falló la IA del burst.
         console.log(`[rawAiSmartSelect] burst=${burstId} fallo de IA: ${String(e?.message || e)}`);
-        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null, upload_ms: null, request_ms: null, base64_convert_ms: null, parse_ms: null, http_status: null, tokens_in: null, tokens_out: null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
+        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null, active_provider: trace.active_provider ?? null, configured_model: trace.configured_model ?? null, final_provider: null, final_model: null, provider_failover: false, failover_reason: String(e?.message || e).slice(0, 300), attempts: Array.isArray(trace.attempts) ? trace.attempts : [], upload_ms: null, request_ms: null, base64_convert_ms: null, parse_ms: null, http_status: null, tokens_in: null, tokens_out: null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
       }
     });
 
