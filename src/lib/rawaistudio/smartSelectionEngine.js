@@ -444,8 +444,9 @@ function fallbackScoreOf(m, p) {
 //   2. Si 0 TOP_PICK pero hay SELECT → promocionar el SELECT de mayor puntuación a TOP_PICK.
 //   3. Si tampoco hay SELECT → elegir la mejor candidata no rechazada (REVIEW) por
 //      puntuación y promocionarla a TOP_PICK (implica SELECT/5★/verde/cola de edición).
-//   4. Si todo está REJECT → promocionar la de mayor puntuación de todas (último recurso).
-// Devuelve { selection_fallback, fallback_reason } y marca la foto promocionada.
+//   4. Si todo está REJECT (o corrupt) → NO se fuerza ningún TOP_PICK: se registra como
+//      caso excepcional (exceptional=true) para revisión humana. Nunca se promueve un REJECT.
+// Devuelve { selection_fallback, fallback_reason, exceptional } y marca la foto promocionada.
 function ensureAtLeastOneTopPick(keep, meta, withPreview) {
   const byId = new Map(withPreview.map((p) => [p.id, p]));
   const entries = Array.from(meta.entries());
@@ -478,9 +479,11 @@ function ensureAtLeastOneTopPick(keep, meta, withPreview) {
 
 // GARANTÍA de cobertura por grupo/ráfaga (post-procesado, sin IA, sin créditos):
 // cada grupo de fotos similares debe tener al menos 1 foto seleccionada. Solo
-// AÑADE representantes; nunca quita selecciones existentes de Qwen. Si un grupo no
-// tiene ninguna TOP_PICK/SELECT, promociona la mejor candidata del grupo a SELECT
-// (preferimos no-REJECT; si todo es REJECT, último recurso la mejor de todas).
+// AÑADE representantes; nunca quita selecciones existentes. Si un grupo no tiene
+// ninguna TOP_PICK/SELECT, promociona la mejor candidata NO RECHAZADA del grupo a
+// SELECT. Si TODO el grupo está REJECT, NO se inventa ninguna selección: se registra
+// el grupo como excepcional (exceptional_groups) para revisión humana. Nunca se
+// promueve un REJECT a SELECT/REVIEW para cumplir cobertura.
 // Trazabilidad: selection_coverage_fallback=true y, por promoción,
 // coverage_fallback_group / coverage_fallback_photo / coverage_fallback_reason.
 function ensureCoveragePerGroup(keep, meta, withPreview) {
