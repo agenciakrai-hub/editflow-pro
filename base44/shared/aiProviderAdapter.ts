@@ -491,12 +491,23 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   // Si el modelo elegido falla en runtime (HTTP 429/500/timeout), se reintenta con el
   // siguiente modelo marcado y verificado vision-capable del MISMO proveedor. NUNCA se
   // salta a otro proveedor: el proveedor activo es el único responsable.
-  // Orden: modelo exacto (si está fijado y es válido) → resto de marcados verificados.
-  // forceModel (album-engine): modelo forzado por el llamador, sin failover de modelo.
+  //
+  // AUTO-DESCUBRIMIENTO: si TODOS los modelos marcados fallan, se intentan automáticamente
+  // otros modelos verificados vision-capable del mismo proveedor que NO estén marcados.
+  // Si uno de estos tiene éxito, se marca automáticamente para esa herramienta (se añade a
+  // seleccion_models / ajustes_models) para que esté disponible la próxima vez que se use
+  // ese proveedor con esa herramienta. Si el usuario lo desmarca o cambia manualmente
+  // después, ese cambio manual prevalece (la UI sobrescribe la lista completa).
+  //
+  // Orden: modelo exacto (si está fijado y es válido) → marcados verificados →
+  //        auto-descubiertos (no marcados, verificados vision-capable).
+  // forceModel (album-engine): modelo forzado por el llamador, sin failover ni auto.
   const trueMarked = marked.filter((m: string) => capVisionOf(m) === true);
-  let modelChain: string[] = [];
+  let primaryChain: string[] = [];
+  let skipAuto = false;
   if (opts.forceModel) {
-    modelChain = [opts.forceModel];
+    primaryChain = [opts.forceModel];
+    skipAuto = true;
   } else if (exactModel) {
     if (!marked.includes(exactModel)) {
       throw new ModelResolutionError(`El modelo exacto "${exactModel}" no está marcado para ${taskLabel} en el proveedor "${rec.name}". Márcalo en Proveedores IA o elige "Auto".`);
@@ -508,12 +519,19 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     if (cv === null) {
       throw new ModelResolutionError(`El modelo exacto "${exactModel}" NO está verificado para visión. ${taskLabel} requiere una capacidad confirmada. Pulsa "Probar capacidad" en Proveedores IA para verificarlo antes de ejecutar.`);
     }
-    modelChain = [exactModel, ...trueMarked.filter((m: string) => m !== exactModel)];
+    primaryChain = [exactModel, ...trueMarked.filter((m: string) => m !== exactModel)];
   } else {
-    modelChain = trueMarked;
+    primaryChain = trueMarked;
   }
-  if (!modelChain.length) {
-    throw new ModelResolutionError(`"${rec.name}" no tiene modelos marcados y verificados como compatibles con ${taskLabel}. Marca al menos un modelo en Proveedores IA y pulsa "Probar capacidad" para confirmar su capacidad de visión antes de ejecutar.`);
+  // Cadena secundaria (auto-descubrimiento): modelos verificados vision-capable del
+  // proveedor que NO están marcados para esta tarea. Solo se intentan si la primaria falla.
+  const markedSet = new Set(marked);
+  const autoChain: string[] = skipAuto ? [] : metaList
+    .filter((e: any) => e?.caps?.vision === true && !markedSet.has(String(e?.id || "")))
+    .map((e: any) => String(e?.id || ""))
+    .filter(Boolean);
+  if (!primaryChain.length && !autoChain.length) {
+    throw new ModelResolutionError(`"${rec.name}" no tiene modelos marcados ni verificados como compatibles con ${taskLabel}. Marca al menos un modelo en Proveedores IA y pulsa "Probar capacidad" para confirmar su capacidad de visión antes de ejecutar.`);
   }
   if (opts._trace) { opts._trace.configured_model = exactModel || "(auto)"; }
   // Validación PRE-FLIGHT (antes de enviar imágenes): endpoint http/https y presencia de
@@ -539,15 +557,20 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     }));
     if (opts._trace) opts._trace.base64_convert_ms = Date.now() - tB64;
   }
-  // Intenta cada modelo del proveedor en orden. Si uno falla (429/500/timeout), reintenta
-  // con el siguiente modelo del MISMO proveedor. NUNCA salta a otro proveedor. La traza
-  // registra cada intento (modelo, ok, error, http_status, latencia).
+  // Intenta cada modelo: primero los marcados (primaryChain), luego los auto-descubiertos
+  // (autoChain). Si uno falla (429/500/timeout), reintenta con el siguiente del MISMO
+  // proveedor. NUNCA salta a otro proveedor. Si un modelo auto-descubierto tiene éxito, se
+  // marca automáticamente para esa herramienta. La traza registra cada intento.
+  const fullChain: Array<{ model: string; auto: boolean }> = [
+    ...primaryChain.map((m) => ({ model: m, auto: false })),
+    ...autoChain.map((m) => ({ model: m, auto: true })),
+  ];
   let lastErr: any;
-  for (let mi = 0; mi < modelChain.length; mi++) {
-    const model = modelChain[mi];
-    const isLastModel = mi === modelChain.length - 1;
+  for (let mi = 0; mi < fullChain.length; mi++) {
+    const { model, auto } = fullChain[mi];
+    const isLastModel = mi === fullChain.length - 1;
     if (opts._trace) opts._trace.model = model;
-    console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${mi + 1}/${modelChain.length})${mi > 0 ? " failover-modelo" : ""}`);
+    console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${mi + 1}/${fullChain.length})${mi > 0 ? " failover-modelo" : ""}${auto ? " auto-descubierto" : ""}`);
     const content: any[] = [{ type: "text", text: opts.prompt }];
     for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
     const body = { model, messages: [{ role: "user", content }], stream: false };
@@ -575,11 +598,27 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       const tParse = Date.now();
       const parsed = parseJsonContent(contentOut);
       if (opts._trace) opts._trace.parse_ms = Date.now() - tParse;
-      if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: true, http_status: res.status, latency_ms: latency });
+      if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: true, http_status: res.status, latency_ms: latency, auto_discovered: auto });
+      // AUTO-DESCUBRIMIENTO: si un modelo no marcado tuvo éxito, se marca automáticamente
+      // para esta herramienta en el proveedor. Read-modify-write fresco para no perder
+      // otros cambios concurrentes (solo se añade el modelo si no estaba ya presente).
+      if (auto) {
+        try {
+          const fresh: any = await base44.asServiceRole.entities.CustomAiProvider.get(customId);
+          const listKey: string = opts.task === "ajustes" ? "ajustes_models" : "seleccion_models";
+          const current: string[] = Array.isArray(fresh?.[listKey]) ? fresh[listKey] : [];
+          if (!current.includes(model)) {
+            await base44.asServiceRole.entities.CustomAiProvider.update(customId, { [listKey]: [...current, model] });
+            console.log(`[aiProvider] auto-descubrimiento: "${model}" marcado automaticamente para ${taskLabel} en "${rec.name}"`);
+          }
+        } catch (persistErr: any) {
+          console.log(`[aiProvider] auto-descubrimiento: no se pudo persistir "${model}": ${String(persistErr?.message || persistErr).slice(0, 200)}`);
+        }
+      }
       return parsed;
     } catch (e: any) {
       const msg = String(e?.message || e).slice(0, 300);
-      if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0 });
+      if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0, auto_discovered: auto });
       console.log(`[aiProvider] modelo ${model} fallo: ${msg}${isLastModel ? " (sin mas modelos en este proveedor)" : ""}`);
       lastErr = e;
     }
