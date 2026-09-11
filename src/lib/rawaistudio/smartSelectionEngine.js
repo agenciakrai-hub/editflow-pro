@@ -268,6 +268,8 @@ export async function runAiBurstSelection(withPreview, onProgress) {
           rejectReasons: r?.reject_reasons || [],
           reason,
           confidence: r?.scores?.confidence ?? null,
+          confidenceTier: r?.confidence_tier || "UNCERTAIN_REVIEW",
+          comparedWith: burst.independent ? [] : burst.files.map((f2) => f2.id).filter((id2) => id2 !== f.id),
           category,
           groupRank,
           complementary: !burst.independent && keepIds.size > 1 && keepIds.has(f.id) && status !== "TOP_PICK",
@@ -288,7 +290,8 @@ export async function runAiBurstSelection(withPreview, onProgress) {
         meta.set(f.id, {
           groupId: groupIdFor(f), groupSize: groupSizeFor(), status: m.status,
           scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
-          confidence: m.confidence, category: m.category, groupRank: burst.independent ? 1 : m.groupRank,
+          confidence: m.confidence, confidenceTier: "UNCERTAIN_REVIEW", comparedWith: [],
+          category: m.category, groupRank: burst.independent ? 1 : m.groupRank,
           complementary: m.complementary, category_note: m.category_note,
           analysisComplete: m.analysis_complete, missingDimensions: m.missing_dimensions,
           previewWarning: false,
@@ -331,18 +334,21 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   trace.stages.coverage.end_ms = Date.now();
   trace.stages.coverage.duration_ms = trace.stages.coverage.end_ms - trace.stages.coverage.start_ms;
   trace.stages.coverage.promotions = coverage.promotions?.length || 0;
+  trace.stages.coverage.exceptional_groups = coverage.exceptional_groups || [];
 
   trace.stages.fallback = { start_ms: Date.now() };
   const fallback = ensureAtLeastOneTopPick(keep, meta, withPreview);
   trace.stages.fallback.end_ms = Date.now();
   trace.stages.fallback.duration_ms = trace.stages.fallback.end_ms - trace.stages.fallback.start_ms;
   trace.stages.fallback.used = !!fallback.selection_fallback;
+  trace.stages.fallback.exceptional = !!fallback.exceptional;
 
   trace.ended_ms = Date.now();
   trace.total_duration_ms = trace.ended_ms - trace.started_ms;
   trace.result = {
     kept: keep.size,
     statuses: Array.from(meta.values()).reduce((acc, m) => { acc[m.status] = (acc[m.status] || 0) + 1; return acc; }, {}),
+    confidence_tiers: Array.from(meta.values()).reduce((acc, m) => { const t = m.confidenceTier || "UNCERTAIN_REVIEW"; acc[t] = (acc[t] || 0) + 1; return acc; }, {}),
   };
   return {
     keep, meta,
@@ -454,10 +460,10 @@ function ensureAtLeastOneTopPick(keep, meta, withPreview) {
     chosen = entries.filter(([, m]) => m.status !== "REJECT" && !m.previewWarning);
   }
   if (!chosen.length) {
-    chosen = entries; // último recurso: incluso entre REJECT
-    fallback_reason = "no_selectable";
+    // Todo es REJECT (o corrupt): no se fuerza un TOP_PICK técnicamente malo.
+    // Se registra como caso excepcional para revisión humana.
+    return { selection_fallback: false, fallback_reason: "no_selectable_all_reject", exceptional: true };
   }
-  if (!chosen.length) return { selection_fallback: false, fallback_reason: null };
 
   chosen.sort((a, b) => fallbackScoreOf(b[1], byId.get(b[0])) - fallbackScoreOf(a[1], byId.get(a[0])));
   const [id, m] = chosen[0];
@@ -488,12 +494,17 @@ function ensureCoveragePerGroup(keep, meta, withPreview) {
   }
   let coverage = false;
   const promotions = [];
+  const exceptionalGroups = [];
   for (const [groupId, items] of byGroup) {
     const hasSelected = items.some(([, m]) => m.status === "TOP_PICK" || m.status === "SELECT");
     if (hasSelected) continue;
-    let pool = items.filter(([, m]) => m.status !== "REJECT");
-    if (!pool.length) pool = items; // último recurso: grupo totalmente REJECT
-    if (!pool.length) continue;
+    const pool = items.filter(([, m]) => m.status !== "REJECT");
+    if (!pool.length) {
+      // Grupo sin seleccionables (todas REJECT): no se inventa ninguna selección.
+      // Se registra como caso excepcional para revisión humana. Las fotos siguen REJECT.
+      exceptionalGroups.push(groupId);
+      continue;
+    }
     pool.sort((a, b) => fallbackScoreOf(b[1], byId.get(b[0])) - fallbackScoreOf(a[1], byId.get(a[0])));
     const [id, m] = pool[0];
     m.status = "SELECT";
@@ -506,7 +517,7 @@ function ensureCoveragePerGroup(keep, meta, withPreview) {
     coverage = true;
     promotions.push({ group: groupId, photo: id, reason: "no_selected_in_group" });
   }
-  return { selection_coverage_fallback: coverage, promotions };
+  return { selection_coverage_fallback: coverage, promotions, exceptional_groups: exceptionalGroups };
 }
 
 // ADAPTADOR: produce la forma que el Editor espera (aiSelected, selectedForEdit,
@@ -539,6 +550,8 @@ export function buildPhotoFromSelection(p, keep, meta) {
     cameraInfo: p.cameraInfo || null,
     asShotWB: p.asShotWB || null,
     skinStats: p.skinStats || null,
+    confidenceTier: m.confidenceTier || "UNCERTAIN_REVIEW",
+    comparedWith: m.comparedWith || [],
     analysisComplete: m.analysisComplete ?? false,
     missingDimensions: m.missingDimensions || [],
     previewWarning: m.previewWarning || false,

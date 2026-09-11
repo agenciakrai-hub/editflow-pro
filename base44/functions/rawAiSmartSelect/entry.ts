@@ -110,6 +110,13 @@ function buildRankingEntry(id: string, r: any, category: string | null = null): 
   // las dimensiones APLICABLES al tipo de foto hayan sido evaluadas.
   const missing = SCORE_KEYS.filter((k) => scores[k] === null);
   const applicableMissing = applicableDims(category).filter((k) => scores[k] === null);
+  const conf = typeof scores.confidence === 'number' ? scores.confidence : null;
+  let confidence_tier = "UNCERTAIN_REVIEW";
+  if (status === "TOP_PICK" || status === "SELECT") {
+    if (conf !== null && conf >= 70) confidence_tier = "HIGH_CONFIDENCE_SELECT";
+  } else if (status === "REJECT") {
+    if (conf !== null && conf >= 70) confidence_tier = "HIGH_CONFIDENCE_REJECT";
+  }
   return {
     id,
     rank: typeof r?.rank === 'number' ? r.rank : 999,
@@ -117,6 +124,7 @@ function buildRankingEntry(id: string, r: any, category: string | null = null): 
     reject_reasons: Array.isArray(r?.reject_reasons) ? r.reject_reasons : [],
     note: typeof r?.note === 'string' ? r.note : '',
     scores,
+    confidence_tier,
     analysis_complete: applicableMissing.length === 0,
     missing_dimensions: missing,
   };
@@ -167,8 +175,8 @@ function technicalFallback(candidateIds: string[], technicals: Record<string, an
 function buildPrompt(ids: string[], isSingleton: boolean): string {
   const idList = ids.join(', ');
   const singletonRule = isSingleton
-    ? `\nSINGLETON: this group has a SINGLE photo. There is no comparison to make — assess it on its own merits. It can be TOP_PICK/SELECT if clearly good, REVIEW if doubtful, or REJECT only for a CLEAR COMBINED defect (critical blur + missed focus, severe exposure failure, corrupt). Do NOT force a SELECT just because it is alone.`
-    : `\nGUARANTEE for multi-photo groups: rank every candidate (rank 1 = best). At most ONE TOP_PICK. If at least one photo is clearly deliverable, mark the best as TOP_PICK or SELECT. If ALL are genuinely rejectable (clear combined defects), it is acceptable to return only REJECT — do not fabricate a SELECT. When in doubt between two near-equal frames, prefer the one with better eyes/expression/moment over the one with marginally higher sharpness.`;
+    ? `\nSINGLETON: this group has a SINGLE photo. There is no comparison to make — assess it on its own merits. It can be TOP_PICK/SELECT if clearly good, REVIEW if genuinely doubtful, or REJECT if clearly unusable (critical blur + missed focus, severe exposure failure, corrupt) or clearly not worth delivering. Do NOT force a SELECT just because it is alone, and do NOT default to REVIEW a photo you are confident is bad — REJECT it.`
+    : `\nGUARANTEE for multi-photo groups: rank every candidate (rank 1 = best). At most ONE TOP_PICK. If at least one photo is clearly deliverable, mark the best as TOP_PICK or SELECT. If ALL are genuinely rejectable (clearly inferior or clearly defective), return only REJECT — do not fabricate a SELECT. When in doubt between two near-equal frames, prefer the one with better eyes/expression/moment over the one with marginally higher sharpness.`;
 
   return `You are an elite professional photo editor doing precise, conservative culling of a ${ids.length}-photo sequence (same scene, same people, taken seconds apart). This is NOT a per-photo yes/no — you must COMPARE the photos within this group and rank them.
 
@@ -195,15 +203,14 @@ STEP 3 — For EACH candidate, analyze independently across ALL dimensions. Each
 - moment_quality: decisive moment, emotion, interaction (people/events); for architecture/landscape reflects stillness/cleanliness
 - distraction_penalty: HIGHER = cleaner (100 = no distractions, 0 = very distracting). Inverted scale.
 - overall: your composite judgment WEIGHTED BY GENRE per STEP 2. The globally sharpest frame does NOT have to win.
-- confidence: 0-100 how sure you are of THIS photo's assessment (low confidence → prefer REVIEW, never REJECT)
+- confidence: 0-100 how sure you are of THIS photo's assessment. Use >=70 for decisions you are confident about (clear SELECT or clear REJECT), <60 for genuine uncertainty (REVIEW).
 
-STEP 4 — Decide COMPARATIVELY (relative ranking inside this group):
+STEP 4 — Decide COMPARATIVELY (relative ranking inside this group). Separate clear decisions from doubtful ones using your confidence:
 - TOP_PICK: the single strongest frame (best faces + moment + composition). At most ONE.
-- SELECT: technically valid and visually strong enough to deliver.
-- REVIEW: not confident (low confidence, borderline faces/exposure, near-tie with a clearly better one but not clearly rejectable). When in doubt → REVIEW, never auto-REJECT.
-- REJECT: ONLY for a CLEAR, COMBINED defect — never a single metric alone. Use structured reject_reasons from: CRITICAL_BLUR, FOCUS_FAILURE, EYES_CLOSED, DUPLICATE, LOWER_RANK_IN_BURST, POOR_EXPRESSION, POOR_COMPOSITION, SEVERE_EXPOSURE_FAILURE, OBSTRUCTED_SUBJECT, CORRUPT.
-- Never REJECT for low sharpness alone, low exposure alone, or low confidence alone.
-- A photo where a KEY face has EYES_CLOSED (mid-blink, fully shut) must NEVER be TOP_PICK or SELECT — use REVIEW (if otherwise good and recoverable) or REJECT (if clearly unusable), and include EYES_CLOSED in reject_reasons.
+- SELECT: a clearly good, deliverable frame you are confident about.
+- REJECT: a frame you are confident is NOT worth keeping. This is NOT limited to technical defects — REJECT whenever you are confident the photo is clearly inferior or redundant within this group: clearly worse expression/moment/eyes than a clearly better alternative in the same burst, a near-duplicate that adds nothing, OR a clear combined technical defect. Use structured reject_reasons from: CRITICAL_BLUR, FOCUS_FAILURE, EYES_CLOSED, DUPLICATE, LOWER_RANK_IN_BURST, POOR_EXPRESSION, POOR_COMPOSITION, SEVERE_EXPOSURE_FAILURE, OBSTRUCTED_SUBJECT, CORRUPT, CLEARLY_INFERIOR_IN_BURST, REDUNDANT_IN_BURST.
+- REVIEW: ONLY when you are genuinely uncertain — a near-tie where two frames are close enough that the choice is subjective, a recoverable borderline (slight focus/expression doubt) that is not clearly rejectable, or low confidence in either direction. REVIEW means "the photographer should decide". Do NOT use REVIEW as the default for everything you did not SELECT: if you are confident a frame is clearly worse, REJECT it.
+- A photo where a KEY face has EYES_CLOSED (mid-blink, fully shut) must NEVER be TOP_PICK or SELECT — REJECT it if a clearly better alternative exists in the burst, otherwise REVIEW. Include EYES_CLOSED in reject_reasons.
 ${singletonRule}
 
 Candidate photo ids: ${idList}. The images are attached in the same order.
@@ -271,12 +278,12 @@ function buildFinalPrompt(ids: string[], byIdAll: Record<string, any>): string {
 Prior context (reference only — re-judge visually, do not trust the numbers across halves):
 ${sections}
 
-Decide the DEFINITIVE ranking of the whole group:
+Decide the DEFINITIVE ranking of the whole group. Separate clear decisions from doubtful ones using your confidence:
 - TOP_PICK: the single strongest frame (best eyes + expression + moment + composition). At most ONE.
-- SELECT: deliverable.
-- REVIEW: doubtful.
-- REJECT: clear combined defect only.
-Priority for people: eyes > expression > moment > focus > composition > technical. A sharper but lifeless/blinked frame must NOT beat a slightly softer frame with genuine emotion and a decisive moment. A photo where a KEY face has EYES_CLOSED must NEVER be TOP_PICK or SELECT — use REVIEW or REJECT.
+- SELECT: a clearly good, deliverable frame you are confident about.
+- REVIEW: ONLY when genuinely uncertain (near-tie, borderline). Do NOT default to REVIEW a frame you are confident is clearly worse.
+- REJECT: a frame you are confident is NOT worth keeping — clearly inferior to a better finalist, redundant, or a clear combined defect.
+Priority for people: eyes > expression > moment > focus > composition > technical. A sharper but lifeless/blinked frame must NOT beat a slightly softer frame with genuine emotion and a decisive moment. A photo where a KEY face has EYES_CLOSED must NEVER be TOP_PICK or SELECT — REJECT if a clearly better finalist exists, otherwise REVIEW.
 
 Return JSON: finalists (array, one entry per candidate id), each with id, rank (1=best), status, reject_reasons, note, and the scores above. Candidate ids in image order: ${ids.join(', ')}.`;
 }
@@ -400,13 +407,13 @@ STEP 2 — For each photo, analyze independently across ALL dimensions. Each sco
 - moment_quality: decisive moment, emotion, interaction (people/events); stillness/cleanliness for architecture/landscape
 - distraction_penalty: HIGHER = cleaner (100 = no distractions, 0 = very distracting). Inverted scale.
 - overall: your composite judgment WEIGHTED BY GENRE
-- confidence: 0-100 how sure you are of THIS photo's assessment
+- confidence: 0-100 how sure you are of THIS photo's assessment. Use >=70 for decisions you are confident about (clear SELECT or clear REJECT), <60 for genuine uncertainty (REVIEW).
 
 STEP 3 — Decide INDEPENDENTLY for each photo (no comparison, no single-TOP_PICK limit):
 - TOP_PICK: an exceptional, clearly deliverable frame.
-- SELECT: technically valid and visually strong enough to deliver.
-- REVIEW: doubtful (low confidence, borderline faces/exposure).
-- REJECT: ONLY for a CLEAR, COMBINED defect — never a single metric alone. Use reject_reasons from: CRITICAL_BLUR, FOCUS_FAILURE, EYES_CLOSED, POOR_EXPRESSION, POOR_COMPOSITION, SEVERE_EXPOSURE_FAILURE, OBSTRUCTED_SUBJECT, CORRUPT.
+- SELECT: a clearly good, deliverable frame you are confident about.
+- REVIEW: ONLY when you are genuinely uncertain (borderline faces/exposure, low confidence in either direction). Do NOT default to REVIEW a photo you are confident is bad.
+- REJECT: a frame you are confident is clearly not worth keeping — a clear combined technical defect, or clearly not deliverable. Use reject_reasons from: CRITICAL_BLUR, FOCUS_FAILURE, EYES_CLOSED, POOR_EXPRESSION, POOR_COMPOSITION, SEVERE_EXPOSURE_FAILURE, OBSTRUCTED_SUBJECT, CORRUPT, CLEARLY_NOT_DELIVERABLE.
 Multiple photos can be TOP_PICK or SELECT; none need to be. Set rank to 1 for every photo.
 
 Candidate photo ids: ${ids.join(', ')}. The images are attached in the same order.
