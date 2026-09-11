@@ -11,13 +11,24 @@ export function capKeyForTask(task) {
   return null;
 }
 
-// ¿La entrada meta del modelo permite la tarea? Solo caps[capKey] === true = compatible.
-// false = verificado NO compatible; null/undefined = no verificado. En ambos casos
-// (false / null) la casilla se deshabilita.
+// ¿La entrada meta del modelo CONFIRMA la tarea? Solo caps[capKey] === true.
+// false = verificado NO compatible; null = no verificado. El runtime bloquea false y
+// null (solo true ejecuta); la UI deshabilita la casilla en ambos casos.
 export function taskAllowed(metaEntry, task) {
   const k = capKeyForTask(task);
   if (!k || !metaEntry) return false;
   return metaEntry?.caps?.[k] === true;
+}
+
+// ¿El modelo es CANDIDATO para la pestaña de la herramienta? true si hay evidencia
+// positiva (caps === true) O no hay evidencia suficiente (null). false SOLO si está
+// verificado como NO compatible (caps === false). Así una pestaña nunca muestra "0"
+// cuando el proveedor no declara capacidades (caso NVIDIA): los no verificados aparecen
+// como candidatos con "Probar". Es la misma fuente de verdad (available_models_meta).
+export function taskCandidate(metaEntry, task) {
+  const k = capKeyForTask(task);
+  if (!k || !metaEntry) return true; // sin meta → candidato (no verificado)
+  return metaEntry?.caps?.[k] !== false;
 }
 
 // Estado conceptual de la casilla para (metaEntry, task, marked):

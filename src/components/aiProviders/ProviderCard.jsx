@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, KeyRound, Loader2, Power, RefreshCw, Save, Search, Trash2, XCircle, Zap } from "lucide-react";
-import { checkboxState } from "@/lib/ai/modelCapabilities";
+import { checkboxState, taskCandidate } from "@/lib/ai/modelCapabilities";
 
 // Tarjeta de proveedor (unificada). Las casillas de modelo/tarea se habilitan o
 // deshabilitan según las capacidades RESUELTAS (available_models_meta), que son la
@@ -18,7 +18,7 @@ const TABS = [
   { id: "seleccion", label: "Selección" },
   { id: "edicion", label: "Edición" },
   { id: "video", label: "Vídeo" },
-  { id: "sinverificar", label: "Sin verificar" },
+  { id: "album", label: "Álbum" },
 ];
 
 const COLS = ["seleccion", "ajustes", "edicion", "video", "album"];
@@ -84,23 +84,25 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
   const visionState = (modelId) => metaOf(modelId)?.caps?.vision ?? null;
 
   const tabCounts = useMemo(() => {
-    const c = { todos: models.length, seleccion: 0, edicion: 0, video: 0, sinverificar: 0 };
+    const c = { todos: models.length, seleccion: 0, edicion: 0, video: 0, album: 0 };
     for (const m of models) {
       const e = metaOf(m);
-      if (e?.caps?.vision === true) c.seleccion += 1;
-      if (e?.caps?.image_edit === true) c.edicion += 1;
-      if (e?.caps?.video === true) c.video += 1;
-      if (e?.caps?.vision === null) c.sinverificar += 1;
+      // Candidatos por herramienta: compatibles (true) o no verificados (null).
+      // Los verificados como NO compatibles (false) quedan fuera de la pestaña.
+      if (taskCandidate(e, "seleccion")) c.seleccion += 1;
+      if (taskCandidate(e, "edicion")) c.edicion += 1;
+      if (taskCandidate(e, "video")) c.video += 1;
+      if (taskCandidate(e, "album")) c.album += 1;
     }
     return c;
   }, [models, metaMap]);
 
   const filtered = useMemo(() => {
     let list = models;
-    if (tab === "seleccion") list = list.filter((m) => visionState(m) === true);
-    else if (tab === "edicion") list = list.filter((m) => metaOf(m)?.caps?.image_edit === true);
-    else if (tab === "video") list = list.filter((m) => metaOf(m)?.caps?.video === true);
-    else if (tab === "sinverificar") list = list.filter((m) => visionState(m) === null);
+    if (tab === "seleccion") list = list.filter((m) => taskCandidate(metaOf(m), "seleccion"));
+    else if (tab === "edicion") list = list.filter((m) => taskCandidate(metaOf(m), "edicion"));
+    else if (tab === "video") list = list.filter((m) => taskCandidate(metaOf(m), "video"));
+    else if (tab === "album") list = list.filter((m) => taskCandidate(metaOf(m), "album"));
     const q = search.trim().toLowerCase();
     return q ? list.filter((m) => m.toLowerCase().includes(q)) : list;
   }, [models, search, tab, metaMap]);
@@ -215,10 +217,10 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
               <button key={t.id} onClick={() => setTab(t.id)}
                 title={
                   t.id === "todos" ? "Todos los modelos del proveedor"
-                  : t.id === "seleccion" ? "Modelos verificados compatibles con visión (Selección/Ajustes/Álbum)"
-                  : t.id === "edicion" ? "Modelos con capacidad de edición de imagen declarada"
-                  : t.id === "video" ? "Modelos con capacidad de vídeo declarada"
-                  : "Modelos sin verificar (prueba su capacidad de visión para habilitarlos)"
+                  : t.id === "seleccion" ? "Candidatos para Selección: compatibles (visión verificada/declarada) o sin verificar. Excluidos los verificados como NO compatibles."
+                  : t.id === "edicion" ? "Candidatos para Edición: compatibles (image_edit) o sin verificar."
+                  : t.id === "video" ? "Candidatos para Vídeo: compatibles (video) o sin verificar."
+                  : "Candidatos para Álbum: compatibles (visión) o sin verificar."
                 }
                 className={"rounded-full px-3 py-1.5 text-xs font-medium " + (tab === t.id ? "bg-primary text-primary-foreground" : "border border-border hover:bg-secondary")}>
                 {t.label} <span className={tab === t.id ? "opacity-70" : "text-muted-foreground"}>({tabCounts[t.id] ?? 0})</span>
@@ -250,14 +252,17 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
                 <div key={m} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-mono text-xs">{m}</p>
-                    {e?.source === "verified" && probeStatus === "ok" && (
+                    {vState === true && (
                       <span className="text-[10px] text-emerald-600">Visión verificada</span>
                     )}
-                    {e?.source === "verified" && probeStatus === "rejected" && (
+                    {vState === false && (
                       <span className="text-[10px] text-red-500">Visión rechazada</span>
                     )}
-                    {e?.source === "verified" && probeStatus === "error" && (
+                    {vState === null && probeStatus === "error" && (
                       <span className="text-[10px] text-amber-600">Prueba con error</span>
+                    )}
+                    {vState === null && probeStatus !== "error" && (
+                      <span className="text-[10px] text-amber-600">Sin verificar</span>
                     )}
                   </div>
                   {COLS.map((c) => {
@@ -302,11 +307,9 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
               <p className="px-3 py-4 text-center text-xs text-muted-foreground">
                 {tab === "todos"
                   ? "Ningún modelo coincide con la búsqueda."
-                  : tab === "seleccion"
-                    ? "Ningún modelo verificado compatible con visión. Prueba modelos en la pestaña «Sin verificar»."
-                    : tab === "sinverificar"
-                      ? "Todos los modelos tienen su capacidad de visión resuelta (declarada o verificada)."
-                      : "Ningún modelo declarado con esta capacidad."}
+                  : tab === "seleccion" || tab === "album"
+                    ? "Ningún modelo candidato para visión (todos verificados como NO compatibles)."
+                    : "Ningún modelo candidato para esta capacidad (todos verificados como NO compatibles)."}
               </p>
             )}
           </div>

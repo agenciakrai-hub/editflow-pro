@@ -208,8 +208,10 @@ export default function AIProviders() {
     if (!String(val || "").startsWith("custom:")) return false;
     const p = providers.find((c) => `custom:${c.id}` === val);
     if (!p || !p.enabled || p.last_ok === false) return false;
+    // Sin heurística de nombre: un proveedor es utilizable para Selección/Ajustes solo
+    // si tiene modelos marcados en el catálogo. La ejecución además exige vision=true.
     const marked = task === "ajustes" ? p.ajustes_models : p.seleccion_models;
-    return (marked?.length > 0) || !!p.model;
+    return marked?.length > 0;
   };
   const optionLabel = (suffix, val, task) => (usable(val, task) ? "" : suffix);
   const providerOptions = providers.map((p) => ({ value: `custom:${p.id}`, label: p.name }));
