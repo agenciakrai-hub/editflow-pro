@@ -331,17 +331,27 @@ async function buildFailoverChain(base44: any, active: string): Promise<string[]
 // siguiente proveedor habilitado de la cadena. Si se fuerza un proveedor
 // (forceProvider), no hay failover (comportamiento original garantizado).
 export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> {
+  // Traza de intentos: distingue proveedor activo, cada intento (con su duración), qué
+  // proveedor falló, el motivo y el proveedor que finalmente respondió (provider/model
+  // los fija callProvider/callCustom). Solo diagnóstico; no cambia ningún comportamiento.
   if (opts.forceProvider) {
+    if (opts._trace) { opts._trace.active_provider = opts.forceProvider; if (!Array.isArray(opts._trace.attempts)) opts._trace.attempts = []; }
     return callProvider(base44, opts.forceProvider, opts);
   }
   const active = await activeProviderFor(base44, opts.task);
   const chain = await buildFailoverChain(base44, active);
+  if (opts._trace) { opts._trace.active_provider = active; if (!Array.isArray(opts._trace.attempts)) opts._trace.attempts = []; }
   let lastErr: any;
   for (const provider of chain) {
+    const t0 = Date.now();
     try {
-      return await callProvider(base44, provider, opts);
+      const out = await callProvider(base44, provider, opts);
+      if (opts._trace) opts._trace.attempts.push({ provider, ok: true, latency_ms: Date.now() - t0 });
+      return out;
     } catch (e: any) {
-      console.log(`[aiProvider] failover: provider=${provider} fallo: ${e?.message || e}`);
+      const msg = String(e?.message || e);
+      console.log(`[aiProvider] failover: provider=${provider} fallo: ${msg}`);
+      if (opts._trace) opts._trace.attempts.push({ provider, ok: false, error: msg.slice(0, 300), latency_ms: Date.now() - t0 });
       lastErr = e;
     }
   }
@@ -396,7 +406,22 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   const model = useExact ? exactModel : (marked.length ? pickBestVisionModel(marked) : legacy);
   if (opts._trace) opts._trace.model = model;
   console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${useExact ? "exacto" : marked.length ? "auto" : "legado"})`);
-  const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
+  // Google Gemini (endpoint OpenAI-compat de generativelanguage.googleapis.com) NO acepta
+  // imágenes como URL http externa en image_url (HTTP 400 INVALID_ARGUMENT): exige imagen
+  // INLINE (data URL base64). Se convierten aquí las URLs http a data URL SOLO para este
+  // host. El resto de proveedores (Qwen, NVIDIA, otros custom) no cambian en nada.
+  let urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
+  if (/^https?:\/\/generativelanguage\.googleapis\.com\//i.test(endpoint)) {
+    urls = await Promise.all(urls.map(async (u: string) => {
+      if (u.startsWith("data:")) return u;
+      const r = await fetchWithTimeout(u, { method: "GET" }, 30000);
+      if (!r.ok) throw new Error(`[Gemini inline] no se pudo leer la imagen subida (HTTP ${r.status})`);
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      let bin = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      return `data:${r.headers.get("content-type") || "image/jpeg"};base64,${btoa(bin)}`;
+    }));
+  }
   const content: any[] = [{ type: "text", text: opts.prompt }];
   for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
   const body = { model, messages: [{ role: "user", content }], stream: false };
