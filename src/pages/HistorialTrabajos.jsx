@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { History, Loader2, Trash2, XCircle, RefreshCw, CheckCircle2, AlertCircle, Clock, Cpu, FileImage, Plug } from "lucide-react";
+import { History, Loader2, Trash2, XCircle, RefreshCw, CheckCircle2, AlertCircle, Clock, Cpu, FileImage, Plug, Sparkles } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 import moment from "moment";
@@ -7,6 +7,8 @@ import moment from "moment";
 const STATUS_META = {
   processing: { label: "En proceso", className: "bg-amber-100 text-amber-700 border-amber-200", Icon: Clock },
   pending: { label: "En cola", className: "bg-blue-100 text-blue-700 border-blue-200", Icon: Clock },
+  running: { label: "En curso", className: "bg-amber-100 text-amber-700 border-amber-200", Icon: Loader2 },
+  canceled: { label: "Cancelado", className: "bg-zinc-100 text-zinc-600 border-zinc-200", Icon: XCircle },
   completed: { label: "Completado", className: "bg-emerald-100 text-emerald-700 border-emerald-200", Icon: CheckCircle2 },
   failed: { label: "Error", className: "bg-red-100 text-red-700 border-red-200", Icon: AlertCircle },
 };
@@ -34,6 +36,7 @@ function Progress({ value }) {
 
 const TABS = [
   { key: "processing", label: "Procesado de proyectos", icon: Cpu },
+  { key: "selection", label: "Selección IA", icon: Sparkles },
   { key: "exports", label: "Exportaciones", icon: FileImage },
   { key: "lightroom", label: "Cola Lightroom", icon: Plug },
 ];
@@ -47,7 +50,7 @@ const FILTERS = [
 
 function matchesFilter(status, filter) {
   if (filter === "all") return true;
-  if (filter === "active") return status === "processing" || status === "pending";
+  if (filter === "active") return status === "processing" || status === "pending" || status === "running";
   return status === filter;
 }
 
@@ -59,6 +62,7 @@ export default function HistorialTrabajos() {
   const [busy, setBusy] = useState(false);
   const [user, setUser] = useState(null);
   const [processing, setProcessing] = useState([]);
+  const [selectionJobs, setSelectionJobs] = useState([]);
   const [exports_, setExports] = useState([]);
   const [lrJobs, setLrJobs] = useState([]);
   const [lrAllowed, setLrAllowed] = useState(true);
@@ -68,11 +72,13 @@ export default function HistorialTrabajos() {
     try {
       const me = user ?? await base44.auth.me().catch(() => null);
       if (!user && me) setUser(me);
-      const [pp, ex] = await Promise.all([
+      const [pp, sel, ex] = await Promise.all([
         base44.entities.ProjectProcessingJob.list("-updated_date", 100).catch(() => []),
+        base44.entities.AlbumAISelection.list("-updated_date", 100).catch(() => []),
         base44.entities.ExportJob.list("-updated_date", 100).catch(() => []),
       ]);
       setProcessing(pp || []);
+      setSelectionJobs(sel || []);
       setExports(ex || []);
       if (me?.role === "admin") {
         const lr = await base44.entities.LrJob.list("-updated_date", 100).catch((e) => {
@@ -97,6 +103,7 @@ export default function HistorialTrabajos() {
     setBusy(true);
     try {
       if (type === "processing") await base44.entities.ProjectProcessingJob.update(job.id, { status: "failed" });
+      else if (type === "selection") await base44.entities.AlbumAISelection.update(job.id, { status: "canceled" });
       else if (type === "exports") await base44.entities.ExportJob.update(job.id, { status: "failed" });
       else { await base44.entities.LrJob.delete(job.id); setLrJobs((p) => p.filter((x) => x.id !== job.id)); toast({ title: "Trabajo eliminado de la cola" }); setBusy(false); return; }
       toast({ title: "Trabajo cancelado" });
@@ -111,6 +118,7 @@ export default function HistorialTrabajos() {
     setBusy(true);
     try {
       if (type === "processing") await base44.entities.ProjectProcessingJob.delete(job.id);
+      else if (type === "selection") await base44.entities.AlbumAISelection.delete(job.id);
       else if (type === "exports") await base44.entities.ExportJob.delete(job.id);
       else await base44.entities.LrJob.delete(job.id);
       toast({ title: "Trabajo eliminado" });
@@ -122,13 +130,15 @@ export default function HistorialTrabajos() {
   };
 
   const cancelAll = async (type) => {
-    const list = type === "processing" ? processing : type === "exports" ? exports_ : lrJobs;
-    const actives = list.filter((j) => j.status === "processing" || j.status === "pending");
+    const list = type === "processing" ? processing : type === "selection" ? selectionJobs : type === "exports" ? exports_ : lrJobs;
+    const actives = list.filter((j) => j.status === "processing" || j.status === "pending" || j.status === "running");
     if (!actives.length) return;
     setBusy(true);
     try {
       if (type === "lightroom") {
         await base44.entities.LrJob.deleteMany({ status: "pending" });
+      } else if (type === "selection") {
+        await base44.entities.AlbumAISelection.updateMany({ status: "running" }, { $set: { status: "canceled" } });
       } else {
         const ent = type === "processing" ? base44.entities.ProjectProcessingJob : base44.entities.ExportJob;
         await ent.updateMany({ status: "processing" }, { $set: { status: "failed" } });
@@ -141,9 +151,9 @@ export default function HistorialTrabajos() {
     setBusy(false);
   };
 
-  const current = tab === "processing" ? processing : tab === "exports" ? exports_ : lrJobs;
+  const current = tab === "processing" ? processing : tab === "selection" ? selectionJobs : tab === "exports" ? exports_ : lrJobs;
   const visible = current.filter((j) => matchesFilter(j.status, filter));
-  const activeCount = current.filter((j) => j.status === "processing" || j.status === "pending").length;
+  const activeCount = current.filter((j) => j.status === "processing" || j.status === "pending" || j.status === "running").length;
 
   return (
     <div className="space-y-5">
@@ -204,19 +214,21 @@ export default function HistorialTrabajos() {
       ) : (
         <div className="space-y-2">
           {visible.map((job) => {
-            const isActive = job.status === "processing" || job.status === "pending";
+            const isActive = job.status === "processing" || job.status === "pending" || job.status === "running";
             const title =
               tab === "processing" ? `Proyecto ${job.project_id?.slice(-6) || ""}` :
+              tab === "selection" ? `Selección IA · ${job.stats?.photo_count || 0} fotos` :
               tab === "exports" ? (job.project_title || `Proyecto ${job.project_id?.slice(-6) || ""}`) :
               (job.filename || "Trabajo Lightroom");
             const sub =
               tab === "processing" ? (job.phase === "fingerprinting" ? "Calculando huellas" : "Leyendo previews") :
+              tab === "selection" ? `Etapa ${job.stage || "?"}${job.stats?.provider_used ? ` · ${job.stats.provider_used}` : ""}${job.error ? ` · ${String(job.error).slice(0, 60)}` : ""}` :
               tab === "exports" ? `${job.photo_count || 0} fotos · ${(job.format || "xmp").toUpperCase()}` :
               `Token ${job.token?.slice(-6) || ""}`;
             return (
               <div key={job.id} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary">
-                  {tab === "processing" ? <Cpu className="h-4 w-4" /> : tab === "exports" ? <FileImage className="h-4 w-4" /> : <Plug className="h-4 w-4" />}
+                  {tab === "processing" ? <Cpu className="h-4 w-4" /> : tab === "selection" ? <Sparkles className="h-4 w-4" /> : tab === "exports" ? <FileImage className="h-4 w-4" /> : <Plug className="h-4 w-4" />}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
