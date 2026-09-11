@@ -207,6 +207,18 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     if (signal?.aborted) throw new PipelineCancelled();
   };
 
+  // TRAZA COMPLETA: registra cada etapa del pipeline con marcas de tiempo,
+  // proveedor, modelo y conteos. Se persiste en el job (stats.trace) para
+  // auditar toda la ejecución desde el botón hasta el final.
+  const trace = {
+    started_at: new Date().toISOString(),
+    started_ms: Date.now(),
+    project_id: projectId,
+    photo_count: photos.length,
+    stages: {},
+    events: [],
+  };
+
   // ---- Alias estables photo_id <-> pN (nunca se envían nombres ni rutas) ----
   const aliasOf = new Map();
   const photoOfAlias = new Map();
@@ -217,6 +229,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   });
 
   // ---- E2: métricas técnicas locales (gratis, recalculadas en cada ejecución) ----
+  trace.stages.e2 = { start_ms: Date.now() };
   const items = [];
   const itemsById = new Map();
   for (const photo of photos) {
@@ -229,6 +242,10 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     items.push(item);
     itemsById.set(photo.id, item);
   }
+  trace.stages.e2.end_ms = Date.now();
+  trace.stages.e2.duration_ms = trace.stages.e2.end_ms - trace.stages.e2.start_ms;
+  trace.stages.e2.photo_count = photos.length;
+  trace.stages.e2.with_preview = items.filter((it) => it.thumb).length;
   onProgress?.({ stage: "e2", done: photos.length, total: photos.length });
 
   // ---- E3: grupos por CONTINUIDAD de momento ----
@@ -238,6 +255,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   // que entra o sale) — en lotes de 12 pares. El tiempo NUNCA une por sí solo y
   // no hay tope de tamaño: las cadenas se rompen por continuidad (deriva del
   // ancla), no por un límite arbitrario. Los ids y el orden temporal no cambian.
+  trace.stages.e3 = { start_ms: Date.now(), vision_calls: [] };
   const signals = new Map(items.filter((it) => it.signal).map((it) => [it.photo.id, it.signal]));
   const groups = await buildGroups({
     photos,
@@ -249,6 +267,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
       for (let i = 0; i < pairs.length; i += PAIR_BATCH) {
         const batch = pairs.slice(i, i + PAIR_BATCH);
         let out = null;
+        const callStart = Date.now();
         try {
           out = await withRetry(() =>
             callEngine("e3-continuity", {
@@ -259,6 +278,10 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
         } catch {
           out = null; // sin visión disponible: unión conservadora (no se parte la ráfaga)
         }
+        trace.stages.e3.vision_calls.push({
+          start_ms: callStart, end_ms: Date.now(), duration_ms: Date.now() - callStart,
+          pairs: batch.length, provider: out?.provider || null, model: out?.model || null,
+        });
         batch.forEach((p, j) => {
           const d = (out?.decisions || []).find((x) => Number(x.pair) === j);
           decisions.push(d ? d.same_moment !== false : true);
@@ -267,6 +290,10 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
       return decisions;
     },
   });
+  trace.stages.e3.end_ms = Date.now();
+  trace.stages.e3.duration_ms = trace.stages.e3.end_ms - trace.stages.e3.start_ms;
+  trace.stages.e3.group_count = groups.length;
+  trace.stages.e3.kinds = groups.reduce((acc, g) => { acc[g.kind] = (acc[g.kind] || 0) + 1; return acc; }, {});
   onProgress?.({ stage: "e3", done: groups.length, total: groups.length });
 
   // ---- E4: triaje por lotes (remoto, persistido por lote → reanudable) ----
@@ -369,6 +396,12 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   e4Metrics.finalConcurrency = e4FinalConc;
   e4Metrics.endMs = Date.now();
   e4Metrics.totalMs = e4Metrics.endMs - e4Metrics.startMs;
+  trace.stages.e4 = {
+    duration_ms: e4Metrics.totalMs, calls: e4Metrics.calls, photos_sent: e4Metrics.photosSent,
+    errors: e4Metrics.errors, retries: e4Metrics.retries, max_concurrency: e4Metrics.maxConcurrency,
+    final_concurrency: e4Metrics.finalConcurrency, rate_limited: e4Metrics.rateLimited,
+    per_call: e4Metrics.perCall,
+  };
   // Merge en orden de lote: conserva el determinismo de `analyses` y evita
   // condiciones de carrera sobre el estado compartido (cada worker escribió su slot).
   let e4FirstError = null;
@@ -541,6 +574,12 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   e5Metrics.finalConcurrency = e5FinalConc;
   e5Metrics.endMs = Date.now();
   e5Metrics.totalMs = e5Metrics.endMs - e5Metrics.startMs;
+  trace.stages.e5 = {
+    duration_ms: e5Metrics.totalMs, calls: e5Metrics.calls, photos_sent: e5Metrics.photosSent,
+    errors: e5Metrics.errors, retries: e5Metrics.retries, max_concurrency: e5Metrics.maxConcurrency,
+    final_concurrency: e5Metrics.finalConcurrency, rate_limited: e5Metrics.rateLimited,
+    per_call: e5Metrics.perCall,
+  };
   // Merge en orden de grupo: conserva el determinismo de groupRecords y
   // promotedByGroup, y evita condiciones de carrera sobre el estado compartido.
   let e5FirstError = null;
@@ -565,8 +604,10 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   const capped = promotedItems.slice(0, E6_MAX);
   let moments = [];
   let providerUsed = "";
+  trace.stages.e6 = { start_ms: Date.now() };
   if (resume.moments?.length) {
     moments = resume.moments;
+    trace.stages.e6.resumed = true;
   } else if (capped.length >= 3) {
     const out = await withRetry(() =>
       callEngine("e6-moments", {
@@ -575,6 +616,9 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
       })
     );
     providerUsed = out.provider;
+    trace.stages.e6.provider = out.provider;
+    trace.stages.e6.model = out.model;
+    trace.stages.e6.representatives = capped.length;
     moments = (out.moments || []).map((m, i) => ({ ...m, order_index: m.order || i + 1 }));
     const recs = moments.map((m) => ({
       project_id: projectId,
@@ -589,7 +633,11 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     if (recs.length) await base44.entities.AlbumMoment.bulkCreate(recs).catch(() => {});
   } else {
     moments = [{ name: "Reportaje", archetype: "general", order_index: 1, summary: "", aliases: capped.map((c) => c.alias), photo_ids: capped.map((c) => c.photoId) }];
+    trace.stages.e6.skipped = true;
   }
+  trace.stages.e6.end_ms = Date.now();
+  trace.stages.e6.duration_ms = trace.stages.e6.end_ms - trace.stages.e6.start_ms;
+  trace.stages.e6.moment_count = moments.length;
   onProgress?.({ stage: "e6", done: moments.length, total: moments.length });
 
   // ---- E7: selección final (SOLO TEXTO; 1 llamada) ----
@@ -631,10 +679,16 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     per_spread: project.max_photos_per_spread || 3,
     total: (project.spread_count_target || 20) * (project.max_photos_per_spread || 3),
   };
+  trace.stages.e7 = { start_ms: Date.now(), descriptor_count: descriptors.length, forced: forced.length, blocked: blocked.length };
   const out = await withRetry(() =>
     callEngine("e7-assembly", { event_type: eventType, album_target: target, descriptors, forced, blocked })
   );
   providerUsed = providerUsed || out.provider;
+  trace.stages.e7.end_ms = Date.now();
+  trace.stages.e7.duration_ms = trace.stages.e7.end_ms - trace.stages.e7.start_ms;
+  trace.stages.e7.provider = out.provider;
+  trace.stages.e7.model = out.model;
+  trace.stages.e7.selected_count = (out.selection || []).length;
   let selection = (out.selection || [])
     .filter((s) => photoOfAlias.has(s.alias))
     .map((s) => ({
@@ -676,6 +730,9 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     failed_no_preview: failedNoPreview.length,
     failed_no_response: failedNoResponse.size,
   };
+  trace.ended_ms = Date.now();
+  trace.total_duration_ms = trace.ended_ms - trace.started_ms;
+  trace.provider_used = providerUsed;
   return {
     selection,
     funnel_report: { ...(out.funnel_report || {}), coverage: out.coverage || "" },
@@ -686,5 +743,6 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     providerUsed,
     funnelStats,
     metrics: { e4: e4Metrics, e5: e5Metrics },
+    trace,
   };
 }

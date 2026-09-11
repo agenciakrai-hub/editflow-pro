@@ -118,6 +118,7 @@ export function useAiSelection(project, photos) {
           selected_count: result.selection.length,
           ...(result.funnelStats || {}),
           completed_at: new Date().toISOString(),
+          trace: result.trace || null,
         },
       });
       setSelection(done);
