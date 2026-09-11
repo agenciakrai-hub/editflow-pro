@@ -412,6 +412,30 @@ export default async function(req: Request): Promise<Response> {
       return Response.json({ ok: true });
     }
 
+    // DIAGNÓSTICO TEMPORAL: devuelve los objetos CRUDOS de /models (primeros N) para
+    // inspeccionar el esquema real de capacidades/modalidades del proveedor.
+    if (action === 'raw-models') {
+      const id = String(body.id || '');
+      const limit = Math.min(Number(body.limit) || 8, 20);
+      const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
+      if (!rec) return Response.json({ ok: false, reason: 'Proveedor no encontrado' });
+      const key = effectiveKey(rec);
+      if (!key) return Response.json({ ok: false, reason: 'Sin API key' });
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        let res: Response;
+        try {
+          res = await fetch(`${rec.endpoint}/models`, { headers: { Authorization: `Bearer ${key}` }, signal: controller.signal });
+        } finally { clearTimeout(timer); }
+        const data: any = await res.json().catch(() => null);
+        const arr = (data?.data || data?.models || []).slice(0, limit);
+        return Response.json({ ok: res.ok, status: res.status, endpoint: rec.endpoint, sample: arr, total: (data?.data || data?.models || []).length });
+      } catch (e: any) {
+        return Response.json({ ok: false, reason: String(e?.message || e) });
+      }
+    }
+
     if (action === 'delete') {
       const id = String(body.id || '');
       await base44.asServiceRole.entities.CustomAiProvider.delete(id);
