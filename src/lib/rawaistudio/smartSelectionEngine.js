@@ -50,7 +50,7 @@ export async function extractPreviews(items, onProgress, onTiming) {
     let bytes = null;
     try { bytes = new Uint8Array(await item.file.arrayBuffer()); } catch { bytes = null; }
     let preview;
-    try { preview = await extractRawPreview(item.file, 800, { bytes: bytes || undefined }); }
+    try { preview = await extractRawPreview(item.file, 800, { bytes: bytes || undefined, hiResMaxEdge: 2400 }); }
     catch { preview = placeholderPreview(); }
 
     if (preview?.base64 && !preview.isPlaceholder) {

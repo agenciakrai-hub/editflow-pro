@@ -12,6 +12,22 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
   const stripRef = useRef(null);
   // Tamaño de las miniaturas de la tira inferior, ajustable con la barra.
   const [thumbH, setThumbH] = useState(80);
+  // Preview de ALTA RESOLUCIÓN para el visor grande: muestra el de 800px al instante
+  // (ya está en memoria) y, si existe un preview de 2400px, lo precarga y lo
+  // sustituye en cuanto está decodificado. El usuario ve la foto al momento y luego
+  // la ve nítida sin flash ni parpadeo. Las miniaturas de la tira inferior siguen
+  // usando el de 800px (son pequeñas y no necesitan más resolución).
+  const currentItem = index != null && index >= 0 && index < items.length ? items[index] : null;
+  const [displayUrl, setDisplayUrl] = useState(currentItem?.previewUrl);
+  useEffect(() => {
+    if (!currentItem) return;
+    setDisplayUrl(currentItem.previewUrl);
+    if (currentItem.hiResUrl && currentItem.hiResUrl !== currentItem.previewUrl) {
+      const img = new Image();
+      img.onload = () => setDisplayUrl(currentItem.hiResUrl);
+      img.src = currentItem.hiResUrl;
+    }
+  }, [currentItem?.id, currentItem?.previewUrl, currentItem?.hiResUrl]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -97,7 +113,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
               />
             )}
             <img
-              src={item.previewUrl}
+              src={displayUrl}
               alt={item.filename}
               className="max-h-full max-w-full object-contain"
               onClick={(e) => { e.stopPropagation(); if (isCmd(e)) cmdClick(item); }}

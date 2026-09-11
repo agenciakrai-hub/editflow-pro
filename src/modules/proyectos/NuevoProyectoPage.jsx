@@ -93,15 +93,19 @@ export default function NuevoProyectoPage() {
         // Previews cacheadas en IndexedDB: la galería se ve al instante.
         let previewByHash = new Map();
         try { previewByHash = await getCachedPreviews(fps.map((f) => f.fingerprint_hash).filter(Boolean)); } catch {}
-        const loaded = fps.map((f) => ({
-          id: f.id,
-          file: { name: f.filename },
-          status: f.selection_status || "REVIEW",
-          rating: f.rating || 0, // estrellas guardadas (apagadas si no se tocó)
-          aiReview: f.color_label === "yellow", // restaura el amarillo de la IA
-          fingerprint: f,
-          preview: previewByHash.has(f.fingerprint_hash) ? { dataUrl: previewByHash.get(f.fingerprint_hash) } : null,
-        }));
+        const loaded = fps.map((f) => {
+          const cached = previewByHash.get(f.fingerprint_hash);
+          return {
+            id: f.id,
+            file: { name: f.filename },
+            status: f.selection_status || "REVIEW",
+            rating: f.rating || 0, // estrellas guardadas (apagadas si no se tocó)
+            aiReview: f.color_label === "yellow", // restaura el amarillo de la IA
+            fingerprint: f,
+            // Restaura AMBAS resoluciones: lo (800px, galería) y hi (2400px, visor).
+            preview: cached ? { dataUrl: cached.dataUrl, hiResDataUrl: cached.hiResDataUrl } : null,
+          };
+        });
         if (!alive) return;
         setItems(loaded);
         // La marca (checkbox) se guarda por foto: el proyecto se reabre EXACTAMENTE
@@ -158,8 +162,9 @@ export default function NuevoProyectoPage() {
       setProgress({ done: count + i + 1, total });
     }
     // Cachea las previews en IndexedDB para que reabrir el proyecto sea instantáneo.
+    // Se cachean AMBAS resoluciones: lo (800px, galería) y hi (2400px, visor).
     cachePreviews(
-      withFingerprint.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl }))
+      withFingerprint.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl, hiResDataUrl: p.preview?.hiResDataUrl }))
     ).catch(() => {});
     setItems(withFingerprint);
     // Por defecto TODAS las fotos quedan marcadas (checkbox) al subir la carpeta:
@@ -320,13 +325,31 @@ export default function NuevoProyectoPage() {
         }
         await deleteFingerprintsByProject(existing.projectId);
       } else {
-        await createCatalogBinding({
+        const binding = await createCatalogBinding({
           project_id: savedId,
           catalog_handle_ref: catalogRef || "",
           raw_folder_handle_ref: folderRef,
           catalog_filename: catalogHandle?.name || "",
           raw_folder_name: folderHandle.name,
         });
+        // TRAS CREAR el proyecto, fijar `existing` para que el SIGUIENTE guardado
+        // ACTUALICE este proyecto en vez de crear un duplicado. Sin esto, cada
+        // guardado tras la creación genera un proyecto nuevo (bug de duplicación).
+        // También actualiza la URL con ?project=<id> para que un refresh no pierda
+        // el contexto y siga abriendo el mismo proyecto.
+        setExisting({
+          projectId: savedId,
+          bindingId: binding?.id || null,
+          folderRef: folderRef || "",
+          catalogRef: catalogRef || "",
+          folderName: folderHandle?.name || "",
+          catalogName: catalogHandle?.name || "",
+        });
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("project", savedId);
+          window.history.replaceState({}, "", url.toString());
+        } catch {}
       }
 
       await bulkCreateFingerprints(
@@ -585,6 +608,7 @@ export default function NuevoProyectoPage() {
             rating: it.rating || 0,
             aiReview: !!it.aiReview,
             previewUrl: it.preview?.dataUrl,
+            hiResUrl: it.preview?.hiResDataUrl,
             // Datos para ordenar: hora de captura (epoch ms) y cámara (marca + modelo).
             captureTime: it.fingerprint?.capture_time,
             camera: [it.fingerprint?.camera_make, it.fingerprint?.camera_model].filter(Boolean).join(" "),

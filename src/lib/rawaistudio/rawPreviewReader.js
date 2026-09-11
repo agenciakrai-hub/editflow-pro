@@ -203,11 +203,40 @@ function loadImageElement(url) {
   });
 }
 
-async function analyzeJpegBytes(jpegBytes, maxEdge, rotationDeg) {
+// Renderiza el source a un data URL de ALTA RESOLUCIÓN para el visor grande. A
+// diferencia de analyzeSource (que calcula métricas a 800px), esta función SOLO
+// renderiza: dibuja la imagen al canvas a la resolución solicitada (hasta el
+// tamaño real del JPEG embebido), aplica la rotación EXIF y exporta a 95% de
+// calidad JPEG. Sin análisis de píxeles, sin histograma — solo la imagen más
+// nítida posible para el previsualizador. Reutiliza el mismo <img> ya decodificado
+// por analyzeJpegBytes, así que el JPEG se decodifica UNA sola vez.
+function renderHiResDataUrl(source, srcW, srcH, maxEdge, rotationDeg) {
+  const swap = rotationDeg === 90 || rotationDeg === 270;
+  const scale = Math.min(1, maxEdge / Math.max(srcW, srcH));
+  const w = Math.max(1, Math.round(srcW * scale));
+  const h = Math.max(1, Math.round(srcH * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = swap ? h : w;
+  canvas.height = swap ? w : h;
+  if (canvas.width < 16 || canvas.height < 16) return null;
+  const ctx = canvas.getContext("2d");
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((rotationDeg * Math.PI) / 180);
+  ctx.drawImage(source, -w / 2, -h / 2, w, h);
+  return canvas.toDataURL("image/jpeg", 0.95);
+}
+
+async function analyzeJpegBytes(jpegBytes, maxEdge, rotationDeg, hiResMaxEdge) {
   const blobUrl = URL.createObjectURL(new Blob([jpegBytes], { type: "image/jpeg" }));
   try {
     const img = await loadImageElement(blobUrl);
-    return analyzeSource(img, img.naturalWidth, img.naturalHeight, maxEdge, rotationDeg);
+    const result = analyzeSource(img, img.naturalWidth, img.naturalHeight, maxEdge, rotationDeg);
+    // Preview de ALTA RESOLUCIÓN para el visor: reutiliza el mismo <img> ya
+    // decodificado (sin leer el archivo ni decodificar el JPEG otra vez).
+    if (hiResMaxEdge && hiResMaxEdge > maxEdge) {
+      result.hiResDataUrl = renderHiResDataUrl(img, img.naturalWidth, img.naturalHeight, hiResMaxEdge, rotationDeg);
+    }
+    return result;
   } finally {
     URL.revokeObjectURL(blobUrl);
   }
@@ -247,7 +276,7 @@ function analyzeRgbThumb(thumb, maxEdge, rotationDeg = 0) {
 //    (JPEG por offset/tamaño declarado, o una miniatura sin comprimir).
 // 3) Solo si ninguna de las dos existe se lanza error — eso sí sería un RAW sin ninguna
 //    preview embebida de ningún tipo.
-export async function extractRawPreview(file, maxEdge = 800, { autoRotate = true, bytes: sharedBytes } = {}) {
+export async function extractRawPreview(file, maxEdge = 800, { autoRotate = true, bytes: sharedBytes, hiResMaxEdge } = {}) {
   // Si el llamador ya leyó el buffer (ej. para extraer metadatos de cámara a la vez),
   // se reutiliza y no se vuelve a leer el RAW del disco — en lotes grandes esto evita
   // miles de lecturas duplicadas de archivos de decenas de MB (DNG/CR3).
@@ -264,12 +293,12 @@ export async function extractRawPreview(file, maxEdge = 800, { autoRotate = true
     const jpegBytes = segments.reduce((best, seg) => (seg.length > best.length ? seg : best));
     const orientation = tiffOrientation || sigOrientation || findOrientationInSegments(segments);
     const rotationDeg = autoRotate ? orientationToDegrees(orientation) : 0;
-    return analyzeJpegBytes(jpegBytes, maxEdge, rotationDeg);
+    return analyzeJpegBytes(jpegBytes, maxEdge, rotationDeg, hiResMaxEdge);
   }
 
   const rotationDeg = autoRotate ? orientationToDegrees(tiffOrientation || sigOrientation || 1) : 0;
   const dngPreview = extractDngPreview(bytes);
-  if (dngPreview?.type === "jpeg") return analyzeJpegBytes(dngPreview.bytes, maxEdge, rotationDeg);
+  if (dngPreview?.type === "jpeg") return analyzeJpegBytes(dngPreview.bytes, maxEdge, rotationDeg, hiResMaxEdge);
   if (dngPreview?.type === "rgb") return analyzeRgbThumb(dngPreview, maxEdge, rotationDeg);
 
   throw new Error("Sin preview embebida en el RAW (ni JPEG ni miniatura sin comprimir)");

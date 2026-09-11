@@ -8,10 +8,10 @@ const STORE = "previews";
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    // v2: las previews cacheadas en v1 se generaron sin aplicar la orientación EXIF
-    // correcta (las fotos verticales aparecían tumbadas). Se borra la caché vieja para
-    // forzar la re-extracción con la orientación corregida al reabrir el proyecto.
-    const req = indexedDB.open(DB_NAME, 2);
+    // v3: se añade el preview de ALTA RESOLUCIÓN (2400px, 95% JPEG) junto al de
+    // 800px para el visor. La caché vieja (v2) no tiene hiResDataUrl: se borra para
+    // forzar la re-extracción con ambos previews al reabrir el proyecto.
+    const req = indexedDB.open(DB_NAME, 3);
     req.onupgradeneeded = (e) => {
       const db = req.result;
       if (db.objectStoreNames.contains(STORE)) {
@@ -24,21 +24,23 @@ function openDb() {
   });
 }
 
-// entries: [{ hash, dataUrl }]
+// entries: [{ hash, dataUrl, hiResDataUrl }]
+// Se almacena un objeto { lo: dataUrl, hi: hiResDataUrl } por hash. El preview lo
+// (800px) sirve para la galería y el análisis IA; el hi (2400px) para el visor.
 export async function cachePreviews(entries) {
   if (!entries?.length) return;
   const db = await openDb();
   await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     for (const e of entries) {
-      if (e.hash && e.dataUrl) tx.objectStore(STORE).put(e.dataUrl, e.hash);
+      if (e.hash && e.dataUrl) tx.objectStore(STORE).put({ lo: e.dataUrl, hi: e.hiResDataUrl || null }, e.hash);
     }
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
   });
 }
 
-// hashes: string[] -> Map<hash, dataUrl>
+// hashes: string[] -> Map<hash, { dataUrl, hiResDataUrl }>
 export async function getCachedPreviews(hashes) {
   const db = await openDb();
   const map = new Map();
@@ -48,7 +50,13 @@ export async function getCachedPreviews(hashes) {
     for (const h of hashes) {
       if (!h) continue;
       const r = store.get(h);
-      r.onsuccess = () => { if (r.result) map.set(h, r.result); };
+      r.onsuccess = () => {
+        if (!r.result) return;
+        // Compatibilidad: la caché v2 guardaba un string suelto (solo dataUrl).
+        // La v3 guarda { lo, hi }. Se normalizan ambos al formato esperado.
+        if (typeof r.result === "string") map.set(h, { dataUrl: r.result, hiResDataUrl: null });
+        else map.set(h, { dataUrl: r.result.lo, hiResDataUrl: r.result.hi || null });
+      };
     }
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
