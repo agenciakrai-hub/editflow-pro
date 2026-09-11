@@ -13,7 +13,7 @@ import PreviewLightbox from "./PreviewLightbox";
 export default function ProjectPhotoWorkspace({
   items, selectedIds, onToggleSelect, onToggleSelectMany, onToggleSelectAll, onDeleteSelected,
   onCycleStatus, onSetRating, gridCols, onGridCols, saving, busyAction, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
-  onValidatePhoto,
+  onValidatePhoto, onMarkSelected, onMarkReview,
   aiRunning,
   onUndo, onRedo, canUndo, canRedo,
 }) {
@@ -304,6 +304,8 @@ export default function ProjectPhotoWorkspace({
           selectedIds={selectedIds}
           onToggleSelect={onToggleSelect}
           onValidate={onValidatePhoto}
+          onMarkSelected={onMarkSelected}
+          onMarkReview={onMarkReview}
         />
       )}
     </div>

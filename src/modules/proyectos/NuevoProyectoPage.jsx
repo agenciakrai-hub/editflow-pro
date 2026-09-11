@@ -202,6 +202,20 @@ export default function NuevoProyectoPage() {
     setSelectedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
   };
 
+  // Atajos de teclado del visor: 5 = verde (seleccionada), 3 = amarillo (revisión).
+  // SET (no toggle): la foto pasa al estado indicado sea cual sea su estado previo.
+  // Cuenta como un paso de deshacer.
+  const markAsSelected = (id) => {
+    record();
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, aiReview: false, rating: 5, status: it.status === "TOP_PICK" ? "TOP_PICK" : "SELECT" } : it)));
+    setSelectedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
+  };
+  const markAsReview = (id) => {
+    record();
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, aiReview: true, rating: 3, status: "REVIEW" } : it)));
+    setSelectedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
+  };
+
   const toggleSelect = (id) => {
     record();
     setSelectedIds((prev) => {
@@ -586,6 +600,8 @@ export default function NuevoProyectoPage() {
           onDeleteSelected={deleteSelected}
           onCycleStatus={cycleStatus}
           onValidatePhoto={validatePhoto}
+          onMarkSelected={markAsSelected}
+          onMarkReview={markAsReview}
           gridCols={gridCols}
           onGridCols={setGridCols}
           saving={saving}

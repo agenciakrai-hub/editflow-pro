@@ -8,7 +8,7 @@ import { X, ChevronLeft, ChevronRight } from "lucide-react";
 // así que al cerrar la vista previa la galería refleja lo hecho aquí (y viceversa).
 // Flechas ←/→ navegan, Esc o clic fuera cierra. Verde = seleccionada, amarillo = a
 // revisar (marco + punto en la foto grande y en cada miniatura).
-export default function PreviewLightbox({ items, index, onIndex, onClose, selectedIds, onToggleSelect, onValidate }) {
+export default function PreviewLightbox({ items, index, onIndex, onClose, selectedIds, onToggleSelect, onValidate, onMarkSelected, onMarkReview }) {
   const stripRef = useRef(null);
   // Tamaño de las miniaturas de la tira inferior, ajustable con la barra.
   const [thumbH, setThumbH] = useState(80);
@@ -18,10 +18,18 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
       if (e.key === "Escape") onClose();
       else if (e.key === "ArrowLeft") onIndex((i) => (i > 0 ? i - 1 : i));
       else if (e.key === "ArrowRight") onIndex((i) => (i < items.length - 1 ? i + 1 : i));
+      else if (e.key === "5" && onMarkSelected) {
+        const it = items[index];
+        if (it) onMarkSelected(it.id);
+      }
+      else if (e.key === "3" && onMarkReview) {
+        const it = items[index];
+        if (it) onMarkReview(it.id);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose, onIndex, items]);
+  }, [onClose, onIndex, items, index, onMarkSelected, onMarkReview]);
 
   // Mantiene la miniatura de la foto actual visible y centrada en la tira.
   useEffect(() => {
@@ -116,7 +124,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
           fondo del visor y lo cierra. */}
       <div className="flex shrink-0 items-center justify-between gap-4 px-4 pb-2" onClick={(e) => e.stopPropagation()}>
         <p className="text-center text-xs text-white/70">
-          ⌘/Ctrl + clic sobre una foto la valida (verde); si ya está verde, la desmarca
+          <kbd className="rounded bg-white/15 px-1">5</kbd> verde · <kbd className="rounded bg-white/15 px-1">3</kbd> revisión · ⌘/Ctrl+clic valida · ←/→ navega
         </p>
         <div className="flex items-center gap-2">
           <span className="text-xs text-white/70">Tamaño</span>
