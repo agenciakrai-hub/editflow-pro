@@ -1,4 +1,4 @@
-// Tests de la agrupación de ráfagas V2 — 100 % puros (sin DOM, sin red): señales
+// Tests de la agrupación de ráfagas — 100 % puros (sin DOM, sin red): señales
 // sintéticas 16×16 y un resolver de visión simulado. Ejecutar con
 // `await runGroupBuilderTests()` desde la consola del navegador.
 // Casos exigidos: misma ráfaga · escena diferente · giro brusco de cabeza ·

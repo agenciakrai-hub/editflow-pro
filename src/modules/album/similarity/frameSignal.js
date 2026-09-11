@@ -1,4 +1,4 @@
-// Fase V2 de agrupación — SEÑAL VISUAL LOCAL barata (sin IA, sin red): matriz 16×16
+// Agrupación de ráfagas — SEÑAL VISUAL LOCAL barata (sin IA, sin red): matriz 16×16
 // en escala de grises de la preview sanitizada (≤512 px). Complementa al pHash
 // (identidad global de escena, 8×8 DCT): la matriz fina captura continuidad de
 // ENCUADRE y movimiento de SUJETOS (giro de cabeza, pose, expresión, sujeto que

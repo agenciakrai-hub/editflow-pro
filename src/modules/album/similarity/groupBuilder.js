@@ -1,4 +1,4 @@
-// Fase 4.1 Bloque 9 E3 (V2) — agrupación de ráfagas por CONTINUIDAD de momento
+// Fase 4.1 Bloque 9 E3 — agrupación de ráfagas por CONTINUIDAD de momento
 // fotográfico. El tiempo (Δt) es SOLO una señal de proximidad: NUNCA une fotos
 // por sí solo. Una ráfaga = mismo MOMENTO fotográfico: escena + encuadre +
 // sujetos continuos, sin cambios significativos de pose / orientación de

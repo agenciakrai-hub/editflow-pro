@@ -6,7 +6,7 @@ import AddProviderForm from "@/components/aiProviders/AddProviderForm";
 import ProviderCard from "@/components/aiProviders/ProviderCard";
 import NvidiaVisionTest from "@/components/aiProviders/NvidiaVisionTest";
 
-// Proveedores IA V2 — UNA sola lista unificada. Los antiguos proveedores integrados
+// Proveedores IA — UNA sola lista unificada. Los antiguos proveedores integrados
 // (Gemini, Qwen, NVIDIA) se migran a la misma base de datos que los propios: todos los
 // proveedores muestran sus modelos marcables por tarea (Selección IA / Ajustes IA),
 // permiten cambiar la API key, encenderse/apagarse y eliminarse de la base de datos.

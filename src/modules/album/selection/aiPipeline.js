@@ -142,7 +142,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   }
   onProgress?.({ stage: "e2", done: photos.length, total: photos.length });
 
-  // ---- E3: grupos por CONTINUIDAD de momento (V2) ----
+  // ---- E3: grupos por CONTINUIDAD de momento ----
   // Local (gratis): Δt como señal + pHash (escena) + frameSignal (encuadre y
   // sujetos). La visión SOLO resuelve fronteras ambiguas — pares consecutivos con
   // misma escena y cambio moderado (posible giro de cabeza/pose/expresión/sujeto

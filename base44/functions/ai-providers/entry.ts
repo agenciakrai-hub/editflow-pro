@@ -11,7 +11,7 @@ import {
   pickBestVisionModel,
 } from '../../shared/aiProviderAdapter.ts';
 
-// Proveedores IA V2 — admin-only. UNA SOLA herramienta de proveedores: se añade un
+// Proveedores IA — admin-only. UNA SOLA herramienta de proveedores: se añade un
 // proveedor con endpoint + API key, la función autodetecta el nombre (dominio), normaliza
 // la URL base (añade /v1 si falta ruta), verifica la conexión con GET {endpoint}/models
 // y guarda en available_models TODOS los modelos detectados. El administrador marca en
@@ -105,7 +105,7 @@ function effectiveKey(rec: any): string {
   return '';
 }
 
-// Proveedores integrados migrados a filas normales (V2 unificada): Gemini, Qwen y
+// Proveedores integrados migrados a filas normales (lista unificada): Gemini, Qwen y
 // NVIDIA nacen como CustomAiProvider la primera vez que se abre la herramienta, con
 // la clave tomada del secret de Base44 (builtin_secret). Al cambiar la clave desde la
 // página, esta se guarda en la fila y pasa a usarse esa. La migración ocurre UNA sola
@@ -275,7 +275,7 @@ export default async function(req: Request): Promise<Response> {
     }
 
     // ------------------------------------------------------------------
-    // Proveedores propios (CustomAiProvider V2).
+    // Proveedores propios (CustomAiProvider).
     // ------------------------------------------------------------------
     if (action === 'list') {
       // Migra (una sola vez) los proveedores integrados a filas unificadas.

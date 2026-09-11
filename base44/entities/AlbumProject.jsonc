@@ -55,7 +55,7 @@
     "gutter_mm": {
       "type": "number",
       "default": 6,
-      "description": "Legado (pliego doble p\u00e1gina): separaci\u00f3n central entre p\u00e1ginas. Las plantillas V2 usan photo_gap_mm como espacio entre fotos."
+      "description": "Legado (pliego doble p\u00e1gina): separaci\u00f3n central entre p\u00e1ginas. Las plantillas actuales usan photo_gap_mm como espacio entre fotos."
     },
     "photo_gap_mm": {
       "type": "number",

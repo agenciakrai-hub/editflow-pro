@@ -366,7 +366,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   const base = String(rec.endpoint || "").trim().replace(/\/+$/, "");
   if (!base) throw new Error(`El proveedor "${rec.name}" no tiene endpoint configurado`);
   const endpoint = base + "/chat/completions";
-  // Modelo por tarea (V2): usa SOLO los modelos que el administrador marcó para esta
+  // Modelo por tarea: usa SOLO los modelos que el administrador marcó para esta
   // tarea en Proveedores IA (seleccion_models / ajustes_models). Con varios marcados,
   // "Auto" elige el mejor modelo de visión de la lista. Fallback: el modelo legado V1
   // (proveedores con modelo único). Nunca usa modelos fuera de la lista marcada.

@@ -10,7 +10,7 @@ export function albumVars(album) {
   const H = Number(album.height_mm);
   const gutter = album.gutter_mm ?? 6;
   // Fase Lienzos — `gap` = espacio entre fotografías (photo_gap_mm) configurado en el
-  // álbum. Las plantillas V2 lo usan como separación DINÁMICA entre huecos: no está
+  // álbum. Las plantillas lo usan como separación DINÁMICA entre huecos: no está
   // fijado en el catálogo, y al cambiarlo la geometría se recalcula.
   return { W, H, margin: album.margin_mm ?? 10, gutter, bleed: album.bleed_mm ?? 3, gap: album.photo_gap_mm ?? 0, page_w: (W - gutter) / 2, page_h: H };
 }

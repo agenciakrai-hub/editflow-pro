@@ -1,4 +1,4 @@
-// LAYOUT LIBRARY V2 (Fase Lienzos) — las plantillas son DATOS, no componentes.
+// LAYOUT LIBRARY (Fase Lienzos) — las plantillas son DATOS, no componentes.
 // Coordenadas como expresiones sobre variables del LIENZO: W, H, margin, gap.
 // `gap` es el ESPACIO ENTRE FOTOGRAFÍAS del álbum (photo_gap_mm): las plantillas
 // definen SOLO estructura y distribución; el espaciado lo aporta la configuración
