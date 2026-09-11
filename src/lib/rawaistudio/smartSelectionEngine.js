@@ -437,15 +437,15 @@ function fallbackScoreOf(m, p) {
   return 0;
 }
 
-// GARANTÍA determinista: el resultado de selección SIEMPRE debe tener al menos una
-// foto seleccionada (TOP_PICK). Post-procesado puro del resultado IA existente: no
-// hace una segunda llamada a IA ni gasta créditos. Reglas:
-//   1. Si ya existe >=1 TOP_PICK → no hacer nada (comportamiento normal).
-//   2. Si 0 TOP_PICK pero hay SELECT → promocionar el SELECT de mayor puntuación a TOP_PICK.
-//   3. Si tampoco hay SELECT → elegir la mejor candidata no rechazada (REVIEW) por
-//      puntuación y promocionarla a TOP_PICK (implica SELECT/5★/verde/cola de edición).
-//   4. Si todo está REJECT (o corrupt) → NO se fuerza ningún TOP_PICK: se registra como
-//      caso excepcional (exceptional=true) para revisión humana. Nunca se promueve un REJECT.
+// TOP_PICK determinista: SOLO puede proceder de una foto que la IA ya consideró
+// SELECT (promoción SELECT→TOP_PICK). Post-procesado puro del resultado IA existente:
+// no hace una segunda llamada a IA ni gasta créditos. Reglas:
+//   1. Si ya existe >=1 TOP_PICK → no hacer nada.
+//   2. Si 0 TOP_PICK pero hay SELECT → el mejor SELECT (overall de la IA) pasa a
+//      TOP_PICK. Nunca se toca un REJECT ni un REVIEW: la clasificación semántica del
+//      proveedor es intocable.
+//   3. Si no existe ninguna SELECT → NO se crea ningún TOP_PICK: caso excepcional
+//      (exceptional=true, reason=no_select_available) para revisión humana.
 // Devuelve { selection_fallback, fallback_reason, exceptional } y marca la foto promocionada.
 function ensureAtLeastOneTopPick(keep, meta, withPreview) {
   const byId = new Map(withPreview.map((p) => [p.id, p]));
@@ -455,72 +455,52 @@ function ensureAtLeastOneTopPick(keep, meta, withPreview) {
     return { selection_fallback: false, fallback_reason: null };
   }
 
-  let chosen = entries.filter(([, m]) => m.status === "SELECT");
-  let fallback_reason = "no_top_pick";
-  if (!chosen.length) {
-    chosen = entries.filter(([, m]) => m.status !== "REJECT" && !m.previewWarning);
-  }
-  if (!chosen.length) {
-    // Todo es REJECT (o corrupt): no se fuerza un TOP_PICK técnicamente malo.
-    // Se registra como caso excepcional para revisión humana.
-    return { selection_fallback: false, fallback_reason: "no_selectable_all_reject", exceptional: true };
+  // TOP_PICK SOLO desde SELECT: nunca se promueve un REJECT ni un REVIEW.
+  const selects = entries.filter(([, m]) => m.status === "SELECT");
+  if (!selects.length) {
+    // Sin ninguna SELECT de la IA: NO se fabrica ningún TOP_PICK. Caso excepcional
+    // para revisión humana.
+    return { selection_fallback: false, fallback_reason: "no_select_available", exceptional: true };
   }
 
-  chosen.sort((a, b) => fallbackScoreOf(b[1], byId.get(b[0])) - fallbackScoreOf(a[1], byId.get(a[0])));
-  const [id, m] = chosen[0];
+  // SELECT sin TOP_PICK: se elige deterministamente la mejor SELECT usando la
+  // información que ya devolvió la IA (overall; sin llamadas, sin créditos).
+  selects.sort((a, b) => fallbackScoreOf(b[1], byId.get(b[0])) - fallbackScoreOf(a[1], byId.get(a[0])));
+  const [id, m] = selects[0];
   m.status = "TOP_PICK";
   m.groupRank = 1;
   m.rejectReasons = [];
   keep.add(id);
   m.selection_fallback = true;
-  m.fallback_reason = fallback_reason;
-  return { selection_fallback: true, fallback_reason };
+  m.fallback_reason = "no_top_pick";
+  return { selection_fallback: true, fallback_reason: "no_top_pick" };
 }
 
-// GARANTÍA de cobertura por grupo/ráfaga (post-procesado, sin IA, sin créditos):
-// cada grupo de fotos similares debe tener al menos 1 foto seleccionada. Solo
-// AÑADE representantes; nunca quita selecciones existentes. Si un grupo no tiene
-// ninguna TOP_PICK/SELECT, promociona la mejor candidata NO RECHAZADA del grupo a
-// SELECT. Si TODO el grupo está REJECT, NO se inventa ninguna selección: se registra
-// el grupo como excepcional (exceptional_groups) para revisión humana. Nunca se
-// promueve un REJECT a SELECT/REVIEW para cumplir cobertura.
-// Trazabilidad: selection_coverage_fallback=true y, por promoción,
-// coverage_fallback_group / coverage_fallback_photo / coverage_fallback_reason.
+// COBERTURA SIN PROMOCIONES: la cobertura por grupo YA NO promociona fotos. La
+// clasificación semántica (SELECT/REVIEW/REJECT) la decide ÚNICAMENTE el proveedor
+// configurado; esta función solo REGISTRA como caso excepcional cada grupo/ráfaga en
+// el que la IA no dejó ninguna foto seleccionada (exceptional_group con reason
+// NO_AI_SELECT_IN_GROUP, para revisión humana). Nunca convierte REVIEW→SELECT ni
+// REJECT→SELECT/REVIEW; si un grupo está todo REJECT, todas permanecen REJECT.
+// Trazabilidad: promotions siempre vacío; selection_coverage_fallback siempre false.
 function ensureCoveragePerGroup(keep, meta, withPreview) {
-  const byId = new Map(withPreview.map((p) => [p.id, p]));
   const byGroup = new Map();
   for (const [id, m] of meta) {
-    if (!m || m.previewWarning) continue; // corrupt: no se promociona
+    if (!m || m.previewWarning) continue; // corrupt: no entró a la IA, se ignora aquí
     const g = m.groupId || "ungrouped";
     if (!byGroup.has(g)) byGroup.set(g, []);
     byGroup.get(g).push([id, m]);
   }
-  let coverage = false;
   const promotions = [];
   const exceptionalGroups = [];
   for (const [groupId, items] of byGroup) {
     const hasSelected = items.some(([, m]) => m.status === "TOP_PICK" || m.status === "SELECT");
     if (hasSelected) continue;
-    const pool = items.filter(([, m]) => m.status !== "REJECT");
-    if (!pool.length) {
-      // Grupo sin seleccionables (todas REJECT): no se inventa ninguna selección.
-      // Se registra como caso excepcional para revisión humana. Las fotos siguen REJECT.
-      exceptionalGroups.push(groupId);
-      continue;
-    }
-    pool.sort((a, b) => fallbackScoreOf(b[1], byId.get(b[0])) - fallbackScoreOf(a[1], byId.get(a[0])));
-    const [id, m] = pool[0];
-    m.status = "SELECT";
-    m.rejectReasons = [];
-    keep.add(id);
-    m.coverage_fallback = true;
-    m.coverage_fallback_group = groupId;
-    m.coverage_fallback_photo = id;
-    m.coverage_fallback_reason = "no_selected_in_group";
-    coverage = true;
-    promotions.push({ group: groupId, photo: id, reason: "no_selected_in_group" });
+    // Grupo sin ninguna SELECT/TOP_PICK de la IA: NO se promociona nada. Se registra
+    // como excepcional para revisión humana. Los estados de la IA no se tocan.
+    exceptionalGroups.push({ group: groupId, reason: "NO_AI_SELECT_IN_GROUP", photo_count: items.length });
   }
-  return { selection_coverage_fallback: coverage, promotions, exceptional_groups: exceptionalGroups };
+  return { selection_coverage_fallback: false, promotions, exceptional_groups: exceptionalGroups };
 }
 
 // ADAPTADOR: produce la forma que el Editor espera (aiSelected, selectedForEdit,

@@ -21,15 +21,15 @@ import { invokeVision } from '../../shared/aiProviderAdapter.ts';
 // fuerza a SELECT: puede ser SELECT/REVIEW/REJECT según su calidad. No se garantiza
 // selección si todas son claramente REJECT.
 //
-// Modelo de visión: claude_sonnet_4_6 (mejor relación calidad/velocidad en visión de
-// caras, ojos y expresión para culling de bodas). Sin add_context_from_internet
-// (privacidad de previews). Concurrencia controlada (MAX_CONCURRENT_LLM=3).
+// Modelo de visión: el configurado por el administrador (active_seleccion /
+// active_model_seleccion) vía aiProviderAdapter — NO hay modelo fijo en el código.
+// Sin add_context_from_internet (privacidad de previews). Concurrencia controlada
+// (MAX_CONCURRENT_LLM=3).
 //
 // Grupos grandes: si el grupo supera MAX_IMAGES_PER_CALL, se parte en DOS llamadas
 // comparativas que cubren todo el grupo (ninguna foto queda fuera por sharpness/
 // exposure) y se consolida el ranking deterministamente (un único TOP_PICK global).
 
-const MODEL = 'claude_sonnet_4_6';
 const MAX_IMAGES_PER_CALL = 12;
 const MAX_CONCURRENT_LLM = 3;
 // Para grupos > MAX_IMAGES_PER_CALL: dos llamadas (mitades) + una TERCERA llamada de
@@ -295,7 +295,6 @@ async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<str
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
     prompt,
-    model: MODEL,
     file_urls: fileUrls,
     response_json_schema: {
       type: 'object',
@@ -353,7 +352,6 @@ async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: 
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
     prompt,
-    model: MODEL,
     file_urls: fileUrls,
     response_json_schema: {
       type: 'object',
@@ -434,7 +432,6 @@ async function analyzeIndependent(base44: any, key: string, ids: string[], uploa
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
     prompt,
-    model: MODEL,
     file_urls: fileUrls,
     response_json_schema: {
       type: 'object',
