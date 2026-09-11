@@ -18,14 +18,33 @@ function formatValue(value) {
 // atributo DESPUÉS de la barra de cierre, generando XML corrupto en esos presets
 // (frecuente en algunos exports de cámara, incluyendo varios flujos Leica).
 export function setAttribute(xmpText, namespace, tag, value) {
+  // CAMINO 1: el atributo ya existe en el XMP → se reemplaza in situ (comportamiento original).
   const attrRegex = new RegExp(`(${namespace}:${tag}\\s*=\\s*")([^"]*)(")`);
   if (attrRegex.test(xmpText)) return xmpText.replace(attrRegex, `$1${value}$3`);
 
-  const selfClosing = /<rdf:Description\b([^>]*?)\/>/;
-  if (selfClosing.test(xmpText)) {
-    return xmpText.replace(selfClosing, `<rdf:Description$1\n   ${namespace}:${tag}="${value}"/>`);
+  // CAMINO 2: el atributo no existe → se añade a la rdf:Description PRINCIPAL (la que
+  // contiene rdf:about=""), garantizando primero el namespace correspondiente. Esto
+  // corrige el bug por el que, en presets con múltiples rdf:Description, los atributos
+  // crs:* (Exposure2012, Contrast2012, ... HasSettings) se escribían en la PRIMERA
+  // descripción aunque esta no tuviera xmlns:crs, generando XML que Lightroom no podía
+  // interpretar correctamente.
+  const NS_URIS = {
+    crs: "http://ns.adobe.com/camera-raw-settings/1.0/",
+    xmp: "http://ns.adobe.com/xap/1.0/",
+    photoshop: "http://ns.adobe.com/photoshop/1.0/",
+  };
+  let result = xmpText;
+  const nsUri = NS_URIS[namespace];
+  if (nsUri) result = ensureNamespace(result, namespace, nsUri);
+  const bounds = mainDescriptionBounds(result);
+  if (!bounds) return result;
+  const opening = result.slice(bounds.openStart, bounds.openEnd);
+  if (bounds.selfClosing) {
+    const newOpening = opening.replace(/\/\s*>$/, `\n   ${namespace}:${tag}="${value}"/>`);
+    return result.slice(0, bounds.openStart) + newOpening + result.slice(bounds.openEnd);
   }
-  return xmpText.replace(/(<rdf:Description[^>]*?)(>)/, `$1\n   ${namespace}:${tag}="${value}"$2`);
+  const newOpening = opening.replace(/>$/, `\n   ${namespace}:${tag}="${value}">`);
+  return result.slice(0, bounds.openStart) + newOpening + result.slice(bounds.openEnd);
 }
 
 function mainDescriptionBounds(xmpText) {
