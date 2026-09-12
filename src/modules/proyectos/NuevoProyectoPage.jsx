@@ -3,17 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { FolderOpen, FileText, Loader2, ArrowLeft } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
-import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
-import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { selectBursts } from "@/lib/ai/aiGateway";
-import { computeFingerprint, statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
+import { statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { saveHandle, getHandleRecord } from "./lib/idbHandles";
 import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, getCatalogBinding, listFingerprints, updateProject, updateCatalogBinding, deleteFingerprintsByProject } from "./hooks/useProjectStore";
+import { startProcessing, getJob, subscribe } from "./lib/backgroundProcessor";
 import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
 import { useToast } from "@/components/ui/use-toast";
 import useUndoRedo from "@/hooks/useUndoRedo";
 import { setPendingProjectPreviews, setSession } from "@/lib/rawaistudio/localSession";
-import { cachePreviews, getCachedPreviews } from "./lib/previewCache";
+import { getCachedPreviews } from "./lib/previewCache";
 
 // Crea un proyecto: nombre + fecha + catálogo .lrcat + carpeta RAW. Lee los RAW igual que
 // el flujo de Selección (extractPreviews, reutilizado sin modificar) y calcula un
@@ -61,6 +60,38 @@ export default function NuevoProyectoPage() {
 
   useEffect(() => {
     if (!projectIdParam) return;
+    // Si hay un job activo (procesando en segundo plano), se suscribe a él en vez
+    // de cargar desde la base de datos: el usuario ve el progreso en tiempo real
+    // aunque haya navegado fuera y vuelto.
+    const activeJob = getJob(projectIdParam);
+    if (activeJob) {
+      setExtracting(activeJob.status === "processing");
+      setPhase(activeJob.phase);
+      setProgress(activeJob.progress);
+      if (activeJob.status === "completed" && activeJob.items?.length) {
+        const loaded = activeJob.items.map((p) => ({
+          id: p.id, file: p.file, status: p.status || "REVIEW", rating: p.rating || 0,
+          aiReview: false, fingerprint: p.fingerprint, preview: p.preview,
+        }));
+        setItems(loaded);
+        setSelectedIds(new Set(loaded.map((p) => p.id)));
+      }
+      const unsub = subscribe(projectIdParam, (job) => {
+        setExtracting(job.status === "processing");
+        setPhase(job.phase);
+        setProgress(job.progress);
+        if (job.status === "completed" && job.items?.length) {
+          const loaded = job.items.map((p) => ({
+            id: p.id, file: p.file, status: p.status || "REVIEW", rating: p.rating || 0,
+            aiReview: false, fingerprint: p.fingerprint, preview: p.preview,
+          }));
+          setItems(loaded);
+          setSelectedIds(new Set(loaded.map((p) => p.id)));
+          reset();
+        }
+      });
+      return unsub;
+    }
     let alive = true;
     (async () => {
       try {
@@ -130,104 +161,61 @@ export default function NuevoProyectoPage() {
     }
   };
 
-  const extractFromFolder = async (handle) => {
+  // Inicia el procesado en segundo plano: extrae previews y calcula huellas de la
+  // carpeta RAW. El bucle vive en backgroundProcessor.js, NO en este componente, así
+  // que CONTINÚA aunque el usuario navegue fuera de esta página (a Selección, Edición,
+  // Historial, etc.). Al completarse, guarda huellas en la base de datos y cachea
+  // previews en IndexedDB automáticamente.
+  const extractFromFolder = (handle) => {
     setExtracting(true);
     setPhase("extracting");
     setProgress({ done: 0, total: 0 });
-
-    // Crea el proyecto al inicio si es nuevo, para tener project_id y poder trackear
-    // el procesado en el Historial desde el primer momento.
-    let projectId = projectIdParam || existing?.projectId || null;
-    if (!projectId) {
-      try {
-        const p = await createProject({ title: handle.name, status: "draft", photo_count: 0 });
-        projectId = p.id;
-        setExisting({
-          projectId: p.id,
-          bindingId: null,
-          folderRef: "",
-          catalogRef: "",
-          folderName: handle.name,
-          catalogName: "",
-        });
-        try {
-          const url = new URL(window.location.href);
-          url.searchParams.set("project", p.id);
-          window.history.replaceState({}, "", url.toString());
-        } catch {}
-      } catch {}
-    }
-
-    // Job de procesado para el Historial (visible en tiempo real desde cualquier dispositivo).
-    let jobId = null;
-    let lastPct = -1;
-    let lastPhase = null;
-    const syncJob = async (progress, phase, status = "processing") => {
-      if (!projectId) return;
-      try {
-        if (!jobId) {
-          const j = await base44.entities.ProjectProcessingJob.create({ project_id: projectId, status, progress, phase });
-          jobId = j.id;
-        } else if (status !== "processing" || Math.abs(progress - lastPct) >= 4 || phase !== lastPhase) {
-          await base44.entities.ProjectProcessingJob.update(jobId, { status, progress, phase });
+    startProcessing({
+      folderHandle: handle,
+      catalogHandle,
+      projectId: projectIdParam || existing?.projectId || null,
+      existing,
+      onProgress: (job) => {
+        setPhase(job.phase);
+        setProgress(job.progress);
+        // Si el procesador creó el proyecto (nuevo), actualiza `existing` y la URL
+        // para que el componente sepa que el proyecto ya existe.
+        if (job.projectId && !existing && !projectIdParam) {
+          setExisting({
+            projectId: job.projectId,
+            bindingId: job.bindingId || null,
+            folderRef: job.folderRef || "",
+            catalogRef: job.catalogRef || "",
+            folderName: handle.name,
+            catalogName: catalogHandle?.name || "",
+          });
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.set("project", job.projectId);
+            window.history.replaceState({}, "", url.toString());
+          } catch {}
         }
-        lastPct = progress; lastPhase = phase;
-      } catch {}
-    };
-
-    const raws = [];
-    for await (const [name, entryHandle] of handle.entries()) {
-      if (entryHandle.kind !== "file") continue;
-      if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
-      raws.push(await entryHandle.getFile());
-    }
-    const count = raws.length;
-    const total = count * 2;
-    setProgress({ done: 0, total });
-    await syncJob(0, "extracting");
-    const inputItems = raws.map((f, i) => ({ id: String(i), file: f }));
-    let withPreview = [];
-    try {
-      withPreview = await extractPreviews(
-        inputItems,
-        (done) => {
-          setProgress({ done, total });
-          const pct = total ? Math.round((done / total) * 100) : 0;
-          syncJob(pct, "extracting");
-        },
-        () => {}
-      );
-      setPhase("fingerprinting");
-      const withFingerprint = [];
-      for (let i = 0; i < withPreview.length; i++) {
-        const p = withPreview[i];
-        withFingerprint.push({
-          ...p,
-          status: "REVIEW",
-          rating: 0, // las 5 estrellas nacen apagadas
-          fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
-        });
-        const done = count + i + 1;
-        setProgress({ done, total });
-        const pct = total ? Math.round((done / total) * 100) : 0;
-        syncJob(pct, "fingerprinting");
-      }
-      await syncJob(100, "fingerprinting", "completed");
-      // Cachea las previews en IndexedDB para que reabrir el proyecto sea instantáneo.
-      // Se cachean AMBAS resoluciones: lo (800px, galería) y hi (2400px, visor).
-      cachePreviews(
-        withFingerprint.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl, hiResDataUrl: p.preview?.hiResDataUrl }))
-      ).catch(() => {});
-      setItems(withFingerprint);
-      // Por defecto TODAS las fotos quedan marcadas (checkbox) al subir la carpeta:
-      // el fotógrafo parte de la selección completa y desmarca solo lo que no quiera.
-      setSelectedIds(new Set(withFingerprint.map((p) => p.id)));
-      reset(); // historial nuevo para la carpeta recién importada
-    } catch (e) {
-      await syncJob(lastPct < 0 ? 0 : lastPct, lastPhase || "extracting", "failed");
-      throw e;
-    }
-    setExtracting(false);
+      },
+      onComplete: (job) => {
+        setExtracting(false);
+        const loaded = job.items.map((p) => ({
+          id: p.id,
+          file: p.file,
+          status: p.status || "REVIEW",
+          rating: p.rating || 0,
+          aiReview: false,
+          fingerprint: p.fingerprint,
+          preview: p.preview,
+        }));
+        setItems(loaded);
+        setSelectedIds(new Set(loaded.map((p) => p.id)));
+        reset();
+      },
+      onError: (e) => {
+        setExtracting(false);
+        toast({ title: "Error en el procesado", description: e?.message, variant: "destructive" });
+      },
+    });
   };
 
   const pickFolder = async () => {
