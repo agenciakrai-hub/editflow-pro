@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { Outlet, NavLink, useNavigate, useLocation } from "react-router-dom";
-import { Menu, Bell, X, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound, FolderHeart, Brain, History } from "lucide-react";
+import { Menu, X, CreditCard, Users, LogOut, Sparkles, Plug, LayoutGrid, Wand2, FileImage, KeyRound, FolderHeart, Brain, History } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import NotificationBell from "@/components/NotificationBell";
 
 const navItems = [
   { to: "/herramientas", label: "Herramientas", icon: LayoutGrid },
@@ -59,10 +60,7 @@ export default function AppLayout() {
             <Logo />
           </div>
           <div className="flex items-center gap-3">
-            <button className="relative p-1.5 hover:bg-secondary rounded-lg transition-colors">
-              <Bell className="w-5 h-5" />
-              <span className="absolute -top-0.5 -right-0.5 bg-accent text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">8</span>
-            </button>
+            <NotificationBell />
             <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-sm font-semibold">
               {initials}
             </div>
