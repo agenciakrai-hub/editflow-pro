@@ -1,6 +1,6 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, Loader2, Sparkles, Package, Plug, CheckCircle2, ArrowLeft, Brain } from "lucide-react";
+import { FolderOpen, Loader2, Sparkles, Package, Plug, CheckCircle2, ArrowLeft, Brain, Pause, Play, Download, Trash2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { isRawFile, isHiddenOrSystemFile } from "@/lib/rawaistudio/rawPreviewReader";
 import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
@@ -13,6 +13,7 @@ import { sanitizeTreatment } from "@/lib/style/treatmentSanitizer";
 import WbBreakdown from "@/components/rawaistudio/WbBreakdown";
 import { styleProfileToXmpTemplate } from "@/lib/style/styleProfileToXmpTemplate";
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
+import { computeFolderKey, savePartialResults, loadPartialResults, clearPartialResults } from "@/lib/rawaistudio/batchProgress";
 import { getSession } from "@/lib/rawaistudio/localSession";
 import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
 import { pickRepresentatives, adaptPhotoWithProfile } from "@/lib/rawaistudio/hybridAdaptEngine";
@@ -90,6 +91,39 @@ export default function AjustesIA() {
   // Proveedor activo por herramienta AJUSTES (Proveedores IA): el modelo que analiza y
   // edita SIEMPRE en los modos IA Visual e Híbrido. Solo para las etiquetas de los modos.
   const [ajustesProviderName, setAjustesProviderName] = useState("");
+  // Pausar/Reanudar: el lote puede detenerse en cualquier momento (el usuario descarga
+  // lo editado hasta ese punto) y reanudarse — incluso otro día, cerrando el navegador:
+  // los XMP parciales se persisten en localStorage por carpeta. Al reanudar, las fotos
+  // que ya tienen XMP se saltan automáticamente (sin repetir trabajo ni gastar IA).
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  const outRef = useRef([]);
+  const okRef = useRef(0);
+  const errorsRef = useRef([]);
+
+  // Restaura resultados parciales de una sesión anterior (mismos nombres de archivo).
+  // Precarga outRef con las fotos que ya tienen XMP y activa el estado "pausado" para
+  // que el usuario vea "Reanudar" en vez de "Procesar".
+  const restorePartialResults = (loaded) => {
+    const folderKey = computeFolderKey(loaded);
+    const saved = loadPartialResults(folderKey);
+    if (!saved?.length) return;
+    const out = new Array(loaded.length).fill(null);
+    let count = 0;
+    for (let i = 0; i < loaded.length; i++) {
+      const match = saved.find((r) => r.filename === loaded[i].file?.name);
+      if (match) { out[i] = match; count++; }
+    }
+    if (count > 0) {
+      outRef.current = out;
+      okRef.current = count;
+      errorsRef.current = [];
+      setResults(out.filter(Boolean));
+      setPaused(true);
+      setProgress({ done: count, total: loaded.length });
+      toast({ title: `${count} fotos ya editadas`, description: "Pulsa Reanudar para continuar con las restantes." });
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -115,6 +149,8 @@ export default function AjustesIA() {
   useEffect(() => {
     setAwaitingConfirm(false);
     setSamples([]);
+    setPaused(false);
+    pausedRef.current = false;
   }, [mode]);
 
   useEffect(() => {
@@ -238,17 +274,23 @@ export default function AjustesIA() {
 
   const loadSessionPhotos = () => {
     if (!session.photos?.length) return;
-    setPhotos(
-      session.photos.map((p) => ({
-        ...p,
-        manualRotation: p.manualRotation ?? 0,
-        rating: p.rating ?? 0,
-        colorLabel: p.colorLabel ?? "none",
-      }))
-    );
+    const loaded = session.photos.map((p) => ({
+      ...p,
+      manualRotation: p.manualRotation ?? 0,
+      rating: p.rating ?? 0,
+      colorLabel: p.colorLabel ?? "none",
+    }));
+    setPhotos(loaded);
     setFromSession(true);
     setResults([]);
     setSynced(false);
+    setPaused(false);
+    pausedRef.current = false;
+    outRef.current = [];
+    okRef.current = 0;
+    errorsRef.current = [];
+    // Restaura resultados parciales de una sesión anterior (mismas fotos = misma clave).
+    restorePartialResults(loaded);
   };
 
   // Al llegar desde un proyecto («Editar» en el espacio de trabajo), las fotos
@@ -266,6 +308,11 @@ export default function AjustesIA() {
     setFromSession(false);
     setResults([]);
     setSynced(false);
+    setPaused(false);
+    pausedRef.current = false;
+    outRef.current = [];
+    okRef.current = 0;
+    errorsRef.current = [];
     runExtract(raws);
   };
 
@@ -280,22 +327,34 @@ export default function AjustesIA() {
       timing.skinMs += itemTiming.skinMs;
     });
     setMetrics({ ...timing, photometricMs: 0, adaptationMs: 0, xmpMs: 0, zipMs: 0, totalMs: performance.now() - totalStart, photoCount: withPreview.length });
-    setPhotos(withPreview.map((p) => ({ ...p, manualRotation: 0, rating: 0, colorLabel: "none" })));
+    const loaded = withPreview.map((p) => ({ ...p, manualRotation: 0, rating: 0, colorLabel: "none" }));
+    setPhotos(loaded);
     setExtracting(false);
+    // Restaura resultados parciales de una sesión anterior con esta misma carpeta.
+    restorePartialResults(loaded);
   };
 
-  const processAll = async () => {
+  const processAll = async (opts = {}) => {
+    const { resume = false } = opts;
     if (!photos.length) return;
     if (mode === "hybrid") return runHybridPreview();
+    // Inicio nuevo: resetea los refs. Reanudación: conserva lo procesado hasta la pausa.
+    if (!resume) {
+      outRef.current = new Array(photos.length).fill(null);
+      okRef.current = 0;
+      errorsRef.current = [];
+    }
+    pausedRef.current = false;
     setBusy(true);
-    setResults([]);
+    setPaused(false);
+    if (!resume) setResults([]);
     setSynced(false);
     setAwaitingConfirm(false);
-    setProgress({ done: 0, total: photos.length });
-    const out = new Array(photos.length).fill(null);
-    let ok = 0;
-    let done = 0;
-    const backendErrors = [];
+    const out = outRef.current;
+    let ok = okRef.current;
+    let done = out.filter(Boolean).length;
+    const backendErrors = errorsRef.current;
+    setProgress({ done, total: photos.length });
     // Procesa UNA foto: misma lógica que antes, extraída a función para que el pool
     // la pueda lanzar concurrentemente. Devuelve el resultado o lanza si falla.
     const processOnePhoto = async (photo) => {
@@ -355,15 +414,21 @@ export default function AjustesIA() {
     // llamada IA. El índice original se preserva (out[i]) para que cada resultado se
     // asocie a la foto correcta. Los errores individuales se capturan y continúan sin
     // interrumpir el lote. El progreso se actualiza conforme termina cada foto.
+    // PAUSA: pausedRef.current = true hace que los workers terminen su foto en curso
+    // y salgan del bucle sin procesar más. Las fotos ya procesadas (out[i] !== null)
+    // se saltan al reanudar, así no se repite trabajo ni se gastan créditos de IA.
     const CONCURRENCY = 4;
     let nextIdx = 0;
     const worker = async () => {
       while (true) {
+        if (pausedRef.current) return;
         const i = nextIdx++;
         if (i >= photos.length) return;
+        if (out[i] !== null) continue; // ya procesada (reanudación)
         try {
           out[i] = await processOnePhoto(photos[i]);
           ok++;
+          okRef.current = ok;
         } catch {
           // Continúa con la siguiente aunque una falle.
         }
@@ -375,16 +440,55 @@ export default function AjustesIA() {
     const finalOut = out.filter(Boolean);
     setResults(finalOut);
     setBusy(false);
-    if (backendErrors.length) {
+    const folderKey = computeFolderKey(photos);
+    if (pausedRef.current) {
+      // Pausado: el usuario detuvo el lote. Las fotos procesadas hasta aquí quedan
+      // disponibles para descargar y se persisten en localStorage para reanudar otro día.
+      setPaused(true);
+      savePartialResults(folderKey, finalOut);
       toast({
-        title: `${backendErrors.length} foto(s) no procesadas por la IA`,
-        description: backendErrors[0]?.slice(0, 300),
-        variant: "destructive",
+        title: "Procesamiento pausado",
+        description: `${finalOut.length} / ${photos.length} fotos procesadas. Puedes descargar lo editado o reanudar más tarde.`,
       });
     } else {
-      toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
+      // Completado: limpia los parciales guardados (el lote está entero y descargable).
+      clearPartialResults(folderKey);
+      if (backendErrors.length) {
+        toast({
+          title: `${backendErrors.length} foto(s) no procesadas por la IA`,
+          description: backendErrors[0]?.slice(0, 300),
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
+      }
+      registerStyleAfterProcess(ok);
     }
-    registerStyleAfterProcess(ok);
+  };
+
+  // Pausa el lote en curso: los workers terminan su foto actual y salen. Las fotos
+  // ya procesadas quedan en results para descargar; al reanudar se saltan automáticamente.
+  const pauseProcessing = () => {
+    pausedRef.current = true;
+  };
+
+  // Reanuda el lote desde donde se pausó: conserva las fotos ya procesadas y lanza
+  // el pool solo sobre las pendientes (out[i] === null).
+  const resumeProcessing = () => {
+    processAll({ resume: true });
+  };
+
+  // Descarta los resultados parciales y vuelve al estado inicial ("Procesar").
+  // Borra también lo guardado en localStorage para esta carpeta.
+  const discardPartial = () => {
+    const folderKey = computeFolderKey(photos);
+    clearPartialResults(folderKey);
+    outRef.current = [];
+    okRef.current = 0;
+    errorsRef.current = [];
+    setResults([]);
+    setPaused(false);
+    setProgress({ done: 0, total: photos.length });
   };
 
   // FASE 1 del Revelado Híbrido: 1 llamada IA con K representantes → perfil de sesión,
@@ -631,6 +735,11 @@ export default function AjustesIA() {
                 setPhotos([]);
                 setResults([]);
                 setProfile(null);
+                setPaused(false);
+                pausedRef.current = false;
+                outRef.current = [];
+                okRef.current = 0;
+                errorsRef.current = [];
               }}
               className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary"
             >
@@ -866,18 +975,64 @@ export default function AjustesIA() {
             )}
           </div>
 
-          <button
-            onClick={processAll}
-            disabled={busy || awaitingConfirm}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground disabled:opacity-40"
-          >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {busy
-              ? `Procesando… ${progress.done} / ${progress.total}`
-              : mode === "hybrid"
-              ? `Generar perfil y 5 muestras`
-              : `Procesar ${photos.length} fotos`}
-          </button>
+          {/* Procesar / Pausar / Reanudar: el botón cambia según el estado del lote.
+              - Idle: «Procesar N fotos» (o «Generar perfil» en Híbrido).
+              - Procesando: barra de progreso + «Pausar» (detiene tras la foto en curso).
+              - Pausado: «Reanudar» (sigue saltando lo editado) + «Descargar parcial» +
+                «Descartar» (empieza de cero). El estado pausado persiste en localStorage
+                para reanudar otro día cerrando el navegador. */}
+          {busy ? (
+            <div className="flex items-center gap-3">
+              <div className="flex flex-1 items-center justify-center gap-2 rounded-md bg-secondary px-4 py-3 text-sm font-semibold text-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Procesando… {progress.done} / {progress.total}
+              </div>
+              <button
+                onClick={pauseProcessing}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-3 text-sm font-semibold text-foreground hover:bg-secondary"
+              >
+                <Pause className="h-4 w-4" /> Pausar
+              </button>
+            </div>
+          ) : paused ? (
+            <div className="flex items-center gap-3">
+              <div className="flex flex-1 items-center justify-center gap-2 rounded-md bg-secondary px-4 py-3 text-sm font-semibold text-foreground">
+                <Pause className="h-4 w-4" /> Pausado · {progress.done} / {progress.total}
+              </div>
+              <button
+                onClick={resumeProcessing}
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground hover:opacity-90"
+              >
+                <Play className="h-4 w-4" /> Reanudar
+              </button>
+              <button
+                onClick={downloadZip}
+                disabled={zipping || results.length === 0}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-3 text-sm font-semibold text-foreground hover:bg-secondary disabled:opacity-40"
+              >
+                {zipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                Descargar {results.length}
+              </button>
+              <button
+                onClick={discardPartial}
+                className="inline-flex items-center justify-center gap-2 rounded-md border border-border bg-card px-4 py-3 text-sm font-semibold text-muted-foreground hover:bg-secondary"
+                title="Descartar lo editado y empezar de cero"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => processAll()}
+              disabled={awaitingConfirm}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-accent px-4 py-3 text-sm font-semibold text-accent-foreground disabled:opacity-40"
+            >
+              <Sparkles className="h-4 w-4" />
+              {mode === "hybrid"
+                ? `Generar perfil y 5 muestras`
+                : `Procesar ${photos.length} fotos`}
+            </button>
+          )}
 
           {awaitingConfirm && samples.length > 0 && (
             <HybridValidationPanel
