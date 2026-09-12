@@ -134,6 +134,47 @@ export default function NuevoProyectoPage() {
     setExtracting(true);
     setPhase("extracting");
     setProgress({ done: 0, total: 0 });
+
+    // Crea el proyecto al inicio si es nuevo, para tener project_id y poder trackear
+    // el procesado en el Historial desde el primer momento.
+    let projectId = projectIdParam || existing?.projectId || null;
+    if (!projectId) {
+      try {
+        const p = await createProject({ title: handle.name, status: "draft", photo_count: 0 });
+        projectId = p.id;
+        setExisting({
+          projectId: p.id,
+          bindingId: null,
+          folderRef: "",
+          catalogRef: "",
+          folderName: handle.name,
+          catalogName: "",
+        });
+        try {
+          const url = new URL(window.location.href);
+          url.searchParams.set("project", p.id);
+          window.history.replaceState({}, "", url.toString());
+        } catch {}
+      } catch {}
+    }
+
+    // Job de procesado para el Historial (visible en tiempo real desde cualquier dispositivo).
+    let jobId = null;
+    let lastPct = -1;
+    let lastPhase = null;
+    const syncJob = async (progress, phase, status = "processing") => {
+      if (!projectId) return;
+      try {
+        if (!jobId) {
+          const j = await base44.entities.ProjectProcessingJob.create({ project_id: projectId, status, progress, phase });
+          jobId = j.id;
+        } else if (status !== "processing" || Math.abs(progress - lastPct) >= 4 || phase !== lastPhase) {
+          await base44.entities.ProjectProcessingJob.update(jobId, { status, progress, phase });
+        }
+        lastPct = progress; lastPhase = phase;
+      } catch {}
+    };
+
     const raws = [];
     for await (const [name, entryHandle] of handle.entries()) {
       if (entryHandle.kind !== "file") continue;
@@ -143,34 +184,49 @@ export default function NuevoProyectoPage() {
     const count = raws.length;
     const total = count * 2;
     setProgress({ done: 0, total });
+    await syncJob(0, "extracting");
     const inputItems = raws.map((f, i) => ({ id: String(i), file: f }));
-    const withPreview = await extractPreviews(
-      inputItems,
-      (done) => setProgress({ done, total }),
-      () => {}
-    );
-    setPhase("fingerprinting");
-    const withFingerprint = [];
-    for (let i = 0; i < withPreview.length; i++) {
-      const p = withPreview[i];
-      withFingerprint.push({
-        ...p,
-        status: "REVIEW",
-        rating: 0, // las 5 estrellas nacen apagadas
-        fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
-      });
-      setProgress({ done: count + i + 1, total });
+    let withPreview = [];
+    try {
+      withPreview = await extractPreviews(
+        inputItems,
+        (done) => {
+          setProgress({ done, total });
+          const pct = total ? Math.round((done / total) * 100) : 0;
+          syncJob(pct, "extracting");
+        },
+        () => {}
+      );
+      setPhase("fingerprinting");
+      const withFingerprint = [];
+      for (let i = 0; i < withPreview.length; i++) {
+        const p = withPreview[i];
+        withFingerprint.push({
+          ...p,
+          status: "REVIEW",
+          rating: 0, // las 5 estrellas nacen apagadas
+          fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
+        });
+        const done = count + i + 1;
+        setProgress({ done, total });
+        const pct = total ? Math.round((done / total) * 100) : 0;
+        syncJob(pct, "fingerprinting");
+      }
+      await syncJob(100, "fingerprinting", "completed");
+      // Cachea las previews en IndexedDB para que reabrir el proyecto sea instantáneo.
+      // Se cachean AMBAS resoluciones: lo (800px, galería) y hi (2400px, visor).
+      cachePreviews(
+        withFingerprint.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl, hiResDataUrl: p.preview?.hiResDataUrl }))
+      ).catch(() => {});
+      setItems(withFingerprint);
+      // Por defecto TODAS las fotos quedan marcadas (checkbox) al subir la carpeta:
+      // el fotógrafo parte de la selección completa y desmarca solo lo que no quiera.
+      setSelectedIds(new Set(withFingerprint.map((p) => p.id)));
+      reset(); // historial nuevo para la carpeta recién importada
+    } catch (e) {
+      await syncJob(lastPct < 0 ? 0 : lastPct, lastPhase || "extracting", "failed");
+      throw e;
     }
-    // Cachea las previews en IndexedDB para que reabrir el proyecto sea instantáneo.
-    // Se cachean AMBAS resoluciones: lo (800px, galería) y hi (2400px, visor).
-    cachePreviews(
-      withFingerprint.map((p) => ({ hash: p.fingerprint?.fingerprint_hash, dataUrl: p.preview?.dataUrl, hiResDataUrl: p.preview?.hiResDataUrl }))
-    ).catch(() => {});
-    setItems(withFingerprint);
-    // Por defecto TODAS las fotos quedan marcadas (checkbox) al subir la carpeta:
-    // el fotógrafo parte de la selección completa y desmarca solo lo que no quiera.
-    setSelectedIds(new Set(withFingerprint.map((p) => p.id)));
-    reset(); // historial nuevo para la carpeta recién importada
     setExtracting(false);
   };
 
@@ -322,6 +378,16 @@ export default function NuevoProyectoPage() {
             catalog_filename: catalogHandle?.name || existing.catalogName || "",
             raw_folder_name: folderHandle?.name || existing.folderName || "",
           });
+        } else {
+          // El proyecto se creó al inicio (al importar la carpeta) sin binding; se crea aquí.
+          const binding = await createCatalogBinding({
+            project_id: savedId,
+            catalog_handle_ref: catalogRef || "",
+            raw_folder_handle_ref: folderRef || "",
+            catalog_filename: catalogHandle?.name || "",
+            raw_folder_name: folderHandle?.name || existing.folderName || "",
+          });
+          setExisting((prev) => ({ ...prev, bindingId: binding?.id || null }));
         }
         await deleteFingerprintsByProject(existing.projectId);
       } else {
@@ -418,6 +484,28 @@ export default function NuevoProyectoPage() {
     setAiRunning(true);
     setAiDone(0);
     setAiTotal(marked.length);
+    const selectionProjectId = existing?.projectId || projectIdParam || null;
+    let selJobId = null;
+    const syncSelJob = async (status, stage, stats = null, error = null) => {
+      if (!selectionProjectId) return;
+      try {
+        if (!selJobId) {
+          const j = await base44.entities.AlbumAISelection.create({
+            project_id: selectionProjectId,
+            status,
+            stage,
+            stats: stats || { photo_count: marked.length },
+          });
+          selJobId = j.id;
+        } else {
+          const patch = { status, stage };
+          if (stats) patch.stats = stats;
+          if (error) patch.error = String(error).slice(0, 500);
+          await base44.entities.AlbumAISelection.update(selJobId, patch);
+        }
+      } catch {}
+    };
+    await syncSelJob("running", "e2");
     try {
       const aiItems = marked.map((it) => {
         const dataUrl = it.preview?.dataUrl;
@@ -471,8 +559,10 @@ export default function NuevoProyectoPage() {
           aiReview: review,
         };
       }));
+      await syncSelJob("completed", "done", { photo_count: marked.length, provider_used: trace?.provider || null });
       toast({ title: "Selección IA completada" });
     } catch (e) {
+      await syncSelJob("failed", "e2", null, e?.message || "Error desconocido");
       toast({ title: "No se pudo ejecutar la selección IA", description: e?.message, variant: "destructive" });
     }
     setAiRunning(false);

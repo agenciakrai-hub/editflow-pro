@@ -99,6 +99,29 @@ export default function HistorialTrabajos() {
 
   useEffect(() => { loadAll(); }, []);
 
+  // Auto-actualización en tiempo real: sondea cada 4s mientras haya trabajos activos
+  // (procesado, selección o exportación en curso). Cuando todo termina, deja de sondear.
+  const hasActive = processing.some((j) => j.status === "processing" || j.status === "pending" || j.status === "running")
+    || selectionJobs.some((j) => j.status === "running")
+    || exports_.some((j) => j.status === "processing" || j.status === "pending");
+  useEffect(() => {
+    if (!hasActive) return;
+    const t = setInterval(loadAll, 4000);
+    return () => clearInterval(t);
+  }, [hasActive, loadAll]);
+
+  // Suscripciones en tiempo real: cualquier cambio en las entidades de trabajos
+  // recarga el historial al instante (creación, actualización de progreso, etc.).
+  useEffect(() => {
+    const reload = () => loadAll();
+    const subs = [
+      base44.entities.ProjectProcessingJob.subscribe(reload),
+      base44.entities.AlbumAISelection.subscribe(reload),
+      base44.entities.ExportJob.subscribe(reload),
+    ];
+    return () => subs.forEach((u) => { try { u(); } catch {} });
+  }, [loadAll]);
+
   const cancelJob = async (job, type) => {
     setBusy(true);
     try {
