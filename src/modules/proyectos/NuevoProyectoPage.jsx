@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, FileText, Loader2, ArrowLeft } from "lucide-react";
+import { FolderOpen, FileText, Loader2, ArrowLeft, X } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { selectBursts } from "@/lib/ai/aiGateway";
@@ -47,6 +47,12 @@ export default function NuevoProyectoPage() {
   // Traza de la última ejecución de selección IA. Viaja con el propio guardado del
   // proyecto (create/update), de modo que no dependa de una escritura aislada.
   const lastTraceRef = useRef(null);
+  // Fiabilidad: evita actualizar estado en un componente desmontado (causa "error 5"
+  // y warnings de React cuando el usuario navega fuera durante la selección IA).
+  const mountedRef = useRef(true);
+  // ID del job de selección IA en curso, para poder cancelarlo si el usuario
+  // abandona la página a mitad de proceso.
+  const currentSelJobIdRef = useRef(null);
   const selectedRef = useRef(selectedIds); selectedRef.current = selectedIds;
   const getSnapshot = useCallback(() => ({ items: itemsRef.current, selectedIds: selectedRef.current }), []);
   const applySnapshot = useCallback((s) => { setItems(s.items); setSelectedIds(s.selectedIds); }, []);
@@ -57,6 +63,24 @@ export default function NuevoProyectoPage() {
   const projectIdParam = new URLSearchParams(window.location.search).get("project");
   const [existing, setExisting] = useState(null);
   const [restoredHandles, setRestoredHandles] = useState({ folder: null, catalog: null });
+
+  // Fiabilidad: al desmontar la página (navegar fuera, ir atrás, cambiar de herramienta),
+  // se marca el job de selección IA en curso como "canceled" para que no quede colgado
+  // en "running" para siempre. Al volver, la página no se bloquea mostrando un spinner
+  // muerto. También se marca el componente como desmontado para evitar updates de estado.
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      const jobId = currentSelJobIdRef.current;
+      if (jobId) {
+        base44.entities.AlbumAISelection.update(jobId, {
+          status: "canceled",
+          error: "Cancelado: el usuario abandonó la página",
+        }).catch(() => {});
+        currentSelJobIdRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!projectIdParam) return;
@@ -167,6 +191,24 @@ export default function NuevoProyectoPage() {
         );
         if (!alive || !jobs?.length) return;
         const job = jobs[0];
+        // Fiabilidad: si el job lleva "running" más de 30 min sin actualizarse, es un
+        // job stale (el usuario navegó fuera a mitad de proceso y el trabajo se
+        // abandonó). Se cancela automáticamente para que la página no se quede
+        // bloqueada mostrando un spinner muerto al volver.
+        const STALE_MS = 30 * 60 * 1000;
+        const age = Date.now() - new Date(job.created_date).getTime();
+        if (age > STALE_MS) {
+          try {
+            await base44.entities.AlbumAISelection.update(job.id, {
+              status: "canceled",
+              error: "Cancelado automáticamente: el trabajo estaba parado",
+            });
+          } catch {}
+          if (!alive) return;
+          toast({ title: "Selección IA cancelada", description: "El trabajo anterior estaba parado. Vuelve a lanzar la selección si lo necesitas." });
+          return;
+        }
+        currentSelJobIdRef.current = job.id;
         setAiRunning(true);
         setBusyAction("seleccion");
         setAiTotal(job.stats?.photo_count || 0);
@@ -532,6 +574,7 @@ export default function NuevoProyectoPage() {
             stats: stats || { photo_count: marked.length },
           });
           selJobId = j.id;
+          currentSelJobIdRef.current = j.id;
         } else {
           const patch = { status, stage };
           if (stats) patch.stats = stats;
@@ -540,6 +583,16 @@ export default function NuevoProyectoPage() {
         }
       } catch {}
     };
+    // Fiabilidad: cancela jobs "running" anteriores de este proyecto antes de empezar
+    // uno nuevo. Evita jobs duplicados colgados que confunden al sondeo al volver.
+    if (selectionProjectId) {
+      try {
+        await base44.entities.AlbumAISelection.updateMany(
+          { project_id: selectionProjectId, status: "running" },
+          { $set: { status: "canceled", error: "Reemplazado por una nueva selección" } }
+        );
+      } catch {}
+    }
     await syncSelJob("running", "e2");
     try {
       const aiItems = marked.map((it) => {
@@ -562,9 +615,14 @@ export default function NuevoProyectoPage() {
         };
       });
       const { keep, meta, trace } = await selectBursts(aiItems, (d, t) => {
+        if (!mountedRef.current) return;
         setAiDone(d);
         if (typeof t === "number") setAiTotal(t);
       });
+      // Si el componente se desmontó durante la selección (el usuario navegó fuera),
+      // el job ya se canceló en el cleanup. No actualizamos estado ni mostramos toast:
+      // evitar "error 5" y warnings de React.
+      if (!mountedRef.current) return;
       // Persiste la traza completa de la ejecución en el proyecto para auditarla.
       // Se guarda en el ref: «Guardar» la re-escribe junto con el proyecto. La
       // escritura inmediata sigue siendo fire-and-forget, pero si falla se avisa
@@ -597,11 +655,36 @@ export default function NuevoProyectoPage() {
       await syncSelJob("completed", "done", { photo_count: marked.length, provider_used: trace?.provider || null });
       toast({ title: "Selección IA completada" });
     } catch (e) {
-      await syncSelJob("failed", "e2", null, e?.message || "Error desconocido");
-      toast({ title: "No se pudo ejecutar la selección IA", description: e?.message, variant: "destructive" });
+      if (mountedRef.current) {
+        await syncSelJob("failed", "e2", null, e?.message || "Error desconocido");
+        toast({ title: "No se pudo ejecutar la selección IA", description: e?.message, variant: "destructive" });
+      }
+    }
+    currentSelJobIdRef.current = null;
+    if (mountedRef.current) {
+      setAiRunning(false);
+      setBusyAction(null);
+    }
+  };
+
+  // Cancela el job de selección IA en curso (botón Cancelar). Marca el job como
+  // "canceled" en la base de datos y desbloquea la UI. El proceso asíncrono que corre
+  // en la página se abandona (su resultado se ignora porque mountedRef/job ya no activos).
+  const cancelSelection = async () => {
+    const jobId = currentSelJobIdRef.current;
+    if (jobId) {
+      try {
+        await base44.entities.AlbumAISelection.update(jobId, {
+          status: "canceled",
+          error: "Cancelado por el usuario",
+        });
+      } catch {}
+      currentSelJobIdRef.current = null;
     }
     setAiRunning(false);
     setBusyAction(null);
+    setAiDone(0);
+    toast({ title: "Selección IA cancelada" });
   };
   const goEditar = async () => {
     setBusyAction("editar");
@@ -714,12 +797,20 @@ export default function NuevoProyectoPage() {
             <span className="inline-flex items-center gap-2 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" /> Analizando ráfagas con IA…
             </span>
-            <span className="font-mono font-semibold tabular-nums">
-              {aiDone} / {aiTotal}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="font-mono font-semibold tabular-nums">
+                {aiDone} / {aiTotal}
+              </span>
+              <button
+                onClick={cancelSelection}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/5"
+              >
+                <X className="h-3.5 w-3.5" /> Cancelar
+              </button>
+            </div>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            La selección se ejecuta en esta página, solo sobre las fotos marcadas.
+            La selección se ejecuta en esta página, solo sobre las fotos marcadas. Si sales y vuelves, puedes cancelar y volver a lanzarla.
           </p>
         </div>
       )}
