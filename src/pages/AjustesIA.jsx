@@ -315,8 +315,14 @@ export default function AjustesIA() {
           // Revelado IA Visual (Qwen): la IA analiza el CONTENIDO de cada foto (sujeto,
           // luz, color, mood) y decide los ajustes de revelado completos, no solo el
           // histograma. Se filtra a los parámetros activados.
+          // Fallback de imagen: preview.base64 puede no existir cuando el proyecto se
+          // reabre desde la caché IndexedDB (que guarda { dataUrl, hiResDataUrl } sin
+          // base64). Se deriva el base64 desde dataUrl para que la imagen llegue al
+          // proveedor. No altera ninguna otra lógica.
+          const base64ForVisual = base64
+            || (photo.preview?.dataUrl ? photo.preview.dataUrl.split(",")[1] || "" : "");
           const data = await developPhotosVisual({
-            photos: [{ id: photo.id, preview_base64: base64 }],
+            photos: [{ id: photo.id, preview_base64: base64ForVisual }],
             preferences,
           });
           const all = data?.results?.[photo.id] || {};
@@ -376,9 +382,15 @@ export default function AjustesIA() {
     setAwaitingConfirm(false);
     try {
       const reps = pickRepresentatives(photos, 8);
+      // Fallback de imagen: mismo principio que processAll — preview.base64 puede no
+      // existir en fotos reabiertas desde la caché IndexedDB. Se deriva desde dataUrl.
       const repData = reps
-        .filter((p) => p.preview?.base64)
-        .map((p) => ({ id: p.id, preview_base64: p.preview.base64 }));
+        .map((p) => ({
+          id: p.id,
+          preview_base64: p.preview?.base64
+            || (p.preview?.dataUrl ? p.preview.dataUrl.split(",")[1] || "" : ""),
+        }))
+        .filter((p) => p.preview_base64);
       if (!repData.length) {
         toast({ title: "Sin previews", description: "No hay previews para analizar", variant: "destructive" });
         setBusy(false);
