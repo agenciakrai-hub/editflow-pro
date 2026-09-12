@@ -292,12 +292,13 @@ export default function AjustesIA() {
     setSynced(false);
     setAwaitingConfirm(false);
     setProgress({ done: 0, total: photos.length });
-    const out = [];
+    const out = new Array(photos.length).fill(null);
     let ok = 0;
+    let done = 0;
     const backendErrors = [];
-    for (let i = 0; i < photos.length; i++) {
-      const photo = photos[i];
-      try {
+    // Procesa UNA foto: misma lógica que antes, extraída a función para que el pool
+    // la pueda lanzar concurrentemente. Devuelve el resultado o lanza si falla.
+    const processOnePhoto = async (photo) => {
         const base64 = photo.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
         let aiValues = {};
@@ -348,14 +349,31 @@ export default function AjustesIA() {
           label: photo.colorLabel && photo.colorLabel !== "none" ? lightroomLabelFor(photo.colorLabel) : null,
         });
         xmp = addOrientation(xmp, photo.manualRotation || 0);
-        out.push({ filename: photo.file.name, xmp, needsCorrection, allZero, values: finalValues, wb });
-        ok++;
-      } catch {
-        // Continúa con la siguiente aunque una falle.
+        return { filename: photo.file.name, xmp, needsCorrection, allZero, values: finalValues, wb };
+    };
+    // Pool de concurrencia controlada: 4 fotos simultáneas, cada una con su propia
+    // llamada IA. El índice original se preserva (out[i]) para que cada resultado se
+    // asocie a la foto correcta. Los errores individuales se capturan y continúan sin
+    // interrumpir el lote. El progreso se actualiza conforme termina cada foto.
+    const CONCURRENCY = 4;
+    let nextIdx = 0;
+    const worker = async () => {
+      while (true) {
+        const i = nextIdx++;
+        if (i >= photos.length) return;
+        try {
+          out[i] = await processOnePhoto(photos[i]);
+          ok++;
+        } catch {
+          // Continúa con la siguiente aunque una falle.
+        }
+        done++;
+        setProgress({ done, total: photos.length });
       }
-      setProgress({ done: i + 1, total: photos.length });
-    }
-    setResults(out);
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+    const finalOut = out.filter(Boolean);
+    setResults(finalOut);
     setBusy(false);
     if (backendErrors.length) {
       toast({
