@@ -150,6 +150,53 @@ export default function NuevoProyectoPage() {
     return () => { alive = false; };
   }, [projectIdParam]);
 
+  // Detecta una selección IA en curso al reabrir el proyecto (el usuario pudo
+  // navegar fuera y volver). Sondea el job de AlbumAISelection hasta que termina
+  // y entonces oculta la barra y avisa al usuario.
+  useEffect(() => {
+    if (!projectIdParam) return;
+    let alive = true;
+    let pollTimer = null;
+
+    const checkAndPoll = async () => {
+      try {
+        const jobs = await base44.entities.AlbumAISelection.filter(
+          { project_id: projectIdParam, status: "running" },
+          "-created_date",
+          1
+        );
+        if (!alive || !jobs?.length) return;
+        const job = jobs[0];
+        setAiRunning(true);
+        setBusyAction("seleccion");
+        setAiTotal(job.stats?.photo_count || 0);
+        setAiDone(0);
+        pollTimer = setInterval(async () => {
+          try {
+            const updated = await base44.entities.AlbumAISelection.get(job.id);
+            if (!alive) return;
+            if (["completed", "failed", "canceled"].includes(updated.status)) {
+              setAiRunning(false);
+              setBusyAction(null);
+              if (pollTimer) clearInterval(pollTimer);
+              if (updated.status === "completed") {
+                toast({ title: "Selección IA completada" });
+              } else {
+                toast({ title: "Selección IA no completada", description: updated.error || "Cancelada", variant: "destructive" });
+              }
+            }
+          } catch {}
+        }, 4000);
+      } catch {}
+    };
+
+    checkAndPoll();
+    return () => {
+      alive = false;
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, [projectIdParam]);
+
   const pickCatalog = async () => {
     try {
       const [handle] = await window.showOpenFilePicker({
