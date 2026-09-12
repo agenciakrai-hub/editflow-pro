@@ -573,7 +573,13 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${mi + 1}/${fullChain.length})${mi > 0 ? " failover-modelo" : ""}${auto ? " auto-descubierto" : ""}`);
     const content: any[] = [{ type: "text", text: opts.prompt }];
     for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
-    const body = { model, messages: [{ role: "user", content }], stream: false };
+    const body: any = { model, messages: [{ role: "user", content }], stream: false };
+    // response_format: cuando el llamador pide un JSON schema, se fuerza al modelo a
+    // devolver JSON (no texto libre). Sin esto, algunos modelos devuelven texto con
+    // bloques de razonamiento que parseJsonContent no puede extraer → valores vacíos.
+    if (opts.response_json_schema) {
+      body.response_format = { type: "json_object" };
+    }
     const t0 = Date.now();
     try {
       const res = await fetchWithTimeout(endpoint, {

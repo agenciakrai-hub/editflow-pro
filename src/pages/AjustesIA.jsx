@@ -294,6 +294,7 @@ export default function AjustesIA() {
     setProgress({ done: 0, total: photos.length });
     const out = [];
     let ok = 0;
+    const backendErrors = [];
     for (let i = 0; i < photos.length; i++) {
       const photo = photos[i];
       try {
@@ -321,6 +322,15 @@ export default function AjustesIA() {
           const all = data?.results?.[photo.id] || {};
           aiValues = {};
           for (const k of enabledParams) if (typeof all[k] === "number") aiValues[k] = all[k];
+          // needsCorrection: la IA devolvió algún valor no nulo → hay corrección que aplicar.
+          // Antes needsCorrection se quedaba siempre false en este modo, por eso el validador
+          // mostraba "0 fotos con corrección aplicada" aunque la IA sí hubiera calculado valores.
+          needsCorrection = Object.values(aiValues).some((v) => v !== 0);
+          allZero = !needsCorrection;
+          // Si el backend reportó un error para esta foto, se registra para avisar al usuario
+          // (antes el error se tragaba en silencio y la foto quedaba "sin ajuste" sin razón visible).
+          const errMsg = data?.errors?.[photo.id];
+          if (errMsg) backendErrors.push(`${photo.file?.name || photo.id}: ${errMsg}`);
         }
         const finalValues = restrictToTechnicalBasics(aiValues, !!presetTemplateText);
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
@@ -341,7 +351,15 @@ export default function AjustesIA() {
     }
     setResults(out);
     setBusy(false);
-    toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
+    if (backendErrors.length) {
+      toast({
+        title: `${backendErrors.length} foto(s) no procesadas por la IA`,
+        description: backendErrors[0]?.slice(0, 300),
+        variant: "destructive",
+      });
+    } else {
+      toast({ title: "Procesamiento completado", description: `${ok} / ${photos.length} XMP listos` });
+    }
     registerStyleAfterProcess(ok);
   };
 
