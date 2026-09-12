@@ -219,7 +219,7 @@ export default function DetalleProyectoPage() {
   };
 
   const goToEdit = () => {
-    const selected = buildSelectedPhotosArray(matches);
+    const selected = buildSelectedPhotosArray(matches, previewByHash);
     if (!selected.length) {
       toast({
         title: "Sin fotos seleccionadas recuperadas",
