@@ -97,28 +97,26 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
           </button>
         )}
         {item.previewUrl ? (
-          <div
-            className={
-              "relative inline-flex max-h-full max-w-full items-center justify-center overflow-hidden rounded-md border-4 transition-colors " +
-              (item.aiReview ? "border-yellow-400" : selectedIds.has(item.id) ? "border-green-500" : "border-transparent")
-            }
-          >
+          <>
+            <img
+              src={displayUrl}
+              alt={item.filename}
+              className={
+                "max-h-full max-w-full object-contain rounded-md border-4 transition-colors " +
+                (item.aiReview ? "border-yellow-400" : selectedIds.has(item.id) ? "border-green-500" : "border-transparent")
+              }
+              onClick={(e) => { e.stopPropagation(); if (isCmd(e)) cmdClick(item); }}
+            />
             {(item.aiReview || selectedIds.has(item.id)) && (
               <span
                 className={
-                  "absolute right-2 top-2 z-10 h-3.5 w-3.5 rounded-full ring-2 ring-black/50 " +
+                  "pointer-events-none absolute right-16 top-6 z-10 h-3.5 w-3.5 rounded-full ring-2 ring-black/50 " +
                   (item.aiReview ? "bg-yellow-400" : "bg-green-500")
                 }
                 title={item.aiReview ? "A revisar" : "Seleccionada"}
               />
             )}
-            <img
-              src={displayUrl}
-              alt={item.filename}
-              className="max-h-full max-w-full object-contain"
-              onClick={(e) => { e.stopPropagation(); if (isCmd(e)) cmdClick(item); }}
-            />
-          </div>
+          </>
         ) : (
           <div className="flex h-40 w-64 items-center justify-center rounded-lg bg-white/5 text-xs text-white/50">
             Sin preview
