@@ -128,6 +128,42 @@ async function fetchWithTimeout(url: string, opts: any, ms: number = PROVIDER_TI
   }
 }
 
+// Estados HTTP transitorios del gateway del proveedor: 502 (Bad Gateway = backend caído),
+// 504 (Gateway Timeout = el backend tardó demasiado), 429 (rate limit), 503 (servicio
+// no disponible). Un reintento con backoff suele resolverlos sin saltar a otro modelo.
+const TRANSIENT_HTTP_STATUS = new Set([429, 502, 503, 504]);
+
+// fetch con reintento en errores transitorios (502/504/429/timeout de red). Reintenta el
+// MISMO endpoint hasta maxAttempts veces con backoff exponencial (2s, 4s...). Si el
+// último intento sigue fallando con un HTTP transitorio, devuelve esa respuesta para que
+// el llamador la trate como error HTTP; si es un error de red, lanza el último error.
+// Solo lo usa callCustom (los proveedores legados tienen su propia lógica de reintento).
+async function fetchWithRetry(url: string, opts: any, ms: number = PROVIDER_TIMEOUT_MS, maxAttempts: number = 2): Promise<any> {
+  let lastErr: any;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, opts, ms);
+      if (!res.ok && TRANSIENT_HTTP_STATUS.has(res.status) && attempt < maxAttempts) {
+        const backoffMs = 2000 * Math.pow(2, attempt - 1);
+        console.log(`[aiProvider] HTTP ${res.status} transitorio, reintentando en ${backoffMs}ms (intento ${attempt}/${maxAttempts})`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+        continue;
+      }
+      return res;
+    } catch (e: any) {
+      if (attempt < maxAttempts) {
+        const backoffMs = 2000 * Math.pow(2, attempt - 1);
+        console.log(`[aiProvider] error de red/timeout, reintentando en ${backoffMs}ms (intento ${attempt}/${maxAttempts}): ${String(e?.message || e).slice(0, 200)}`);
+        await new Promise((r) => setTimeout(r, backoffMs));
+        lastErr = e;
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr || new Error("fetchWithRetry: todos los intentos fallaron");
+}
+
 async function callQwen(cfg: any, opts: InvokeOpts): Promise<any> {
   const apiKey = secrets.get("QWEN_API_KEY");
   if (!apiKey) {
@@ -558,9 +594,12 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     if (opts._trace) opts._trace.base64_convert_ms = Date.now() - tB64;
   }
   // Intenta cada modelo: primero los marcados (primaryChain), luego los auto-descubiertos
-  // (autoChain). Si uno falla (429/500/timeout), reintenta con el siguiente del MISMO
-  // proveedor. NUNCA salta a otro proveedor. Si un modelo auto-descubierto tiene éxito, se
-  // marca automáticamente para esa herramienta. La traza registra cada intento.
+  // (autoChain). Si uno falla (429/500/timeout), salta al siguiente modelo del MISMO
+  // proveedor. NUNCA salta a otro proveedor. Además, fetchWithRetry reintenta el MISMO
+  // modelo en errores transitorios del gateway (502/504/429/timeout) con backoff antes de
+  // saltar al siguiente modelo — estos errores suelen ser del servidor, no del modelo.
+  // Si un modelo auto-descubierto tiene éxito, se marca automáticamente. La traza registra
+  // cada intento.
   const fullChain: Array<{ model: string; auto: boolean }> = [
     ...primaryChain.map((m) => ({ model: m, auto: false })),
     ...autoChain.map((m) => ({ model: m, auto: true })),
@@ -582,7 +621,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     }
     const t0 = Date.now();
     try {
-      const res = await fetchWithTimeout(endpoint, {
+      const res = await fetchWithRetry(endpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
