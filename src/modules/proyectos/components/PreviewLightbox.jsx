@@ -102,7 +102,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
               src={displayUrl}
               alt={item.filename}
               className={
-                "max-h-full max-w-full object-contain rounded-md border-4 transition-colors " +
+                "min-h-0 min-w-0 max-h-full max-w-full object-contain rounded-md border-4 transition-colors " +
                 (item.aiReview ? "border-yellow-400" : selectedIds.has(item.id) ? "border-green-500" : "border-transparent")
               }
               onClick={(e) => { e.stopPropagation(); if (isCmd(e)) cmdClick(item); }}
