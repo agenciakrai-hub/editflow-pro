@@ -74,12 +74,15 @@ export default function ProjectPhotoWorkspace({
   const clickTimerRef = useRef(null);
   useEffect(() => () => { if (clickTimerRef.current) clearTimeout(clickTimerRef.current); }, []);
   const handlePhotoClick = (e, item, i) => {
-    if (e.shiftKey && lastClickRef.current != null) {
+    // Cmd/Ctrl+clic: selecciona el rango entre la última foto pulsada y esta.
+    // Usa `displayed` (no `items`) para que los índices coincidan con lo que el
+    // usuario ve cuando hay filtro/orden activo.
+    if ((e.metaKey || e.ctrlKey) && lastClickRef.current != null) {
       e.preventDefault();
+      if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null; }
       const from = Math.min(lastClickRef.current, i);
       const to = Math.max(lastClickRef.current, i);
-      // El rango entero cuenta como UN solo paso de deshacer (⌘Z lo revierte de golpe).
-      const markIds = items.slice(from, to + 1).filter((it) => !selectedIds.has(it.id)).map((it) => it.id);
+      const markIds = displayed.slice(from, to + 1).filter((it) => !selectedIds.has(it.id)).map((it) => it.id);
       if (markIds.length) onToggleSelectMany(markIds, true);
       return;
     }
@@ -151,6 +154,14 @@ export default function ProjectPhotoWorkspace({
             className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/5 disabled:opacity-40"
           >
             <Trash2 className="h-3.5 w-3.5" /> Eliminar
+          </button>
+          <button
+            type="button"
+            onClick={() => onToggleSelectMany(Array.from(selectedIds), false)}
+            disabled={selectedIds.size === 0}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium hover:bg-secondary disabled:opacity-40"
+          >
+            <Square className="h-3.5 w-3.5" /> Deseleccionar todas
           </button>
           <div className="flex items-center gap-1">
             <button
