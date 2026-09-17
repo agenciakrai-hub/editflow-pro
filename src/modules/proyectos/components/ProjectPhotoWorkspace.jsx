@@ -12,7 +12,7 @@ import PreviewLightbox from "./PreviewLightbox";
 //  - Barra lateral derecha con Guardar, Selección y Editar (con sus rutas).
 export default function ProjectPhotoWorkspace({
   items, selectedIds, onToggleSelect, onToggleSelectMany, onToggleSelectAll, onDeleteSelected,
-  onCycleStatus, onSetRating, gridCols, onGridCols, saving, busyAction, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
+  onCycleStatus, onCycleClickState, onSetRating, gridCols, onGridCols, saving, busyAction, onSave, onGoSeleccion, onGoEditar, onGoAlbum,
   onValidatePhoto, onMarkSelected, onMarkReview,
   aiRunning,
   onUndo, onRedo, canUndo, canRedo,
@@ -93,7 +93,7 @@ export default function ProjectPhotoWorkspace({
     const id = item.id;
     clickTimerRef.current = setTimeout(() => {
       clickTimerRef.current = null;
-      onToggleSelect(id);
+      onCycleClickState(id);
     }, 220);
   };
 
@@ -206,7 +206,7 @@ export default function ProjectPhotoWorkspace({
                 {item.previewUrl ? (
                   <div
                     className="aspect-square w-full cursor-pointer bg-black/5"
-                    title="Un clic marca/desmarca · Mayús+clic marca un rango · doble clic abre la vista previa"
+                    title="Un clic cicla: verde (5★) → amarillo (3★) → sin color · Mayús+clic marca un rango · doble clic abre la vista previa"
                     onClick={(e) => handlePhotoClick(e, item, i)}
                     onDoubleClick={() => handlePhotoDoubleClick(i)}
                   >

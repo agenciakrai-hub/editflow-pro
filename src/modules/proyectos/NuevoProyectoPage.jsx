@@ -354,6 +354,26 @@ export default function NuevoProyectoPage() {
     setSelectedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
   };
 
+  // Ciclo de 3 estados con clic izquierdo sobre la foto: sin color (0★) → verde (5★)
+  // → amarillo (3★) → sin color (0★). Reemplaza al toggle de selección del clic simple.
+  const cycleClickState = (id) => {
+    const item = items.find((it) => it.id === id);
+    if (!item) return;
+    const isGreen = item.rating === 5;
+    const isYellow = !!item.aiReview || item.rating === 3;
+    record();
+    if (!isGreen && !isYellow) {
+      setItems((prev) => prev.map((it) => it.id === id ? { ...it, aiReview: false, rating: 5, status: it.status === "TOP_PICK" ? "TOP_PICK" : "SELECT" } : it));
+      setSelectedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
+    } else if (isGreen) {
+      setItems((prev) => prev.map((it) => it.id === id ? { ...it, aiReview: true, rating: 3, status: "REVIEW" } : it));
+      setSelectedIds((prev) => { const next = new Set(prev); next.add(id); return next; });
+    } else {
+      setItems((prev) => prev.map((it) => it.id === id ? { ...it, aiReview: false, rating: 0, status: "REVIEW" } : it));
+      setSelectedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    }
+  };
+
   const toggleSelect = (id) => {
     record();
     setSelectedIds((prev) => {
@@ -839,6 +859,7 @@ export default function NuevoProyectoPage() {
           canRedo={canRedo}
           onDeleteSelected={deleteSelected}
           onCycleStatus={cycleStatus}
+          onCycleClickState={cycleClickState}
           onValidatePhoto={validatePhoto}
           onMarkSelected={markAsSelected}
           onMarkReview={markAsReview}
