@@ -64,35 +64,53 @@ export default function ProjectPhotoWorkspace({
   // de las fotos → menos columnas. valor alto del slider = menos columnas = más grande.
   const MIN = 2, MAX = 12;
   const sliderValue = MIN + MAX - cols;
-  // Ancla de la última foto marcada con un clic normal: Shift+clic marca de golpe
-  // todas las fotos entre el ancla y la foto pulsada (rango inclusive).
-  const lastClickRef = useRef(null);
+  // Ancla del rango Cmd/Ctrl+clic: el PRIMER cmd+clic fija el ancla y decide el
+  // modo (seleccionar si la foto estaba sin marcar, deseleccionar si estaba
+  // marcada). El SEGUNDO cmd+clic aplica ese modo a todas las fotos entre el
+  // ancla y la foto pulsada. Un clic normal (sin cmd) reinicia el ancla.
+  const rangeAnchorRef = useRef(null);
+  const rangeModeRef = useRef(null);
 
   // Doble clic sin perder la selección: el clic simple espera unos ms antes de
-  // alternar la marca; si llega un segundo clic (doble clic), se cancela la
-  // alternancia y se abre el visor con las fotos marcadas intactas.
+  // ciclar el estado; si llega un segundo clic (doble clic), se cancela el ciclo
+  // y se abre el visor con las fotos marcadas intactas.
   const clickTimerRef = useRef(null);
   useEffect(() => () => { if (clickTimerRef.current) clearTimeout(clickTimerRef.current); }, []);
+  const resetRange = () => { rangeAnchorRef.current = null; rangeModeRef.current = null; };
+
   const handlePhotoClick = (e, item, i) => {
-    // Cmd/Ctrl+clic: selecciona el rango entre la última foto pulsada y esta.
-    // Usa `displayed` (no `items`) para que los índices coincidan con lo que el
-    // usuario ve cuando hay filtro/orden activo.
-    if ((e.metaKey || e.ctrlKey) && lastClickRef.current != null) {
+    // Cmd/Ctrl+clic: selección/deselección por rango en dos pasos.
+    if (e.metaKey || e.ctrlKey) {
       e.preventDefault();
       if (clickTimerRef.current) { clearTimeout(clickTimerRef.current); clickTimerRef.current = null; }
-      const from = Math.min(lastClickRef.current, i);
-      const to = Math.max(lastClickRef.current, i);
-      const markIds = displayed.slice(from, to + 1).filter((it) => !selectedIds.has(it.id)).map((it) => it.id);
-      if (markIds.length) onToggleSelectMany(markIds, true);
+      if (rangeAnchorRef.current == null) {
+        // Primer cmd+clic: fija el ancla y alterna esta foto (selecciona si no
+        // estaba marcada, deselecciona si lo estaba). El modo se decide aquí.
+        const isSelected = selectedIds.has(item.id);
+        rangeModeRef.current = isSelected ? "deselect" : "select";
+        rangeAnchorRef.current = i;
+        onToggleSelect(item.id);
+      } else {
+        // Segundo cmd+clic: aplica el modo a todo el rango entre el ancla y esta.
+        const from = Math.min(rangeAnchorRef.current, i);
+        const to = Math.max(rangeAnchorRef.current, i);
+        const rangeIds = displayed.slice(from, to + 1).map((it) => it.id);
+        const mode = rangeModeRef.current;
+        const ids = mode === "deselect"
+          ? rangeIds.filter((id) => selectedIds.has(id))
+          : rangeIds.filter((id) => !selectedIds.has(id));
+        if (ids.length) onToggleSelectMany(ids, mode === "select");
+        resetRange();
+      }
       return;
     }
+    // Clic normal: reinicia el ancla del rango y cicla el estado de la foto.
+    resetRange();
     if (clickTimerRef.current) {
-      // Segundo clic de un doble clic: el visor lo abre onDoubleClick.
       clearTimeout(clickTimerRef.current);
       clickTimerRef.current = null;
       return;
     }
-    lastClickRef.current = i;
     const id = item.id;
     clickTimerRef.current = setTimeout(() => {
       clickTimerRef.current = null;
@@ -208,7 +226,7 @@ export default function ProjectPhotoWorkspace({
                 <div className="absolute left-1.5 top-1.5 z-10">
                   <button
                     type="button"
-                    onClick={() => onToggleSelect(item.id)}
+                    onClick={(e) => { e.stopPropagation(); resetRange(); onToggleSelect(item.id); }}
                     className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? (review ? "border-yellow-400 bg-yellow-400 text-black" : "border-green-500 bg-green-500 text-white") : "border-white/70 bg-black/40 text-transparent hover:bg-black/60"}`}
                   >
                     {checked ? <span className="text-[11px] font-bold leading-none">✓</span> : null}
@@ -217,7 +235,7 @@ export default function ProjectPhotoWorkspace({
                 {item.previewUrl ? (
                   <div
                     className="aspect-square w-full cursor-pointer bg-black/5"
-                    title="Un clic cicla: verde (5★) → amarillo (3★) → sin color · Mayús+clic marca un rango · doble clic abre la vista previa"
+                    title="Un clic cicla: verde (5★) → amarillo (3★) → sin color · Cmd/Ctrl+clic selecciona o deselecciona un rango (dos clics) · doble clic abre la vista previa"
                     onClick={(e) => handlePhotoClick(e, item, i)}
                     onDoubleClick={() => handlePhotoDoubleClick(i)}
                   >
