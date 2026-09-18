@@ -41,7 +41,7 @@ export default async function(req: Request): Promise<Response> {
         const uploaded = await uploadPreviewBatch(base44, [
           { id: idA, previewBase64: String(pair.preview_a_base64) },
           { id: idB, previewBase64: String(pair.preview_b_base64) },
-        ]);
+        ], "seleccion");
         const fileUrls = [uploaded[idA], uploaded[idB]].filter(Boolean);
         const ctxA = pair.context_a || {};
         const ctxB = pair.context_b || {};

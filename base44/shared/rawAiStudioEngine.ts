@@ -160,17 +160,16 @@ Return concrete numeric values and confidence_score.`;
 // pero N veces menos llamadas.
 export const LLM_BATCH_SIZE = 6;
 
-// Sube un lote de previews a almacenamiento y devuelve sus URLs. Para el flujo local
-// (rawAiStudioAnalyze), donde las previews llegan como base64. El flujo cloud ya tiene
-// las URLs subidas desde el navegador y pasa previewFileUrl directamente.
-// Sube un lote de previews a almacenamiento y devuelve sus URLs. Para el flujo local
-// (rawAiStudioAnalyze), donde las previews llegan como base64. El flujo cloud ya tiene
-// las URLs subidas desde el navegador y pasa previewFileUrl directamente.
+// Sube un lote de previews y devuelve sus URLs para pasarlas al proveedor de IA.
 //
-// NVIDIA: cuando el proveedor activo para `task` es nvidia, devuelve data URLs
-// (data:image/jpeg;base64,...) directamente, SIN llamar a UploadFile. El adaptador
-// NVIDIA acepta data URLs en image_url (OpenAI vision). Qwen/Base44 siguen usando
-// UploadFile para obtener file_url http — su flujo no cambia.
+// PROVEEDORES EXTERNOS (qwen, nvidia, gemini, custom:*): devuelven data URLs inline
+// (data:image/jpeg;base64,...) directamente, SIN UploadPublicFile. Todos los endpoints
+// OpenAI-compatible aceptan data URLs en image_url — no necesitan una URL http de
+// almacenamiento. Esto evita consumir 1 crédito de integración Base44 por foto en
+// cada upload.
+//
+// base44 (InvokeLLM): el único que necesita URLs http vía UploadPublicFile, porque
+// InvokeLLM no acepta data URLs inline.
 export async function uploadPreviewBatch(
   base44: any,
   previews: Array<{ id: string; previewBase64: string }>,
@@ -179,29 +178,18 @@ export async function uploadPreviewBatch(
   if (task) {
     try {
       const provider = await activeProviderFor(base44, task);
-      if (provider === "nvidia" || provider === "gemini") {
+      // Cualquier proveedor que NO sea base44 acepta data URLs inline (OpenAI-compatible).
+      // Saltarse el UploadPublicFile ahorra 1 crédito de integración Base44 por foto.
+      if (provider && provider !== "base44" && provider !== "none") {
         const urls: Record<string, string> = {};
         for (const p of previews) urls[p.id] = `data:image/jpeg;base64,${p.previewBase64}`;
         return urls;
-      }
-      // Proveedores personalizados: NVIDIA NIM y Gemini (generativelanguage) aceptan y
-      // prefieren data URLs inline (evita que el proveedor tenga que fetchear una URL http
-      // externa, que puede colgarse o fallar). Otros custom (OpenRouter, etc.) siguen
-      // usando UploadFile (URL http).
-      if (typeof provider === "string" && provider.startsWith("custom:")) {
-        const id = provider.slice("custom:".length);
-        const rec = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
-        const ep = String(rec?.endpoint || "").toLowerCase();
-        if (/integrate\.api\.nvidia\.com/.test(ep) || /generativelanguage\.googleapis\.com/.test(ep)) {
-          const urls: Record<string, string> = {};
-          for (const p of previews) urls[p.id] = `data:image/jpeg;base64,${p.previewBase64}`;
-          return urls;
-        }
       }
     } catch {
       // Si no se puede leer la config, se cae al flujo por defecto (UploadFile).
     }
   }
+  // Solo base44 (InvokeLLM) o sin task: sube a UploadPublicFile.
   const urls: Record<string, string> = {};
   await Promise.all(previews.map(async (p) => {
     const file = base64ToFile(p.previewBase64);
