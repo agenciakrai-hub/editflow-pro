@@ -22,6 +22,7 @@ import AutoLayoutConfigDialog from "@/modules/album/shell/AutoLayoutConfigDialog
 import AiAssistancePreviewDialog from "@/modules/album/shell/AiAssistancePreviewDialog";
 import ValidationReportDialog from "@/modules/album/shell/ValidationReportDialog";
 import { validateLayout } from "@/modules/album/layout/layoutValidator";
+import { validatePlan } from "@/modules/album/layout/planValidator";
 import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -408,7 +409,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         newSpreads: prepared.summary.newSpreads,
         finalSpreads: store.spreads.filter((s) => s.locked).length + prepared.summary.newSpreads,
       };
-      setPreviewDialog({ prepared, mode: "regenerate", cfg, summary: adjustedSummary });
+      const keepSpreadsRegen = store.spreads.filter((s) => s.locked);
+      const validationRegen = validatePlan({ project, plan: prepared.plan, existingSpreads: store.spreads, keepSpreads: keepSpreadsRegen, mode: "regenerate", maxSpreads: limit, photosById, simGroups, roleOf });
+      setPreviewDialog({ prepared, mode: "regenerate", cfg, summary: adjustedSummary, validation: validationRegen });
       return;
     }
     if (d.mode === "regenerateAll") {
@@ -427,14 +430,17 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         newSpreads: prepared.summary.newSpreads,
         finalSpreads: store.spreads.filter((s) => s.locked).length + prepared.summary.newSpreads,
       };
-      setPreviewDialog({ prepared, mode: "regenerateAll", cfg, summary: adjustedSummary });
+      const keepSpreadsAll = store.spreads.filter((s) => s.locked);
+      const validationAll = validatePlan({ project, plan: prepared.plan, existingSpreads: store.spreads, keepSpreads: keepSpreadsAll, mode: "regenerateAll", maxSpreads: limit, photosById, simGroups, roleOf });
+      setPreviewDialog({ prepared, mode: "regenerateAll", cfg, summary: adjustedSummary, validation: validationAll });
       return;
     }
     // mode === "create": prepara el plan y muestra la previsualización.
     toast({ title: "Analizando…", description: limit ? `Preparando la propuesta (máximo ${limit} lienzos totales).` : "Preparando la propuesta de maquetación." });
     const prepared = await store.prepareAutoLayoutPlan(d.ids, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf });
     if (!prepared) { toast({ title: "Sin fotos nuevas", description: "Todas las fotos seleccionadas ya están colocadas en el álbum.", variant: "destructive" }); return; }
-    setPreviewDialog({ prepared, mode: "create", cfg, summary: prepared.summary });
+    const validationCreate = validatePlan({ project, plan: prepared.plan, existingSpreads: store.spreads, keepSpreads: store.spreads, mode: "create", maxSpreads: limit, photosById, simGroups, roleOf });
+    setPreviewDialog({ prepared, mode: "create", cfg, summary: prepared.summary, validation: validationCreate });
   };
   // Punto 9/10 — aplica la propuesta en una operación atómica (⌘Z deshace todo).
   const applyPreview = async () => {
@@ -757,6 +763,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         <AiAssistancePreviewDialog
           open
           summary={previewDialog.summary}
+          validation={previewDialog.validation}
           applying={applyingPreview}
           onApply={applyPreview}
           onCancel={() => setPreviewDialog(null)}

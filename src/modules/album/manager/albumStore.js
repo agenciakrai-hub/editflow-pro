@@ -649,19 +649,28 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     updateSlot(spreadId, slotId, { photo_id: null, transform: freshTransform() });
   }, [updateSlot]);
 
-  const movePhotoBetweenSlots = useCallback((spreadId, fromSlotId, toSlotId) => {
+  // Punto 1/3 — al mover una foto entre huecos: respeta fill_photos del lienzo.
+  // false → FIT (foto completa, centrada); true → SMART COVER (caras + focal point).
+  // Nunca COVER automático si la herramienta está OFF. Al ser asíncrono, prepara
+  // caras solo si fill_photos está activo (igual que assignPhotoToSlot).
+  const movePhotoBetweenSlots = useCallback(async (spreadId, fromSlotId, toSlotId) => {
     const s = spreadsRef.current.find((x) => x.id === spreadId);
     if (!s) return;
     const from = (s.slots || []).find((x) => x.slot_id === fromSlotId);
     const to = (s.slots || []).find((x) => x.slot_id === toSlotId);
     if (!from || !to) return;
+    // Prepara caras de ambas fotos si fill_photos está activo (COVER inteligente).
+    if (s.fill_photos) {
+      const ids = [from.photo_id, to.photo_id].filter(Boolean);
+      await Promise.all(ids.map((id) => ensureFaces(project.id, photosByIdRef.current.get(id))));
+    }
     const list = spreadsRef.current.map((x) => {
       if (x.id !== spreadId) return x;
       const fillFor = (slotId, pid) => {
         const photo = pid ? photosByIdRef.current.get(pid) : null;
         const sl = (s.slots || []).find((z) => z.slot_id === slotId);
         if (photo && sl) {
-          const f = smartFillSlot(sl, photo);
+          const f = fitOrSmartFillSlot(sl, photo, s);
           return { fit_mode: f.fit_mode, transform: f.transform };
         }
         return { transform: freshTransform(), fit_mode: "fit" };
@@ -676,7 +685,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       };
     });
     apply(list, [spreadId]);
-  }, [apply]);
+  }, [apply, project.id, fitOrSmartFillSlot]);
 
   const addSlotWithPhoto = useCallback(async (spreadId, photoId) => {
     const s = spreadsRef.current.find((x) => x.id === spreadId);

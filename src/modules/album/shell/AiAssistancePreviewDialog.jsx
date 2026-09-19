@@ -1,16 +1,22 @@
 import React from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Sparkles, CheckCircle2, AlertTriangle, Images, Layers, Ban } from "lucide-react";
+import { Sparkles, CheckCircle2, AlertTriangle, Images, Layers, Ban, XCircle } from "lucide-react";
 
 // Punto 9 — PREVISUALIZACIÓN de la propuesta de Asistencia IA antes de aplicar.
 // Muestra el resumen del plan: fotos analizadas, propuestas, descartadas por
-// similitud, lienzos actuales / máximo / nuevos / total final. El fotógrafo
-// revisa y decide: Aplicar (operación atómica, ⌘Z deshace todo) o Cancelar.
-export default function AiAssistancePreviewDialog({ open, summary, onApply, onCancel, applying }) {
+// similitud, lienzos actuales / máximo / nuevos / total final. VALIDACIÓN PREVIA
+// (punto 9): si la propuesta tiene ERRORES (supera máximo, duplicadas, geometría
+// inválida), el botón «Aplicar» se deshabilita y se listan los errores. Los AVISOS
+// (calidad, variedad) se muestran pero no bloquean. El fotógrafo revisa y decide:
+// Aplicar (operación atómica, ⌘Z deshace todo) o Cancelar.
+export default function AiAssistancePreviewDialog({ open, summary, validation, onApply, onCancel, applying }) {
   if (!summary) return null;
   const maxReached = summary.maxSpreads != null && summary.currentSpreads >= summary.maxSpreads;
   const noPhotos = summary.placed === 0;
+  const hasErrors = validation && validation.errors && validation.errors.length > 0;
+  const hasWarnings = validation && validation.warnings && validation.warnings.length > 0;
+  const canApply = !maxReached && !noPhotos && !hasErrors;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !applying && onCancel()}>
@@ -57,13 +63,36 @@ export default function AiAssistancePreviewDialog({ open, summary, onApply, onCa
                 Mejora visual IA activa: perfiles de importancia, caras y punto focal aplicados al planificador.
               </p>
             )}
+            {hasErrors && (
+              <div className="space-y-1.5 rounded-lg border border-destructive/40 bg-destructive/10 p-3">
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-destructive">
+                  <XCircle className="h-3.5 w-3.5" /> No se puede aplicar: {validation.errors.length} error(es)
+                </p>
+                {validation.errors.map((e, i) => (
+                  <p key={i} className="text-[11px] leading-tight text-destructive">• {e.message}</p>
+                ))}
+              </div>
+            )}
+            {hasWarnings && (
+              <div className="space-y-1 rounded-lg border border-amber-300 bg-amber-50 p-2.5 dark:border-amber-700 dark:bg-amber-950/30">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-500">
+                  <AlertTriangle className="h-3.5 w-3.5" /> {validation.warnings.length} aviso(s) (no bloquean)
+                </p>
+                {validation.warnings.slice(0, 3).map((w, i) => (
+                  <p key={i} className="text-[11px] leading-tight text-amber-700 dark:text-amber-500">• {w.message}</p>
+                ))}
+                {validation.warnings.length > 3 && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-500">… y {validation.warnings.length - 3} más.</p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
         <DialogFooter>
           <Button variant="ghost" onClick={onCancel} disabled={applying}>Cancelar</Button>
-          <Button onClick={onApply} disabled={applying || maxReached || noPhotos}>
-            {applying ? "Aplicando…" : "Aplicar propuesta"}
+          <Button onClick={onApply} disabled={applying || !canApply}>
+            {applying ? "Aplicando…" : hasErrors ? "No se puede aplicar" : "Aplicar propuesta"}
           </Button>
         </DialogFooter>
       </DialogContent>
