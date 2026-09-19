@@ -309,6 +309,24 @@ function parseInitialValuesFromXmp(xmp) {
     const m = /crs:Dehaze="(-?\d+(?:\.\d+)?)"/.exec(text);
     if (m) out.dehaze = parseFloat(m[1]);
   }
+  // Los XMP de Lightroom OMITEN los atributos que están en su valor predeterminado.
+  // Para los parámetros relativos (exposure, contrast, highlights, shadows, whites,
+  // blacks, vibrance, saturation, clarity, texture, dehaze) el predeterminado es 0.
+  // Si no aparecen en el XMP, su valor inicial era 0 — no undefined. Sin este default,
+  // cualquier corrección del usuario sobre un parámetro que EditFlow dejó en 0 (y por
+  // tanto no escribió en el XMP) se rechaza con "nada que aprender" porque initial[k]
+  // es undefined y el delta no se calcula.
+  // Temperature/Tint NO se defaultean: son absolutos (K/grados), no relativos; si
+  // EditFlow no los tocó, el valor inicial es el "as shot" de la cámara, que el XMP
+  // no contiene y el plugin envía como número absoluto — calcular delta=0-current
+  // sería incorrecto.
+  const RELATIVE_DEFAULT_ZERO = [
+    "exposure", "contrast", "highlights", "shadows", "whites", "blacks",
+    "vibrance", "saturation", "clarity", "texture", "dehaze",
+  ];
+  for (const k of RELATIVE_DEFAULT_ZERO) {
+    if (out[k] === undefined) out[k] = 0;
+  }
   return out;
 }
 
