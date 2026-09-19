@@ -3,12 +3,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 
 // Configuración ANTES de generar (punto 14) — diálogo sencillo y no técnico que
-// pide al fotógrafo, antes de ejecutar la maquetación o la regeneración:
-//   · Máx. lienzos: la IA jamás crea más lienzos que este límite (punto 1).
-//   · Fotos por lienzo (máx.): techo de fotos por plantilla.
+// pide al fotógrafo, antes de ejecutar la Asistencia IA o la regeneración:
+//   · Máx. lienzos TOTAL del álbum (punto 5): la IA solo crea el complemento hasta
+//     alcanzar el límite. Los bloqueados cuentan.
+//   · Fotos por lienzo (máx.): techo de fotos por plantilla. Derivado del catálogo
+//     real (máx. 12 en T23 = 4×3), no limitado artificialmente a 8 (punto 13).
 //   · Prioridad de reparto: más fotos por lienzo / más espacio por foto / equilibrado.
-// La IA distribuye las fotos seleccionadas DENTRO del límite, optimizando la
-// distribución y eligiendo plantillas con más fotos cuando hace falta (punto 1).
 export default function AutoLayoutConfigDialog({ open, defaults, onConfirm, onClose }) {
   const [maxSpreads, setMaxSpreads] = useState(defaults?.maxSpreads ?? 20);
   const [maxPerSpread, setMaxPerSpread] = useState(defaults?.maxPerSpread ?? 6);
@@ -26,8 +26,8 @@ export default function AutoLayoutConfigDialog({ open, defaults, onConfirm, onCl
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Maquetación automática</DialogTitle>
-          <DialogDescription>Configura el reparto antes de generar los lienzos. Las fotos se distribuyen respetando el máximo de lienzos y sin repetir ninguna.</DialogDescription>
+          <DialogTitle>Asistencia IA</DialogTitle>
+          <DialogDescription>Configura el reparto antes de generar los lienzos. El máximo es TOTAL del álbum: la IA solo crea el complemento. Las fotos se distribuyen sin repetir ninguna.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-1">
           <div className="grid grid-cols-2 gap-3">
@@ -39,8 +39,8 @@ export default function AutoLayoutConfigDialog({ open, defaults, onConfirm, onCl
             </label>
             <label className="block">
               <span className="text-xs font-medium text-muted-foreground">Fotos por lienzo (máx.)</span>
-              <input type="number" min="1" max="8" value={maxPerSpread}
-                onChange={(e) => setMaxPerSpread(Math.min(8, Math.max(1, Math.floor(Number(e.target.value) || 1))))}
+              <input type="number" min="1" max="12" value={maxPerSpread}
+                onChange={(e) => setMaxPerSpread(Math.min(12, Math.max(1, Math.floor(Number(e.target.value) || 1))))}
                 className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm tabular-nums" />
             </label>
           </div>
@@ -65,7 +65,7 @@ export default function AutoLayoutConfigDialog({ open, defaults, onConfirm, onCl
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => onConfirm({ maxSpreads, maxPerSpread, priority })}>Maquetar</Button>
+          <Button onClick={() => onConfirm({ maxSpreads, maxPerSpread, priority })}>Analizar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

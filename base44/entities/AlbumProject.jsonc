@@ -115,6 +115,26 @@
       "type": "string",
       "default": "v1",
       "description": "Versi\u00f3n del esquema .editflowalbum."
+    },
+    "auto_layout_max_spreads": {
+      "type": "number",
+      "default": 20,
+      "description": "Asistencia IA \u2014 M\u00c1XIMO TOTAL de lienzos del \u00e1lbum (no de lienzos nuevos). La IA solo puede crear lienzos adicionales hasta alcanzar este l\u00edmite. Los lienzos bloqueados cuentan para el total. Se guarda y recupera al reabrir el \u00e1lbum."
+    },
+    "auto_layout_max_photos_per_spread": {
+      "type": "number",
+      "default": 6,
+      "description": "Asistencia IA \u2014 techo de fotos por plantilla/lienzo. Deriva del cat\u00e1logo real (m\u00e1x. 12 en T23)."
+    },
+    "auto_layout_priority": {
+      "type": "string",
+      "enum": [
+        "balanced",
+        "morePhotos",
+        "moreSpace"
+      ],
+      "default": "balanced",
+      "description": "Asistencia IA \u2014 prioridad de reparto: balanced (equilibrado), morePhotos (m\u00e1s fotos por lienzo), moreSpace (m\u00e1s espacio por foto)."
     }
   },
   "required": [

@@ -237,6 +237,15 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // (assignment alineado al orden de slots; null = hueco vacío). Ajuste automático
   // al contenedor: cada foto COLOCADA llena su hueco (cover, proporción original,
   // sin espacios vacíos) con protección de caras/punto focal de la IA visual.
+  // Punto 1/14 — respeta fill_photos: false → FIT (foto completa, sin recorte);
+  // true → SMART COVER (caras + focal point). Nunca COVER automático si la
+  // herramienta está OFF.
+  const fitOrSmartFillSlot = useCallback((sl, photo, spread) => {
+    if (!sl || !photo) return { fit_mode: "fit", transform: freshTransform() };
+    if (spread?.fill_photos) return smartFillSlot(sl, photo);
+    return { fit_mode: "fit", transform: freshTransform() };
+  }, []);
+
   const applyAutoLayout = useCallback(async (id, layoutId, photoIds) => {
     const s = spreadsRef.current.find((x) => x.id === id);
     if (!s || s.locked) return;
@@ -244,92 +253,127 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     if (!layout) return;
     const next = applyLayout(s, layout, project);
     next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: photoIds?.[i] ?? null }));
-    // Relleno completo del lienzo activo: la plantilla automática se aplica expandida.
     if (next.fill_canvas) next = { ...next, slots: expandSlotsToCanvas(project, next.mode, next.slots || []) };
-    // Ajuste automático al contenedor (cover inteligente): toda foto colocada.
-    next = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
+    // Punto 1 — respeta fill_photos del lienzo.
+    next.slots = next.slots.map((sl) => {
+      if (!sl.photo_id) return sl;
+      const photo = photosByIdRef.current.get(sl.photo_id);
+      if (!photo) return sl;
+      const f = fitOrSmartFillSlot(sl, photo, s);
+      return { ...sl, fit_mode: f.fit_mode, transform: f.transform };
+    });
     apply(spreadsRef.current.map((x) => (x.id === id ? next : x)), [id]);
     setSelectedSlotId(null);
-  }, [apply, project]);
+  }, [apply, project, fitOrSmartFillSlot]);
 
   // Colocación múltiple — crea un lienzo NUEVO con la plantilla automática y las
   // fotos. Ajuste automático al contenedor (cover inteligente con protección de
   // caras): igual que el resto de colocaciones.
   const addSpreadWithAutoLayout = useCallback(async (layoutId, photoIds) => {
-    const base = { id: tmpId(), project_id: project.id, order_index: spreadsRef.current.length, mode: "spread", layout_id: layoutId, locked: false, ai_generated: false, slots: [] };
+    const base = { id: tmpId(), project_id: project.id, order_index: spreadsRef.current.length, mode: "spread", layout_id: layoutId, locked: false, ai_generated: false, fill_photos: false, slots: [] };
     const layout = getLayout(layoutId);
     const built = layout ? applyLayout(base, layout, project) : base;
     const next = {
       ...built,
       slots: (built.slots || []).map((sl, i) => ({ ...sl, photo_id: photoIds?.[i] ?? null })),
     };
-    const filled = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
+    // Punto 1 — lienzo nuevo nace con fill_photos=false → FIT.
+    const filled = {
+      ...next,
+      slots: next.slots.map((sl) => sl.photo_id ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl),
+    };
     apply([...spreadsRef.current, filled], [filled.id]);
     setSelectedSpreadId(filled.id);
     setSelectedSlotId(null);
   }, [apply, project]);
 
-  // ---- Fase 1 — MAQUETACIÓN AUTOMÁTICA DETERMINISTA (sin IA) ----
-  // Crea TODOS los lienzos del plan en UNA operación atómica (una sola entrada de
-  // historial: ⌘Z deshace la maquetación completa y ⌘⇧Z la restaura). Los lienzos
-  // se añaden DESPUÉS del último existente sin tocar nada previo, con la
-  // configuración del álbum (tamaño, márgenes, espacio entre fotos resuelto por
-  // applyLayout) y las mismas reglas que la creación manual (nuevo lienzo: ajuste
-  // FIT inicial, herramientas de relleno desactivadas por defecto). Las fotos
-  // sobrantes permanecen sin colocar; las existentes no se tocan.
-  // Fase 2 — la maquetación automática ahora analiza las fotos con IA visual (si hay
-  // consentimiento Album AI guardado) y pasa los perfiles al planificador determinista
-  // como PESOS adicionales. Si el análisis falla o no hay consentimiento, profiles
-  // queda vacío y planAutoLayout funciona EXACTAMENTE como la Fase 1. La creación de
-  // lienzos, el undo/redo atómico y el autosave NO se tocan.
-  const autoLayoutPhotos = useCallback(async (photoIds, opts = {}) => {
-    const ordered = (photoIds || []).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
+  // ---- Asistencia IA — MAQUETACIÓN AUTOMÁTICA (puntos 1/5/8/9/10) ----
+  // PREPARA el plan SIN aplicarlo: analiza las fotos con IA visual (si hay
+  // consentimiento), filtra las ya colocadas (punto 8), calcula el plan DP dentro
+  // del MÁXIMO TOTAL de lienzos (punto 5) y devuelve un resumen para previsualizar.
+  // La aplicación es atómica y posterior (applyAutoLayoutPlan): ⌘Z deshace TODA la
+  // maquetación (punto 10). Los lienzos se crean con fill_photos=false → FIT (foto
+  // completa, sin recorte automático); la IA NUNCA activa COVER por su cuenta (punto 1).
+  const prepareAutoLayoutPlan = useCallback(async (photoIds, opts = {}) => {
+    // Punto 8 — una foto solo puede aparecer una vez: filtra las ya colocadas.
+    const placedIds = new Set();
+    spreadsRef.current.forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) placedIds.add(sl.photo_id); }));
+    const ordered = (photoIds || []).filter((id) => !placedIds.has(id)).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
     if (!ordered.length) return null;
     let profiles = new Map();
     try { profiles = await analyzePhotosForLayout(project.id, ordered); } catch { profiles = new Map(); }
-    // Punto 7 — roles hero/key/support/detail como preferencia de tamaño de hueco.
     profiles = applyRoleWeights(profiles, opts?.roleOf);
-    // Límite máximo de lienzos (decisión del usuario antes de ejecutar) y
-    // similitud (grupos de ráfaga/secuencia de la Selección IA): el planificador
-    // DP existente optimiza DENTRO del límite y evita fotos casi idénticas en el
-    // mismo lienzo o en consecutivos.
+    // Punto 5 — el límite es el MÁXIMO TOTAL del álbum: se descuentan los lienzos
+    // existentes (bloqueados incluidos). La IA solo puede crear el complemento.
+    const existingCount = spreadsRef.current.length;
     const plan = planAutoLayout(project, ordered, profiles, {
       maxSpreads: opts?.maxSpreads,
+      existingCount,
       simGroups: opts?.simGroups,
       priority: opts?.priority,
       maxPerSpread: opts?.maxPerSpread,
     });
-    if (!plan.groups.length) return null;
+    // Punto 7 — fotos descartadas por similitud (estimación: fotos del mismo grupo
+    // de ráfaga que no entraron porque el planificador las penalizó).
+    let discardedBySim = 0;
+    if (opts?.simGroups?.size && plan.leftover.length) {
+      const usedGroups = new Set();
+      plan.groups.forEach((g) => g.assignment.forEach((id) => { if (id) { const sg = opts.simGroups.get(id); if (sg != null) usedGroups.add(sg); } }));
+      plan.leftover.forEach((p) => { const sg = opts.simGroups.get(p.id); if (sg != null && usedGroups.has(sg)) discardedBySim++; });
+    }
+    return {
+      plan,
+      summary: {
+        analyzed: ordered.length,
+        placed: ordered.length - plan.leftover.length,
+        leftover: plan.leftover.length,
+        discardedBySim,
+        currentSpreads: existingCount,
+        maxSpreads: Number(opts?.maxSpreads) || null,
+        newSpreads: plan.groups.length,
+        finalSpreads: existingCount + plan.groups.length,
+        usedAi: profiles.size > 0,
+      },
+    };
+  }, [project]);
+
+  // Aplica el plan preparado en UNA operación atómica (punto 10: ⌘Z deshace todo).
+  // Punto 1 — los lienzos nuevos nacen con fill_photos=false → FIT (foto completa,
+  // centrada, sin recorte). La IA NUNCA activa COVER automáticamente.
+  const applyAutoLayoutPlan = useCallback(async (prepared) => {
+    if (!prepared?.plan?.groups?.length) return null;
+    const { plan } = prepared;
     const list = [...spreadsRef.current];
     const created = [];
     for (const g of plan.groups) {
-      // Configuración EXPLÍCITA propia de cada lienzo nuevo (nunca hereda de otros):
-      // herramientas de relleno OFF, separación null (= global del álbum) y fondo
-      // vacío (= global). Cambiarla después afecta SOLO a este lienzo.
       const base = {
         id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread",
-        layout_id: g.layoutId, locked: false, ai_generated: false,
+        layout_id: g.layoutId, locked: false, ai_generated: true,
         fill_photos: false, fill_canvas: false, photo_gap_mm: null, background_color: null, slots: [],
       };
       const next = applyLayout(base, g.layout, project);
       next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
-      // Ajuste automático al contenedor (cover con protección de caras/punto
-      // focal): toda foto colocada llena su hueco, sin espacios vacíos.
-      const filled = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
+      // Punto 1 — fill_photos=false → FIT (foto completa, sin recorte, transform limpio).
+      // La IA no activa COVER: el fotógrafo lo hace manualmente con «Rellenar contenedor».
+      const filled = {
+        ...next,
+        slots: next.slots.map((sl) => sl.photo_id ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl),
+      };
       created.push(filled);
       list.push(filled);
     }
     apply(list, created.map((s) => s.id));
     setSelectedSpreadId(created[0].id);
     setSelectedSlotId(null);
-    return {
-      total: ordered.length,
-      placed: ordered.length - plan.leftover.length,
-      leftover: plan.leftover.length,
-      spreadCount: created.length,
-      usedAi: profiles.size > 0,
-    };
+    return prepared.summary;
   }, [apply, project]);
+
+  // Legado — maquetación directa sin previsualización (compatibilidad).
+  const autoLayoutPhotos = useCallback(async (photoIds, opts = {}) => {
+    const prepared = await prepareAutoLayoutPlan(photoIds, opts);
+    if (!prepared) return null;
+    return applyAutoLayoutPlan(prepared);
+  }, [prepareAutoLayoutPlan, applyAutoLayoutPlan]);
 
   // REGENERACIÓN SELECTIVA (punto 13) — re-elige la mejor plantilla para las fotos
   // que YA están en este lienzo y la reaplica EN SU SITIO (mismo id, mismo orden).
@@ -363,23 +407,26 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     if (!ordered.length) return null;
     let profiles = new Map();
     try { profiles = await analyzePhotosForLayout(project.id, ordered); } catch { profiles = new Map(); }
-    // Punto 7 — roles hero/key/support/detail como preferencia de tamaño de hueco.
     profiles = applyRoleWeights(profiles, opts?.roleOf);
+    // Punto 5 — el límite es el MÁXIMO TOTAL: los lienzos bloqueados (keep) cuentan.
+    // La IA solo puede crear (maxSpreads - keep.length) lienzos nuevos para los no bloqueados.
     const plan = planAutoLayout(project, ordered, profiles, {
-      maxSpreads: opts?.maxSpreads, simGroups: opts?.simGroups, priority: opts?.priority, maxPerSpread: opts?.maxPerSpread,
+      maxSpreads: opts?.maxSpreads, existingCount: keep.length, simGroups: opts?.simGroups, priority: opts?.priority, maxPerSpread: opts?.maxPerSpread,
     });
     if (!plan.groups.length) return null;
     pushHistory();
-    // Marcar borrado de los lienzos no bloqueados que se reemplazan (los tmp se
-    // descartan; los reales se borran en el servidor al guardar).
     remove.forEach((s) => { if (String(s.id).startsWith("tmp_")) dirtyRef.current.delete(s.id); else deletedRef.current.add(s.id); });
     const list = keep.map((s, i) => ({ ...s, order_index: i }));
     const created = [];
     for (const g of plan.groups) {
-      const base = { id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread", layout_id: g.layoutId, locked: false, ai_generated: false, fill_photos: false, fill_canvas: false, photo_gap_mm: null, background_color: null, slots: [] };
+      const base = { id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread", layout_id: g.layoutId, locked: false, ai_generated: true, fill_photos: false, fill_canvas: false, photo_gap_mm: null, background_color: null, slots: [] };
       const next = applyLayout(base, g.layout, project);
       next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
-      const filled = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
+      // Punto 1 — fill_photos=false → FIT (foto completa, sin recorte automático).
+      const filled = {
+        ...next,
+        slots: next.slots.map((sl) => sl.photo_id ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl),
+      };
       created.push(filled);
       list.push(filled);
     }
@@ -406,9 +453,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     const photos = (photoIds || []).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
     const empty = (s.slots || []).filter((sl) => !sl.photo_id && sl.w_mm > 0 && sl.h_mm > 0);
     if (!photos.length || !empty.length) return null;
-    // Prepara las caras (detección LOCAL sobre previews, con caché) para el mejor
-    // encuadre COVER antes de asignar.
-    await Promise.all(photos.map((p) => ensureFaces(project.id, p)));
+    // Punto 1 — prepara caras solo si fill_photos está activo (COVER); si no, FIT.
+    if (s.fill_photos) await Promise.all(photos.map((p) => ensureFaces(project.id, p)));
     const slotsSorted = empty.map((sl) => ({ sl, ratio: sl.w_mm / sl.h_mm })).sort((a, b) => a.ratio - b.ratio);
     const photosSorted = photos.map((p) => ({ p, ratio: photoRatio(p) })).sort((a, b) => a.ratio - b.ratio);
     const bySlot = new Map();
@@ -419,7 +465,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       slots: (s.slots || []).map((sl) => {
         const photo = bySlot.get(sl.slot_id);
         if (!photo) return sl;
-        const f = smartFillSlot(sl, photo);
+        const f = fitOrSmartFillSlot(sl, photo, s);
         return { ...sl, photo_id: photo.id, fit_mode: f.fit_mode, transform: f.transform };
       }),
     };
@@ -521,19 +567,22 @@ export function useAlbumStore(project, initialSpreads, photosById) {
               merged.transform = freshTransform();
             }
           }
-          // Al cambiar la geometría del contenedor: si la PROPORCIÓN del hueco cambia,
-          // la foto se recoloca en FIT/CONTAIN (se ve completa, sin recorte, sin
-          // desplazamientos inesperados); si la proporción se mantiene, no se toca
-          // nada (la foto no se mueve mientras se redimensiona el contenedor).
+          // Punto 2 — Al cambiar la proporción del contenedor: respeta fill_photos.
+          // fill_photos=false → FIT (foto completa, sin recorte, transform limpio).
+          // fill_photos=true  → SMART COVER (caras + focal point). Nunca COVER si OFF.
           if ((patch.w_mm != null || patch.h_mm != null) && merged.photo_id) {
             if (!sameRatio(sl.w_mm, sl.h_mm, merged.w_mm, merged.h_mm)) {
-              // Proporción del contenedor cambiada: la foto se rellena de nuevo al
-              // contenedor (COVER inteligente, síncrono con las caras ya cacheadas).
-              const photo = photosByIdRef.current.get(merged.photo_id);
-              if (photo) {
-                const f = smartFillSlot(merged, photo);
-                merged.fit_mode = f.fit_mode;
-                merged.transform = f.transform;
+              const spread = spreadsRef.current.find((x) => x.id === spreadId);
+              if (spread?.fill_photos) {
+                const photo = photosByIdRef.current.get(merged.photo_id);
+                if (photo) {
+                  const f = smartFillSlot(merged, photo);
+                  merged.fit_mode = f.fit_mode;
+                  merged.transform = f.transform;
+                } else {
+                  merged.transform = freshTransform();
+                  merged.fit_mode = "fit";
+                }
               } else {
                 merged.transform = freshTransform();
                 merged.fit_mode = "fit";
@@ -580,23 +629,21 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     else selectSlotContainer(slotId);
   }, [selectSlotContainer]);
 
-  // AJUSTE AUTOMÁTICO AL CONTENEDOR al entrar la foto: COVER inteligente (prioridad
-  // caras; punto focal de la IA visual si el navegador no detecta caras) — llena el
-  // hueco por completo, mantiene la proporción original y no deja espacios vacíos,
-  // con centrado automático. El usuario puede reencuadrar después manualmente.
+ // Punto 1/14 — al colocar una foto: respeta fill_photos del lienzo. false → FIT
+  // (foto completa, centrada, sin recorte); true → SMART COVER (caras + focal point).
   const assignPhotoToSlot = useCallback(async (spreadId, slotId, photoId) => {
     const s = spreadsRef.current.find((x) => x.id === spreadId);
     const photo = photoId ? photosByIdRef.current.get(photoId) : null;
     if (photo) {
-      await ensureFaces(project.id, photo);
+      if (s?.fill_photos) await ensureFaces(project.id, photo);
       const sl = (s?.slots || []).find((x) => x.slot_id === slotId);
-      const f = sl ? smartFillSlot(sl, photo) : null;
-      updateSlot(spreadId, slotId, { photo_id: photoId, ...(f ? { fit_mode: f.fit_mode, transform: f.transform } : { transform: freshTransform(), fit_mode: "fill" }) });
+      const f = sl ? fitOrSmartFillSlot(sl, photo, s) : null;
+      updateSlot(spreadId, slotId, { photo_id: photoId, ...(f ? { fit_mode: f.fit_mode, transform: f.transform } : { transform: freshTransform(), fit_mode: "fit" }) });
     } else {
       updateSlot(spreadId, slotId, { photo_id: photoId, transform: freshTransform(), fit_mode: "fit" });
     }
     selectSlot(slotId);
-  }, [updateSlot, selectSlot, project.id]);
+  }, [updateSlot, selectSlot, project.id, fitOrSmartFillSlot]);
 
   const removePhotoFromSlot = useCallback((spreadId, slotId) => {
     updateSlot(spreadId, slotId, { photo_id: null, transform: freshTransform() });
@@ -635,23 +682,67 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     const s = spreadsRef.current.find((x) => x.id === spreadId);
     if (!s) return;
     const slot = makeCustomSlot(project, photoId);
-    // Ajuste automático al contenedor (cover con protección de caras), igual que
-    // el resto de colocaciones.
+    // Punto 1 — respeta fill_photos del lienzo.
     const photo = photoId ? photosByIdRef.current.get(photoId) : null;
     if (photo) {
-      await ensureFaces(project.id, photo);
-      const f = smartFillSlot(slot, photo);
+      if (s.fill_photos) await ensureFaces(project.id, photo);
+      const f = fitOrSmartFillSlot(slot, photo, s);
       slot.fit_mode = f.fit_mode;
       slot.transform = f.transform;
     }
     apply(spreadsRef.current.map((x) => (x.id === spreadId ? { ...x, layout_id: x.layout_id || "custom", slots: [...(x.slots || []), slot] } : x)), [spreadId]);
     setSelectedSlotId(slot.slot_id);
-  }, [apply, project]);
+  }, [apply, project, fitOrSmartFillSlot]);
 
   const removeSlot = useCallback((spreadId, slotId) => {
     apply(spreadsRef.current.map((x) => (x.id !== spreadId ? x : { ...x, slots: (x.slots || []).filter((sl) => sl.slot_id !== slotId) })), [spreadId]);
     setSelectedSlotId(null);
   }, [apply]);
+
+  // REGENERACIÓN SELECTIVA (punto 12) — «Regenerar álbum»: rehace TODOS los lienzos
+  // no bloqueados (igual que regenerateNonLocked, pero parte de TODAS las fotos del
+  // álbum, no solo las colocadas en no bloqueados: incluye fotos sin colocar que el
+  // fotógrafo quiere incorporar). Los bloqueados siempre quedan intactos (punto 11).
+  const regenerateAll = useCallback(async (opts = {}) => {
+    const current = spreadsRef.current;
+    const keep = current.filter((s) => s.locked);
+    const remove = current.filter((s) => !s.locked);
+    // Recoge fotos de los no bloqueados + fotos sin colocar de TODO el álbum.
+    const placedIds = new Set();
+    current.forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) placedIds.add(sl.photo_id); }));
+    const photoIds = [];
+    remove.forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) photoIds.push(sl.photo_id); }));
+    // Añade fotos sin colocar (que no están en ningún lienzo).
+    photosByIdRef.current.forEach((p) => { if (!placedIds.has(p.id)) photoIds.push(p.id); });
+    const ordered = photoIds.map((id) => photosByIdRef.current.get(id)).filter(Boolean);
+    if (!ordered.length) return null;
+    let profiles = new Map();
+    try { profiles = await analyzePhotosForLayout(project.id, ordered); } catch { profiles = new Map(); }
+    profiles = applyRoleWeights(profiles, opts?.roleOf);
+    const plan = planAutoLayout(project, ordered, profiles, {
+      maxSpreads: opts?.maxSpreads, existingCount: keep.length, simGroups: opts?.simGroups, priority: opts?.priority, maxPerSpread: opts?.maxPerSpread,
+    });
+    if (!plan.groups.length) return null;
+    pushHistory();
+    remove.forEach((s) => { if (String(s.id).startsWith("tmp_")) dirtyRef.current.delete(s.id); else deletedRef.current.add(s.id); });
+    const list = keep.map((s, i) => ({ ...s, order_index: i }));
+    const created = [];
+    for (const g of plan.groups) {
+      const base = { id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread", layout_id: g.layoutId, locked: false, ai_generated: true, fill_photos: false, fill_canvas: false, photo_gap_mm: null, background_color: null, slots: [] };
+      const next = applyLayout(base, g.layout, project);
+      next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
+      const filled = { ...next, slots: next.slots.map((sl) => sl.photo_id ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl) };
+      created.push(filled);
+      list.push(filled);
+    }
+    setSpreads(list);
+    created.forEach((s) => dirtyRef.current.set(s.id, s));
+    keep.forEach((s) => dirtyRef.current.set(s.id, s));
+    scheduleSave();
+    setSelectedSpreadId(created[0]?.id || (keep[0]?.id ?? null));
+    setSelectedSlotId(null);
+    return { total: ordered.length, placed: ordered.length - plan.leftover.length, leftover: plan.leftover.length, spreadCount: created.length, keptLocked: keep.length, usedAi: profiles.size > 0 };
+  }, [pushHistory, scheduleSave, project]);
 
   // Gesturas (pan/zoom/resize): una sola entrada de historial por gesto.
   const gestureBegin = useCallback(() => pushHistory(), [pushHistory]);
@@ -717,7 +808,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     spreads: sorted, selectedSpread, selectedSpreadId, selectedSlotId, slotMode,
     selectSpread: setSelectedSpreadId, selectSlot, selectSlotContainer, toggleSlotContainerMode,
     addSpread, deleteSpreadById, duplicateSpreadById, moveSpread, reorderSpreads,
-    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, regenerateSpread, regenerateNonLocked, fillEmptySlotsWithPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
+    setSpreadLayoutById, applyAutoLayout, addSpreadWithAutoLayout, autoLayoutPhotos, prepareAutoLayoutPlan, applyAutoLayoutPlan, regenerateSpread, regenerateNonLocked, regenerateAll, fillEmptySlotsWithPhotos, setLocked, setSpreadFill, setSpreadCanvasFill, refreshTemplateSpreads,
     updateSlot, zoomSlotPhoto, assignPhotoToSlot, removePhotoFromSlot, movePhotoBetweenSlots,
     addSlotWithPhoto, removeSlot, gestureBegin,
     undo, redo, canUndo: hist.canUndo, canRedo: hist.canRedo, saving, saveError, retrySave: flush, flush,

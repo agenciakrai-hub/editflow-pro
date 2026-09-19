@@ -19,6 +19,7 @@ import SpreadCanvas from "@/modules/album/editor/SpreadCanvas";
 import RelocateDialog from "@/modules/album/relocate/RelocateDialog";
 import ExportDialog from "@/modules/album/export/ExportDialog";
 import AutoLayoutConfigDialog from "@/modules/album/shell/AutoLayoutConfigDialog";
+import AiAssistancePreviewDialog from "@/modules/album/shell/AiAssistancePreviewDialog";
 import ValidationReportDialog from "@/modules/album/shell/ValidationReportDialog";
 import { validateLayout } from "@/modules/album/layout/layoutValidator";
 import { base44 } from "@/api/base44Client";
@@ -365,6 +366,9 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   // fotos por lienzo y prioridad; luego ejecuta la maquetación o la regeneración
   // selectiva (punto 13). Los lienzos bloqueados siempre se respetan (punto 11/12).
   const [autoDialog, setAutoDialog] = useState(null);
+  // Punto 9 — previsualización de la propuesta antes de aplicar.
+  const [previewDialog, setPreviewDialog] = useState(null);
+  const [applyingPreview, setApplyingPreview] = useState(false);
   const openAutoLayout = (ids) => setAutoDialog({ mode: "create", ids });
   const openRegenerateNonLocked = () => {
     const ids = [];
@@ -372,19 +376,95 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     if (!ids.length) { toast({ title: "Nada que regenerar", description: "No hay lienzos no bloqueados con fotos colocadas." }); return; }
     setAutoDialog({ mode: "regenerate", ids });
   };
+  // Punto 12 — «Regenerar álbum»: rehace TODOS los no bloqueados + fotos sin colocar.
+  const openRegenerateAll = () => {
+    setAutoDialog({ mode: "regenerateAll" });
+  };
+  // Punto 6 — persiste la configuración de Asistencia IA en el álbum.
+  const saveAutoLayoutConfig = (cfg) => {
+    const patch = {
+      auto_layout_max_spreads: cfg.maxSpreads,
+      auto_layout_max_photos_per_spread: cfg.maxPerSpread,
+      auto_layout_priority: cfg.priority,
+    };
+    setProject((p) => ({ ...p, ...patch }));
+    updateAlbum(project.id, patch).catch(() => {});
+  };
   const confirmAutoDialog = async (cfg) => {
     const d = autoDialog;
     setAutoDialog(null);
     if (!d) return;
+    saveAutoLayoutConfig(cfg);
+    const limit = Number(cfg.maxSpreads) > 0 ? Math.floor(Number(cfg.maxSpreads)) : null;
     if (d.mode === "regenerate") {
-      toast({ title: "Regenerando…", description: "Rehaciendo los lienzos no bloqueados (los bloqueados quedan intactos)." });
-      const res = await store.regenerateNonLocked({ maxSpreads: cfg.maxSpreads, maxPerSpread: cfg.maxPerSpread, priority: cfg.priority, simGroups, roleOf });
-      if (!res) { toast({ title: "Sin plantillas compatibles", description: "No hay combinación para regenerar con esa configuración.", variant: "destructive" }); return; }
-      toast({ title: "Regeneración completada", description: `${res.placed} foto(s) en ${res.spreadCount} lienzo(s) nuevo(s) · ${res.keptLocked} bloqueado(s) intacto(s) · ${res.leftover} sin colocar (⌘Z deshace).` });
-      setValidateReq({ maxSpreads: Number(cfg.maxSpreads) > 0 ? Math.floor(Number(cfg.maxSpreads)) : null });
+      toast({ title: "Preparando regeneración…", description: "Analizando las fotos de los lienzos no bloqueados." });
+      const prepared = await store.prepareAutoLayoutPlan(d.ids, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf });
+      if (!prepared) { toast({ title: "Sin plantillas compatibles", description: "No hay combinación para regenerar con esa configuración.", variant: "destructive" }); return; }
+      // La regeneración reemplaza los no bloqueados: el summary debe reflejarlo.
+      const nonLockedCount = store.spreads.filter((s) => !s.locked).length;
+      const adjustedSummary = {
+        ...prepared.summary,
+        currentSpreads: store.spreads.length,
+        newSpreads: prepared.summary.newSpreads,
+        finalSpreads: store.spreads.filter((s) => s.locked).length + prepared.summary.newSpreads,
+      };
+      setPreviewDialog({ prepared, mode: "regenerate", cfg, summary: adjustedSummary });
       return;
     }
-    runAutoLayout(d.ids, cfg);
+    if (d.mode === "regenerateAll") {
+      toast({ title: "Preparando regeneración…", description: "Analizando todas las fotos del álbum." });
+      // Para regenerateAll, preparamos con TODAS las fotos (colocadas en no bloqueados + sin colocar).
+      const placedIds = new Set();
+      store.spreads.forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) placedIds.add(sl.photo_id); }));
+      const allIds = [];
+      store.spreads.filter((s) => !s.locked).forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) allIds.push(sl.photo_id); }));
+      photos.forEach((p) => { if (!placedIds.has(p.id)) allIds.push(p.id); });
+      const prepared = await store.prepareAutoLayoutPlan(allIds, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf });
+      if (!prepared) { toast({ title: "Sin plantillas compatibles", description: "No hay combinación para regenerar con esa configuración.", variant: "destructive" }); return; }
+      const adjustedSummary = {
+        ...prepared.summary,
+        currentSpreads: store.spreads.length,
+        newSpreads: prepared.summary.newSpreads,
+        finalSpreads: store.spreads.filter((s) => s.locked).length + prepared.summary.newSpreads,
+      };
+      setPreviewDialog({ prepared, mode: "regenerateAll", cfg, summary: adjustedSummary });
+      return;
+    }
+    // mode === "create": prepara el plan y muestra la previsualización.
+    toast({ title: "Analizando…", description: limit ? `Preparando la propuesta (máximo ${limit} lienzos totales).` : "Preparando la propuesta de maquetación." });
+    const prepared = await store.prepareAutoLayoutPlan(d.ids, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf });
+    if (!prepared) { toast({ title: "Sin fotos nuevas", description: "Todas las fotos seleccionadas ya están colocadas en el álbum.", variant: "destructive" }); return; }
+    setPreviewDialog({ prepared, mode: "create", cfg, summary: prepared.summary });
+  };
+  // Punto 9/10 — aplica la propuesta en una operación atómica (⌘Z deshace todo).
+  const applyPreview = async () => {
+    const d = previewDialog;
+    if (!d) return;
+    setApplyingPreview(true);
+    try {
+      if (d.mode === "create") {
+        const res = await store.applyAutoLayoutPlan(d.prepared);
+        if (res) {
+          // Punto 16 — resumen final visible.
+          toast({
+            title: "Maquetación completada",
+            description: `${res.analyzed} fotografías analizadas · ${res.placed} utilizadas · ${res.leftover} sin colocar · ${res.newSpreads} lienzo(s) creado(s) · Total: ${res.finalSpreads} lienzos. Asistencia IA aplicada ✓ (⌘Z deshace todo).`,
+          });
+        }
+      } else if (d.mode === "regenerate") {
+        const res = await store.regenerateNonLocked({ maxSpreads: Number(d.cfg.maxSpreads) > 0 ? Math.floor(Number(d.cfg.maxSpreads)) : null, maxPerSpread: d.cfg.maxPerSpread, priority: d.cfg.priority, simGroups, roleOf });
+        if (!res) { toast({ title: "Sin plantillas compatibles", variant: "destructive" }); return; }
+        toast({ title: "Regeneración completada", description: `${res.placed} foto(s) en ${res.spreadCount} lienzo(s) nuevo(s) · ${res.keptLocked} bloqueado(s) intacto(s) · ${res.leftover} sin colocar (⌘Z deshace).` });
+      } else if (d.mode === "regenerateAll") {
+        const res = await store.regenerateAll({ maxSpreads: Number(d.cfg.maxSpreads) > 0 ? Math.floor(Number(d.cfg.maxSpreads)) : null, maxPerSpread: d.cfg.maxPerSpread, priority: d.cfg.priority, simGroups, roleOf });
+        if (!res) { toast({ title: "Sin plantillas compatibles", variant: "destructive" }); return; }
+        toast({ title: "Álbum regenerado", description: `${res.placed} foto(s) en ${res.spreadCount} lienzo(s) · ${res.keptLocked} bloqueado(s) intacto(s) · ${res.leftover} sin colocar (⌘Z deshace).` });
+      }
+      setValidateReq({ maxSpreads: Number(d.cfg.maxSpreads) > 0 ? Math.floor(Number(d.cfg.maxSpreads)) : null });
+    } finally {
+      setApplyingPreview(false);
+      setPreviewDialog(null);
+    }
   };
 
   // Fase Carpetas — organización VIRTUAL de fotos: la lista de nombres vive en el
@@ -663,9 +743,22 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       {autoDialog && (
         <AutoLayoutConfigDialog
           open
-          defaults={{ maxSpreads: project.spread_count_target || 20, maxPerSpread: project.max_photos_per_spread || 6, priority: "balanced" }}
+          defaults={{
+            maxSpreads: project.auto_layout_max_spreads ?? project.spread_count_target ?? 20,
+            maxPerSpread: project.auto_layout_max_photos_per_spread ?? project.max_photos_per_spread ?? 6,
+            priority: project.auto_layout_priority ?? "balanced",
+          }}
           onConfirm={confirmAutoDialog}
           onClose={() => setAutoDialog(null)}
+        />
+      )}
+      {previewDialog && (
+        <AiAssistancePreviewDialog
+          open
+          summary={previewDialog.summary}
+          applying={applyingPreview}
+          onApply={applyPreview}
+          onCancel={() => setPreviewDialog(null)}
         />
       )}
       {exporting && (

@@ -116,9 +116,11 @@ function scoreGroup(album, layout, photos, profiles, simGroups, costs) {
 // PLAN DE MAQUETACIÓN para un conjunto ORDENADO de fotos: DP sobre prefijos con
 // dimensión de nº de lienzos. dp[i][c] = mejor plan (coste mínimo) para las
 // primeras i fotos usando EXACTAMENTE c lienzos.
-//   · MÁXIMO DE LIENZOS (opts.maxSpreads, configurable antes de ejecutar): el
-//     plan JAMÁS crea más lienzos que el límite; busca la mejor combinación de
-//     plantillas y fotos por lienzo dentro de él.
+//   · MÁXIMO TOTAL DE LIENZOS (opts.maxSpreads + opts.existingCount): el límite es
+//     el MÁXIMO TOTAL del álbum, NO de lienzos nuevos. Si el álbum ya tiene
+//     existingCount lienzos, la IA solo puede crear (maxSpreads - existingCount)
+//     lienzos adicionales (mínimo 0). Los lienzos bloqueados cuentan para el total.
+//     El plan JAMÁS supera el límite total.
 //   · SIMILITUD (opts.simGroups: Map<photoId, grupo de ráfaga/secuencia>): penaliza
 //     fotos casi idénticas en el mismo lienzo (scoreGroup) y en lienzos
 //     consecutivos (estado del bloque anterior de la DP).
@@ -141,11 +143,17 @@ export function planAutoLayout(album, photos, profiles, opts = {}) {
   const costs = { canvas: priority === "morePhotos" ? CANVAS_COST * 1.6 : priority === "moreSpace" ? CANVAS_COST * 0.5 : CANVAS_COST };
 
   const simGroups = opts?.simGroups || null;
-  // Límite de lienzos: el indicado por el usuario o el máximo geométrico posible.
+  // Límite TOTAL de lienzos del álbum (no de lienzos nuevos): si el álbum ya tiene
+  // existingCount lienzos, la IA solo puede crear (limit - existingCount) lienzos
+  // adicionales (mínimo 0). Los bloqueados cuentan para el total.
   const minCount = Math.max(1, Math.min(...usable.map((l) => l.count)));
   const geoMax = Math.ceil(n / minCount);
   const limit = Number(opts?.maxSpreads);
-  const maxCanvases = Number.isFinite(limit) && limit >= 1 ? Math.min(Math.floor(limit), geoMax) : geoMax;
+  const existing = Math.max(0, Number(opts?.existingCount) || 0);
+  const maxCanvases = Number.isFinite(limit) && limit >= 1
+    ? Math.max(0, Math.min(Math.floor(limit) - existing, geoMax))
+    : geoMax;
+  if (maxCanvases === 0) return { groups: [], leftover: photos };
 
   const dp = Array.from({ length: n + 1 }, () => new Array(maxCanvases + 1).fill(null));
   dp[0][0] = { cost: 0, groups: [], lastSim: [] };
