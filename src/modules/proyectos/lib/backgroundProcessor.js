@@ -145,14 +145,42 @@ async function runProcessing(folderHandle, catalogHandle, pid, existing, job, on
       } catch {}
     };
 
-    // 4. Lee los RAW de la carpeta.
+    // 4. Lee los RAW de la carpeta (RECURSIVO: traverse subdirectorios). Los
+    //    fotógrafos suelen organizar las fotos en subcarpetas por momento
+    //    (Ceremonia/, Retratos/, Fiesta/...); si solo se lee el nivel superior,
+    //    estas carpetas no contienen archivos directamente y el procesado termina
+    //    en silencio con 0 fotos.
     const raws = [];
-    for await (const [name, entryHandle] of folderHandle.entries()) {
-      if (entryHandle.kind !== "file") continue;
-      if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
-      raws.push(await entryHandle.getFile());
+    const seenPaths = new Set();
+    async function collectRaws(dirHandle, prefix) {
+      for await (const [name, entryHandle] of dirHandle.entries()) {
+        if (entryHandle.kind === "directory") {
+          if (isHiddenOrSystemFile(name)) continue;
+          await collectRaws(entryHandle, prefix ? `${prefix}/${name}` : name);
+          continue;
+        }
+        if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
+        const file = await entryHandle.getFile();
+        // Anota la ruta relativa para el fingerprint (preserva la estructura de
+        // carpetas: dos fotos con el mismo nombre en distintas carpetas no
+        // colisionan).
+        const relPath = prefix ? `${prefix}/${name}` : name;
+        if (!seenPaths.has(relPath)) {
+          seenPaths.add(relPath);
+          // webkitRelativePath no está disponible en FileSystemFileHandle; lo
+          // guardamos en el objeto file como propiedad no enumerable.
+          try { Object.defineProperty(file, "webkitRelativePath", { value: relPath, writable: false, configurable: true }); } catch {}
+          raws.push(file);
+        }
+      }
     }
+    await collectRaws(folderHandle, "");
     const count = raws.length;
+    if (count === 0) {
+      // Aviso claro: la carpeta no contiene RAW (ni en subcarpetas). Sin esto el
+      // usuario ve una pantalla en blanco sin explicación.
+      throw new Error("La carpeta seleccionada no contiene archivos RAW (CR2, CR3, NEF, ARW, DNG, RAF...). Verifica que las fotos estén dentro de la carpeta o de sus subcarpetas.");
+    }
     const total = count * 2;
     job.progress = { done: 0, total };
     notify(job);
@@ -186,7 +214,7 @@ async function runProcessing(folderHandle, catalogHandle, pid, existing, job, on
         ...p,
         status: "REVIEW",
         rating: 0,
-        fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.name }),
+        fingerprint: await computeFingerprint({ file: p.file, preview: p.preview, relativePath: p.file.webkitRelativePath || p.file.name }),
       });
       const done = count + i + 1;
       job.progress = { done, total };
