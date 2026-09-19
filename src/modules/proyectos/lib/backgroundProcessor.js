@@ -179,7 +179,7 @@ async function runProcessing(folderHandle, catalogHandle, pid, existing, job, on
     if (count === 0) {
       // Aviso claro: la carpeta no contiene RAW (ni en subcarpetas). Sin esto el
       // usuario ve una pantalla en blanco sin explicación.
-      throw new Error("La carpeta seleccionada no contiene archivos RAW (CR2, CR3, NEF, ARW, DNG, RAF...). Verifica que las fotos estén dentro de la carpeta o de sus subcarpetas.");
+      throw new Error("La carpeta seleccionada no contiene imágenes (RAW: CR2, CR3, NEF, ARW, DNG, RAF... o JPG/JPEG). Verifica que las fotos estén dentro de la carpeta o de sus subcarpetas.");
     }
     const total = count * 2;
     job.progress = { done: 0, total };

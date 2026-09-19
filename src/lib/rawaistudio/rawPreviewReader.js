@@ -318,12 +318,16 @@ export const RAW_EXTENSIONS = [
   ".rwl", ".3fr", ".iiq", ".dcr", ".kdc", ".erf", ".mef", ".mos", ".gpr", ".raw"
 ];
 
-// Lista blanca: solo estas extensiones son RAW. Cualquier otra cosa (JPEG, XMP, PDFs,
-// documentos, archivos ocultos del sistema...) queda fuera del pipeline por definición,
-// nunca por una lista negra que haya que ir ampliando.
+// JPG/JPEG también se aceptan: un JPG es un JPEG completo que el lector de previews
+// ya decodifica sin problema (findEmbeddedJpegSegments lo detecta directamente).
+export const IMAGE_EXTENSIONS = [...RAW_EXTENSIONS, ".jpg", ".jpeg"];
+
+// Lista blanca: solo estas extensiones son imágenes válidas (RAW + JPG). Cualquier otra
+// cosa (XMP, PDFs, documentos, archivos ocultos del sistema...) queda fuera del pipeline
+// por definición, nunca por una lista negra que haya que ir ampliando.
 export function isRawFile(name) {
   const lower = name.toLowerCase();
-  return RAW_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  return IMAGE_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
 // Archivos ocultos/del sistema que macOS, Windows o el propio navegador pueden incluir al
