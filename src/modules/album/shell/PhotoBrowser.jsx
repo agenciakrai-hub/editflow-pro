@@ -13,7 +13,7 @@ const ALL = "__all__";
 // Colocación múltiple — selección con clic (individual), Ctrl/Cmd+clic (alternar) y
 // Shift+clic (rango), con estado visual claro (anillo + check). Arrastrar la selección
 // al lienzo crea automáticamente la plantilla adecuada. Doble clic = ampliada.
-export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, onRegenerateNonLocked, onValidate, height }) {
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, onRegenerateNonLocked, onRegenerateAll, onValidate, height }) {
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
@@ -154,6 +154,13 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
             title="Vuelve a maquetar todos los lienzos NO bloqueados (los bloqueados quedan intactos). Pide configuración antes de ejecutar."
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[11px] font-medium text-muted-foreground hover:bg-secondary">
             <RefreshCw className="h-3 w-3" /> Regenerar no bloqueados
+          </button>
+        )}
+        {onRegenerateAll && (
+          <button onClick={onRegenerateAll}
+            title="Rehace TODO el álbum: los lienzos NO bloqueados + las fotos sin colocar. Los lienzos bloqueados quedan intactos."
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-accent px-2.5 text-[11px] font-medium text-accent-foreground hover:bg-accent/90">
+            <RefreshCw className="h-3 w-3" /> Regenerar álbum
           </button>
         )}
         {onValidate && (

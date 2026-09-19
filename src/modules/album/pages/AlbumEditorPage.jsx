@@ -731,6 +731,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onAutoLayout={openAutoLayout}
         onAutoLayoutFolder={handleAutoLayoutFolder}
         onRegenerateNonLocked={openRegenerateNonLocked}
+        onRegenerateAll={openRegenerateAll}
         onValidate={() => setValidateReq({})}
         />
         </div>
