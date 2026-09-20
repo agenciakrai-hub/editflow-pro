@@ -18,7 +18,7 @@ function buildXmp({ template, aiValues, treatment, cameraInfo, hasTemplate }) {
   let xmp = template;
   xmp = patchXmpAttributes(xmp, restrictToTechnicalBasics(aiValues, hasTemplate));
   xmp = sanitizeTreatment(xmp, treatment, cameraInfo);
-  xmp = addRatingAndLabel(xmp, { rating: 0, label: "Green" });
+  xmp = addRatingAndLabel(xmp, { rating: 0, label: "Verde" });
   return xmp;
 }
 // Pipeline BUGGY (antes del parche): sanitize ANTES de patch + sin restrict -> la IA
@@ -27,7 +27,7 @@ function buildXmpBuggy({ template, aiValues, treatment, cameraInfo }) {
   let xmp = template;
   xmp = sanitizeTreatment(xmp, treatment, cameraInfo);
   xmp = patchXmpAttributes(xmp, aiValues);
-  xmp = addRatingAndLabel(xmp, { rating: 0, label: "Green" });
+  xmp = addRatingAndLabel(xmp, { rating: 0, label: "Verde" });
   return xmp;
 }
 
@@ -53,7 +53,7 @@ export function runAudit() {
   check(has(afterA, 'crs:Texture2012="\\+5"'), "A: Texture del perfil");
   check(has(afterA, 'crs:Exposure2012="\\+0.30"'), "A: Exposure de la IA");
   check(absent(afterA, 'crs:Saturation="-100"'), "A: no Saturation -100 de la IA");
-  check(has(afterA, '<xmp:Label>Green</xmp:Label>'), "A: etiqueta verde");
+  check(has(afterA, 'xmp:Label="Verde"'), "A: etiqueta verde");
   check(has(beforeA, 'crs:Saturation="-100"'), "A(before): el flujo viejo sí escribía -100 (demuestra la causa)");
 
   // Caso B — Campo creativo ausente: sin Saturation en el perfil -> no se escribe.
@@ -75,7 +75,7 @@ export function runAudit() {
   check(absent(afterD, 'crs:ConvertToGrayscale="True"'), "D: no ConvertToGrayscale");
 
   // Caso F — Etiqueta verde de Lightroom.
-  check(has(afterA, "<xmp:Label>Green</xmp:Label>"), "F: etiqueta verde presente");
+  check(has(afterA, 'xmp:Label="Verde"'), "F: etiqueta verde presente");
 
   return { ok: failures.length === 0, failures, snaps };
 }

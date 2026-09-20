@@ -12,10 +12,11 @@ export const COLOR_LABELS = [
 export const STAR_VALUES = [1, 2, 3, 4, 5];
 
 // Traduce el colorLabel interno de la app (clave de COLOR_LABELS) a la etiqueta de color
-// estándar que Lightroom espera en xmp:Label ("" = sin color). "green" es el valor por
-// defecto para fotos ya seleccionadas por la IA; si el fotógrafo cambia el color en la
-// Revisión, ese cambio debe llegar tal cual al XMP final.
-const LIGHTROOM_LABEL_BY_KEY = { none: "", red: "Red", yellow: "Yellow", green: "Green", blue: "Blue", purple: "Purple" };
+// que Lightroom espera en xmp:Label ("" = sin color). Los valores son en ESPAÑOL porque
+// el Lightroom del fotógrafo los reconoce así: Rojo, Amarillo, Verde, Azul, Púrpura.
+// "green" (Verde) es el valor por defecto para fotos ya seleccionadas por la IA; si el
+// fotógrafo cambia el color en la Revisión, ese cambio debe llegar tal cual al XMP final.
+const LIGHTROOM_LABEL_BY_KEY = { none: "", red: "Rojo", yellow: "Amarillo", green: "Verde", blue: "Azul", purple: "Púrpura" };
 export function lightroomLabelFor(colorLabel) {
-  return LIGHTROOM_LABEL_BY_KEY[colorLabel] ?? "Green";
+  return LIGHTROOM_LABEL_BY_KEY[colorLabel] ?? "Verde";
 }

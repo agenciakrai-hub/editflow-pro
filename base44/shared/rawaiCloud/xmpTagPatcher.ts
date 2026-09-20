@@ -44,37 +44,29 @@ export function patchXmpAttributes(xmpTemplateText: string, values: Record<strin
 }
 
 // Traduce el colorLabel interno de la app (ver src/lib/rawaistudio/labels.js) a la etiqueta
-// de color estándar que Lightroom espera en xmp:Label. Debe mantenerse igual a la versión
-// del navegador (lightroomLabelFor) — mismo mapeo, distinto runtime.
-const LIGHTROOM_LABEL_BY_KEY: Record<string, string> = { none: "", red: "Red", yellow: "Yellow", green: "Green", blue: "Blue", purple: "Purple" };
+// de color que Lightroom espera en xmp:Label. Debe mantenerse igual a la versión del
+// navegador (lightroomLabelFor) — mismo mapeo, distinto runtime. Valores en ESPAÑOL:
+// Rojo, Amarillo, Verde, Azul, Púrpura.
+const LIGHTROOM_LABEL_BY_KEY: Record<string, string> = { none: "", red: "Rojo", yellow: "Amarillo", green: "Verde", blue: "Azul", purple: "Púrpura" };
 export function lightroomLabelFor(colorLabel?: string | null) {
-  return LIGHTROOM_LABEL_BY_KEY[colorLabel || ""] ?? "Green";
+  return LIGHTROOM_LABEL_BY_KEY[colorLabel || ""] ?? "Verde";
 }
 
-// setXmpProperty — escribe una propiedad XMP simple (xmp:Rating, xmp:Label) en
-// CUALQUIERA de las dos formas que Lightroom usa en sus sidecars .xmp:
-//   1. Elemento hijo: <xmp:Tag>valor</xmp:Tag>  (forma habitual en sidecars de foto)
-//   2. Atributo:      xmp:Tag="valor"            (forma habitual en presets de Develop)
-// Si la propiedad ya existe en cualquiera de las dos formas, se reemplaza el valor
-// existente. Si no existe, se añade como atributo en el primer rdf:Description.
+// setXmpProperty — escribe una propiedad XMP simple (xmp:Rating, xmp:Label) como
+// ATRIBUTO del rdf:Description principal. Este es el formato que Lightroom reconoce
+// de forma fiable al importar el sidecar .xmp: xmp:Rating="5" y xmp:Label="Verde".
 //
-// Esto es CRÍTICO: setAttribute solo maneja atributos, pero los sidecars .xmp de
-// Lightroom suelen escribir xmp:Label como ELEMENTO HIJO. Si el template tiene
-// <xmp:Label>Red</xmp:Label> y añadimos xmp:Label="Green" como atributo, Lightroom
-// lee el elemento hijo (Red) e ignora el atributo (Green) — el verde nunca aparece.
+// Si la propiedad ya existe (como atributo o como elemento hijo), se elimina primero
+// para evitar duplicidades y se reescribe como atributo único en el bloque principal.
 // Idéntico a src/lib/rawaistudio/xmpTagPatcher.js (versión del navegador).
 function setXmpProperty(xmpText: string, tag: string, value: string) {
-  // 1. Elemento hijo con contenido: <xmp:Tag>old</xmp:Tag> → reemplazar texto.
-  const elemRegex = new RegExp(`(<xmp:${tag}>)([^<]*)(</xmp:${tag}>)`);
-  if (elemRegex.test(xmpText)) return xmpText.replace(elemRegex, `$1${value}$3`);
-  // 2. Elemento hijo autocerrado: <xmp:Tag/> → convertir en elemento con contenido.
-  const selfCloseRegex = new RegExp(`<xmp:${tag}\\s*/>`);
-  if (selfCloseRegex.test(xmpText)) return xmpText.replace(selfCloseRegex, `<xmp:${tag}>${value}</xmp:${tag}>`);
-  // 3. Atributo: xmp:Tag="old" → reemplazar valor.
-  const attrRegex = new RegExp(`(xmp:${tag}\\s*=\\s*")([^"]*)(")`);
-  if (attrRegex.test(xmpText)) return xmpText.replace(attrRegex, `$1${value}$3`);
-  // 4. No existe → añadir como atributo en rdf:Description.
-  return setAttribute(xmpText, "xmp", tag, value);
+  // Elimina cualquier forma existente (atributo o elemento hijo) para evitar duplicados.
+  let result = xmpText
+    .replace(new RegExp(`\\s*xmp:${tag}\\s*=\\s*"[^"]*"`, "g"), "")
+    .replace(new RegExp(`\\s*<xmp:${tag}>[^<]*</xmp:${tag}>`, "g"), "")
+    .replace(new RegExp(`\\s*<xmp:${tag}\\s*/>`, "g"), "");
+  // Escribe como ATRIBUTO en el rdf:Description principal (formato que Lightroom reconoce).
+  return setAttribute(result, "xmp", tag, value);
 }
 
 export function addRatingAndLabel(xmpText: string, { rating, label }: { rating?: number; label?: string } = {}) {
@@ -100,16 +92,16 @@ export function validateXmp(
   { rating, label, aiValues, treatment }: { rating?: number; label?: string; aiValues?: Record<string, number> | null; treatment?: string } = {}
 ) {
   const issues: string[] = [];
-  // Comprueba AMBAS formas (atributo y elemento hijo) porque Lightroom puede escribir
-  // xmp:Label y xmp:Rating de cualquiera de las dos maneras en sus sidecars .xmp.
-  const hasRating = rating != null && rating > 0 && (
-    new RegExp(`xmp:Rating\\s*=\\s*"${rating}"`).test(xmpText) || new RegExp(`<xmp:Rating>${rating}</xmp:Rating>`).test(xmpText)
-  );
-  if (rating != null && rating > 0 && !hasRating) issues.push("xmp:Rating no está presente en el XMP final");
-  const hasLabel = label && (
-    new RegExp(`xmp:Label\\s*=\\s*"${label}"`).test(xmpText) || new RegExp(`<xmp:Label>${label}</xmp:Label>`).test(xmpText)
-  );
-  if (label && !hasLabel) issues.push("xmp:Label no está presente en el XMP final");
+  // xmp:Rating como ATRIBUTO en el rdf:Description principal, sin duplicados.
+  if (rating != null && rating > 0) {
+    if (!new RegExp(`xmp:Rating\\s*=\\s*"${rating}"`).test(xmpText)) issues.push(`xmp:Rating="${rating}" no está presente como atributo en el XMP final`);
+    if (new RegExp(`<xmp:Rating>[^<]*</xmp:Rating>`).test(xmpText)) issues.push("xmp:Rating duplicado como elemento hijo — debe ser solo atributo");
+  }
+  // xmp:Label como ATRIBUTO en el rdf:Description principal, sin duplicados.
+  if (label) {
+    if (!new RegExp(`xmp:Label\\s*=\\s*"${label}"`).test(xmpText)) issues.push(`xmp:Label="${label}" no está presente como atributo en el XMP final`);
+    if (new RegExp(`<xmp:Label>[^<]*</xmp:Label>`).test(xmpText)) issues.push("xmp:Label duplicado como elemento hijo — debe ser solo atributo");
+  }
   if (!/crs:HasSettings\s*=\s*"True"/.test(xmpText)) issues.push("crs:HasSettings no está presente en el XMP final — Lightroom ignorará los ajustes");
   for (const [tag, value] of Object.entries(aiValues || {})) {
     const expected = formatValue(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
