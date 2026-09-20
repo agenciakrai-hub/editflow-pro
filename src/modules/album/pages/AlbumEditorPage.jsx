@@ -399,7 +399,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     const limit = Number(cfg.maxSpreads) > 0 ? Math.floor(Number(cfg.maxSpreads)) : null;
     if (d.mode === "regenerate") {
       toast({ title: "Preparando regeneración…", description: "Analizando las fotos de los lienzos no bloqueados." });
-      const prepared = await store.prepareAutoLayoutPlan(d.ids, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf });
+      const prepared = await store.prepareAutoLayoutPlan(d.ids, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf, mode: "regenerate" });
       if (!prepared) { toast({ title: "Sin plantillas compatibles", description: "No hay combinación para regenerar con esa configuración.", variant: "destructive" }); return; }
       // La regeneración reemplaza los no bloqueados: el summary debe reflejarlo.
       const nonLockedCount = store.spreads.filter((s) => !s.locked).length;
@@ -422,7 +422,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
       const allIds = [];
       store.spreads.filter((s) => !s.locked).forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) allIds.push(sl.photo_id); }));
       photos.forEach((p) => { if (!placedIds.has(p.id)) allIds.push(p.id); });
-      const prepared = await store.prepareAutoLayoutPlan(allIds, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf });
+      const prepared = await store.prepareAutoLayoutPlan(allIds, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf, mode: "regenerateAll" });
       if (!prepared) { toast({ title: "Sin plantillas compatibles", description: "No hay combinación para regenerar con esa configuración.", variant: "destructive" }); return; }
       const adjustedSummary = {
         ...prepared.summary,

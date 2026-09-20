@@ -296,16 +296,25 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // completa, sin recorte automático); la IA NUNCA activa COVER por su cuenta (punto 1).
   const prepareAutoLayoutPlan = useCallback(async (photoIds, opts = {}) => {
     // Punto 8 — una foto solo puede aparecer una vez: filtra las ya colocadas.
+    // En regeneración, los lienzos NO bloqueados se van a eliminar: sus fotos se
+    // liberan y NO se filtran (solo cuentan las de lienzos bloqueados que permanecen).
+    const isRegen = opts?.mode === "regenerate" || opts?.mode === "regenerateAll";
     const placedIds = new Set();
-    spreadsRef.current.forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) placedIds.add(sl.photo_id); }));
+    spreadsRef.current.forEach((s) => {
+      if (isRegen && !s.locked) return;
+      (s.slots || []).forEach((sl) => { if (sl.photo_id) placedIds.add(sl.photo_id); });
+    });
     const ordered = (photoIds || []).filter((id) => !placedIds.has(id)).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
     if (!ordered.length) return null;
     let profiles = new Map();
     try { profiles = await analyzePhotosForLayout(project.id, ordered); } catch { profiles = new Map(); }
     profiles = applyRoleWeights(profiles, opts?.roleOf);
-    // Punto 5 — el límite es el MÁXIMO TOTAL del álbum: se descuentan los lienzos
-    // existentes (bloqueados incluidos). La IA solo puede crear el complemento.
-    const existingCount = spreadsRef.current.length;
+    // Punto 5 — el límite es el MÁXIMO TOTAL del álbum. En regeneración solo los
+    // lienzos bloqueados permanecen (existingCount = locked). En create, todos
+    // los actuales. La IA solo puede crear el complemento hasta alcanzar el límite.
+    const existingCount = isRegen
+      ? spreadsRef.current.filter((s) => s.locked).length
+      : spreadsRef.current.length;
     const plan = planAutoLayout(project, ordered, profiles, {
       maxSpreads: opts?.maxSpreads,
       existingCount,
@@ -328,7 +337,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
         placed: ordered.length - plan.leftover.length,
         leftover: plan.leftover.length,
         discardedBySim,
-        currentSpreads: existingCount,
+        currentSpreads: spreadsRef.current.length,
         maxSpreads: Number(opts?.maxSpreads) || null,
         newSpreads: plan.groups.length,
         finalSpreads: existingCount + plan.groups.length,
