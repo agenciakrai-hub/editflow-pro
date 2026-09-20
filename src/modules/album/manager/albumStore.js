@@ -259,6 +259,13 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     const next = applyLayout(s, layout, project);
     next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: photoIds?.[i] ?? null }));
     if (next.fill_canvas) next = { ...next, slots: expandSlotsToCanvas(project, next.mode, next.slots || []) };
+    // ENCUADRE AUTOMÁTICO INTELIGENTE — detecta caras antes de aplicar Smart Cover
+    // (mismo sistema que la maquetación IA y el editor manual).
+    await Promise.all(
+      (next.slots || [])
+        .filter((sl) => sl.photo_id && photosByIdRef.current.get(sl.photo_id))
+        .map((sl) => ensureFaces(project.id, photosByIdRef.current.get(sl.photo_id)))
+    );
     // Punto 1 — respeta fill_photos del lienzo.
     next.slots = next.slots.map((sl) => {
       if (!sl.photo_id) return sl;
@@ -282,11 +289,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       ...built,
       slots: (built.slots || []).map((sl, i) => ({ ...sl, photo_id: photoIds?.[i] ?? null })),
     };
-    // Punto 1 — lienzo nuevo nace con fill_photos=false → FIT.
-    const filled = {
-      ...next,
-      slots: next.slots.map((sl) => sl.photo_id ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl),
-    };
+    // ENCUADRE AUTOMÁTICO INTELIGENTE — COVER con caras/sujeto (transform virtual).
+    const filled = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
     apply([...spreadsRef.current, filled], [filled.id]);
     setSelectedSpreadId(filled.id);
     setSelectedSlotId(null);
@@ -367,12 +371,12 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       };
       const next = applyLayout(base, g.layout, project);
       next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
-      // Punto 1 — fill_photos=false → FIT (foto completa, sin recorte, transform limpio).
-      // La IA no activa COVER: el fotógrafo lo hace manualmente con «Rellenar contenedor».
-      const filled = {
-        ...next,
-        slots: next.slots.map((sl) => sl.photo_id ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl),
-      };
+      // ENCUADRE AUTOMÁTICO INTELIGENTE — la IA aplica COVER con prioridad de caras/sujeto
+      // al colocar cada foto: detecta caras, calcula el focal point y llena el hueco sin
+      // recortar el original (transform virtual: scale + offsets). El botón «Rellenar
+      // contenedor» sigue disponible para el ajuste manual posterior. Mismo sistema que
+      // el editor manual (smartFillTransform) — sin motor paralelo de crop.
+      const filled = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
       created.push(filled);
       list.push(filled);
     }
@@ -436,11 +440,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       const base = { id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread", layout_id: g.layoutId, locked: false, ai_generated: true, fill_photos: false, fill_canvas: false, photo_gap_mm: null, background_color: null, slots: [] };
       const next = applyLayout(base, g.layout, project);
       next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
-      // Punto 1 — fill_photos=false → FIT (foto completa, sin recorte automático).
-      const filled = {
-        ...next,
-        slots: next.slots.map((sl) => sl.photo_id ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl),
-      };
+      // ENCUADRE AUTOMÁTICO INTELIGENTE — COVER con caras/sujeto (transform virtual).
+      const filled = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
       created.push(filled);
       list.push(filled);
     }
@@ -777,7 +778,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       const base = { id: tmpId(), project_id: project.id, order_index: list.length, mode: "spread", layout_id: g.layoutId, locked: false, ai_generated: true, fill_photos: false, fill_canvas: false, photo_gap_mm: null, background_color: null, slots: [] };
       const next = applyLayout(base, g.layout, project);
       next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: g.assignment[i] ?? null }));
-      const filled = { ...next, slots: next.slots.map((sl) => sl.photo_id ? { ...sl, fit_mode: "fit", transform: freshTransform() } : sl) };
+      // ENCUADRE AUTOMÁTICO INTELIGENTE — COVER con caras/sujeto (transform virtual).
+      const filled = await applySmartFillToSpread(next, photosByIdRef.current, project.id);
       created.push(filled);
       list.push(filled);
     }
