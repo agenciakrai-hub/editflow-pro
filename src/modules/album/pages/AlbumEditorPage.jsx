@@ -125,6 +125,12 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   }, [photoGroups]);
   const store = useAlbumStore(project, spreads, photosById);
 
+  // VISOR — al entrar en un lienzo (o cambiar de lienzo) el estado inicial es
+  // siempre "ver lienzo completo": el zoom del visor vuelve a 100 % (Fit to View).
+  // El usuario puede volver a ampliar manualmente después; este reset NO toca la
+  // geometría real del álbum ni los datos persistidos (solo el zoom visual).
+  useEffect(() => { setZoomPct(100); }, [store.selectedSpreadId]);
+
   // Punto 15 — VALIDACIÓN FINAL: se ejecuta tras cada maquetación/regeneración (y a
   // petición con «Validar maquetación») sobre el estado ya actualizado: duplicados,
   // fotos similares, calidad de impresión, protagonismo, lienzos vacíos, variedad

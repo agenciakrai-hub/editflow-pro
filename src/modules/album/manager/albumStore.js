@@ -7,6 +7,7 @@ import { applyLayout, bestLayoutFor, expandSlotsToCanvas, freshTransform, makeCu
 import { planAutoLayout } from "@/modules/album/layout/autoPlanner";
 import { analyzePhotosForLayout } from "@/modules/album/layout/visualAi";
 import { applySmartFillToSpread, ensureFaces, retunePhotoSlots, smartFillSlot } from "@/modules/album/editor/smartFill";
+import { minZoomForFullOriginal } from "@/modules/album/editor/slotPhotoView";
 
 const HISTORY_LIMIT = 50;
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -237,13 +238,17 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // (assignment alineado al orden de slots; null = hueco vacío). Ajuste automático
   // al contenedor: cada foto COLOCADA llena su hueco (cover, proporción original,
   // sin espacios vacíos) con protección de caras/punto focal de la IA visual.
-  // Punto 1/14 — respeta fill_photos: false → FIT (foto completa, sin recorte);
-  // true → SMART COVER (caras + focal point). Nunca COVER automático si la
-  // herramienta está OFF.
+  // ENCUADRE INTELIGENTE AUTOMÁTICO — al colocar una foto (asignación, movimiento,
+  // colocación múltiple, aplicación de plantilla) se aplica SIEMPRE Smart Cover /
+  // Face-Aware: la foto cubre el contenedor priorizando las caras detectadas y
+  // calculando scale + offset automáticamente. El original NUNCA se recorta: el
+  // contenedor es una ventana visual (transform virtual: scale + offsets); el
+  // usuario puede alejar el zoom y recuperar cualquier zona del original. El modo
+  // (fill/fit) queda fijado por el hueco; el botón "Rellenar contenedor" del lienzo
+  // y los botones "Relleno"/"Contener" del hueco siguen cambiándolo a voluntad.
   const fitOrSmartFillSlot = useCallback((sl, photo, spread) => {
     if (!sl || !photo) return { fit_mode: "fit", transform: freshTransform() };
-    if (spread?.fill_photos) return smartFillSlot(sl, photo);
-    return { fit_mode: "fit", transform: freshTransform() };
+    return smartFillSlot(sl, photo);
   }, []);
 
   const applyAutoLayout = useCallback(async (id, layoutId, photoIds) => {
@@ -576,13 +581,13 @@ export function useAlbumStore(project, initialSpreads, photosById) {
               merged.transform = freshTransform();
             }
           }
-          // Punto 2 — Al cambiar la proporción del contenedor: respeta fill_photos.
-          // fill_photos=false → FIT (foto completa, sin recorte, transform limpio).
-          // fill_photos=true  → SMART COVER (caras + focal point). Nunca COVER si OFF.
+          // Al cambiar la proporción del contenedor: recalcula el encuadre según el
+          // MODO del propio hueco (no del lienzo). fit_mode "fill" → Smart Cover
+          // (caras + focal point, recálculo no destructivo: transform virtual). fit_mode
+          // "fit" → FIT fresco (foto completa, centrada). El original jamás se recorta.
           if ((patch.w_mm != null || patch.h_mm != null) && merged.photo_id) {
             if (!sameRatio(sl.w_mm, sl.h_mm, merged.w_mm, merged.h_mm)) {
-              const spread = spreadsRef.current.find((x) => x.id === spreadId);
-              if (spread?.fill_photos) {
+              if (merged.fit_mode === "fill") {
                 const photo = photosByIdRef.current.get(merged.photo_id);
                 if (photo) {
                   const f = smartFillSlot(merged, photo);
@@ -606,16 +611,18 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   }, [apply]);
 
   // Zoom de la FOTO de un hueco (rueda del lienzo): lee la escala del estado VIVO
-  // (ref), nunca de un snapshot antiguo del render — antes el closure capturaba la
-  // escala inicial y la rueda se quedaba clavada en un solo paso, pisando además el
-  // valor del slider. Mismos límites que el slider de propiedades (30 % – 800 %)
-  // en CUALQUIER modo: alejar por debajo de la base cover permite ver y reencuadrar
-  // sobre la FOTO ORIGINAL COMPLETA (el recorte del contenedor es solo visual,
-  // nunca destructivo). Ambos controles quedan sincronizados sobre transform.scale.
+  // (ref), nunca de un snapshot antiguo del render. El MÍNIMO es DINÁMICO: en modo
+  // RELLENO (cover) permite alejar hasta recuperar el 100 % del original completo
+  // (containScale según la proporción foto/hueco — puede ser muy inferior a 0.3 en
+  // proporciones extremas; aparecen huecos vacíos, lo cual es CORRECTO). El máximo
+  // 800 % se mantiene. El zoom es una transformación VIRTUAL: no recorta ni destruye
+  // el original, no modifica posiciones ni datos persistidos más allá de transform.
   const zoomSlotPhoto = useCallback((spreadId, slotId, factor) => {
     const s = spreadsRef.current.find((x) => x.id === spreadId);
     const sl = (s?.slots || []).find((x) => x.slot_id === slotId);
-    const next = Math.min(8, Math.max(0.3, (sl?.transform?.scale ?? 1) * factor));
+    const photo = sl?.photo_id ? photosByIdRef.current.get(sl.photo_id) : null;
+    const minZ = minZoomForFullOriginal(sl, photo);
+    const next = Math.min(8, Math.max(minZ, (sl?.transform?.scale ?? 1) * factor));
     updateSlot(spreadId, slotId, { transform: { scale: Math.round(next * 100) / 100 } }, false);
   }, [updateSlot]);
 

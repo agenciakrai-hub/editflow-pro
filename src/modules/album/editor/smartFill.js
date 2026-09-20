@@ -169,10 +169,11 @@ export async function applySmartFillToSpread(spread, photosById, projectId) {
 
 // Reajuste de fotos tras cambiar la GEOMETRÍA de sus contenedores. Reglas
 // DEFINITIVAS (punto 2/3): si la proporción del hueco no cambia, el encuadre manual
-// se conserva tal cual; si cambia:
-//   · fill_photos === false → FIT/CONTAIN fresco (foto completa, centrada, sin
-//     recorte automático, transform limpio). NUNCA se activa COVER por su cuenta.
-//   · fill_photos === true  → SMART COVER (caras + focal point + sin huecos).
+// se conserva tal cual; si cambia, se recalcula según el MODO del propio hueco (no
+// del lienzo), respetando la elección del fotógrafo:
+//   · fit_mode "fill" → SMART COVER (caras + focal point + sin huecos). El original
+//     nunca se destruye: el contenedor es una ventana visual (transform virtual).
+//   · fit_mode "fit"  → FIT/CONTAIN fresco (foto completa, centrada, sin recorte).
 // Las fotos JAMÁS se pierden: cada hueco conserva su photo_id.
 export async function retunePhotoSlots(oldSlots, newSlots, opts = {}) {
   const oldById = new Map((oldSlots || []).map((sl) => [sl.slot_id, sl]));
@@ -181,12 +182,12 @@ export async function retunePhotoSlots(oldSlots, newSlots, opts = {}) {
     const o = oldById.get(sl.slot_id);
     if (!sl.photo_id || !o || sameRatio(o.w_mm, o.h_mm, sl.w_mm, sl.h_mm)) { out.push(sl); continue; }
     const photo = opts.photosById?.get?.(sl.photo_id);
-    if (photo && opts.fillPhotos) {
+    if (photo && sl.fit_mode === "fill") {
       await ensureFaces(opts.projectId, photo);
       const f = smartFillSlot(sl, photo);
       out.push({ ...sl, fit_mode: f.fit_mode, transform: f.transform });
     } else {
-      // fill_photos OFF (o sin foto): FIT fresco — foto completa, centrada, sin recorte.
+      // Modo FIT (o sin foto): FIT fresco — foto completa, centrada, sin recorte.
       out.push({ ...sl, fit_mode: "fit", transform: freshTransform() });
     }
   }

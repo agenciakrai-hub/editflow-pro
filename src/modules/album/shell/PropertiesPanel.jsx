@@ -2,7 +2,7 @@ import React from "react";
 import { Lock, RotateCcw, SlidersHorizontal, Unlock } from "lucide-react";
 import { getLayout } from "@/modules/album/layout/layoutCatalog";
 import { freshTransform } from "@/modules/album/layout/layoutEngine";
-import { slotEffDpi } from "@/modules/album/editor/slotPhotoView";
+import { slotEffDpi, minZoomForFullOriginal } from "@/modules/album/editor/slotPhotoView";
 import { mmToUnit, unitToMm } from "@/modules/album/lib/albumUnits";
 
 const GAP_PRESETS = [0, 1, 2, 3, 4, 5];
@@ -98,7 +98,8 @@ export default function PropertiesPanel({ album, spread, selectedSlot, onAlbumCo
                   : "Foto completa y centrada; arrastra o amplía el zoom para recortar."}
               </p>
               <label className="mt-2 block text-[11px] text-muted-foreground">Zoom: {Math.round((selectedSlot.transform?.scale ?? 1) * 100)}%</label>
-              <input type="range" min="30" max="800" value={Math.round((selectedSlot.transform?.scale ?? 1) * 100)}
+              <input type="range" min={Math.round(minZoomForFullOriginal(selectedSlot, selectedSlot.photo) * 100)} max="800"
+                value={Math.round((selectedSlot.transform?.scale ?? 1) * 100)}
                 onChange={(e) => onSlotProp({ transform: { scale: Number(e.target.value) / 100 } })}
                 className="w-full accent-foreground" />
               {(() => {

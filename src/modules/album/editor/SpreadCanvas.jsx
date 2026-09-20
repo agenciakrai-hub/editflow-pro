@@ -6,12 +6,15 @@ import { HAND_WHITE } from "@/modules/album/editor/cursors";
 // márgenes, zona segura y gutter. Soltar una foto sobre el lienzo crea un hueco libre.
 export default function SpreadCanvas({ album, spread, photosById, zoomPct, guides, selectedSlotId, locked, slotMode, onSelectSlot, onSelectSlotContainer, onDropPhotoOnCanvas, onDropPhotosOnCanvas, handlers }) {
   const wrapRef = useRef(null);
-  const [avail, setAvail] = useState(900);
+  const [avail, setAvail] = useState({ w: 900, h: 600 });
 
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return undefined;
-    const ro = new ResizeObserver((entries) => setAvail(entries[0].contentRect.width));
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0].contentRect;
+      setAvail({ w: r.width, h: r.height });
+    });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -21,7 +24,23 @@ export default function SpreadCanvas({ album, spread, photosById, zoomPct, guide
   const bleed = album.bleed_mm ?? 3;
   const margin = album.margin_mm ?? 10;
   const gutter = album.gutter_mm ?? 6;
-  const ppm = Math.max(0.05, ((Math.max(avail, 200) - 24) / (W + bleed * 2)) * (zoomPct / 100));
+  // FIT TO VIEW / CONTAIN — el lienzo completo (con sangrado) entra SIEMPRE en el
+  // área visible del visor, sin scroll. Se calcula la escala (ppm) que cabe el ancho
+  // Y el alto del lienzo dentro del viewport disponible y se toma el MENOR de ambos
+  // (contain). El zoom manual del visor (zoomPct) multiplica esta base: 100 % =
+  // lienzo completo visible; >100 % = ampliado (aparece scroll, correcto); <100 % =
+  // más pequeño que el viewport. El zoom visual es independiente de la geometría
+  // real del álbum (no modifica posiciones ni datos persistidos). Se recalcula
+  // automáticamente al cambiar el lienzo, las dimensiones del álbum, el tamaño del
+  // viewport, al redimensionar la ventana o al abrir/cerrar paneles laterales
+  // (ResizeObserver observa el contenedor central).
+  const pad = 24;
+  const fullW = W + bleed * 2;
+  const fullH = H + bleed * 2;
+  const fitW = (Math.max(avail.w, 200) - pad) / fullW;
+  const fitH = (Math.max(avail.h, 160) - pad) / fullH;
+  const basePpm = Math.max(0.05, Math.min(fitW, fitH));
+  const ppm = basePpm * (zoomPct / 100);
   const px = (mm) => mm * ppm;
 
   // Mano BLANCA — paneo del lienzo completo: arrastrar el fondo desplaza la vista y
