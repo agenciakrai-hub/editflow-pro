@@ -14,6 +14,7 @@ export function useAiSelection(project, photos) {
   const [progress, setProgress] = useState(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(true);
   const abortRef = useRef(null);
 
   useEffect(() => {
@@ -29,6 +30,8 @@ export function useAiSelection(project, photos) {
         }
       } catch {
         /* config/job no críticos para renderizar */
+      } finally {
+        if (alive) setLoading(false);
       }
     })();
     return () => {
@@ -165,5 +168,5 @@ export function useAiSelection(project, photos) {
     [project.id, selection]
   );
 
-  return { config, needsConsent, selection, progress, running, error, acceptConsent, revoke, start, cancel, override };
+  return { config, loading, needsConsent, selection, progress, running, error, acceptConsent, revoke, start, cancel, override };
 }

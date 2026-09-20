@@ -58,7 +58,7 @@ export default function SelectionAIPage({ projectId }) {
 function SelectionInner({ project, photos: initialPhotos }) {
   const [photos, setPhotos] = useState(initialPhotos);
   const { toast } = useToast();
-  const { config, needsConsent, selection, progress, running, error, acceptConsent, revoke, start, cancel, override } = useAiSelection(project, photos);
+  const { config, loading, needsConsent, selection, progress, running, error, acceptConsent, revoke, start, cancel, override } = useAiSelection(project, photos);
 
   const estimates = useMemo(() => {
     const withThumb = photos.length;
@@ -137,7 +137,13 @@ function SelectionInner({ project, photos: initialPhotos }) {
         <div className="rounded-xl border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>
       )}
 
-      {needsConsent && !running && (
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Cargando configuración…
+        </div>
+      )}
+
+      {!loading && needsConsent && !running && (
         <ConsentPanel photoCount={photos.length} estimates={estimates} busy={running} onAccept={handleAccept} />
       )}
 
