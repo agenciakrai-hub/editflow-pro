@@ -31,13 +31,17 @@ export default function LightroomPage() {
     })();
   }, []);
 
-  const createToken = async () => {
+  const createToken = async (force = false) => {
     try {
-      const res = await base44.functions.invoke("editflow-engine", { action: "lr-token" });
+      const res = await base44.functions.invoke("editflow-engine", { action: "lr-token", force });
       const t = res.data?.token;
       if (t) {
         localStorage.setItem("editflow_lr_token", t);
         setToken(t);
+        if (force) {
+          toast({ title: "Nuevo token generado", description: "Actualiza el token en el plugin de Lightroom." });
+          await refreshStats();
+        }
       }
     } catch (e) {
       toast({ title: "Error al crear token", description: e.message, variant: "destructive" });
@@ -150,7 +154,7 @@ export default function LightroomPage() {
           <div className="flex gap-2">
             <input readOnly value={token} className="flex-1 bg-secondary rounded-xl px-4 py-3 text-sm font-mono" />
             <button onClick={() => copyText(token, "Token")} className="px-3 bg-secondary rounded-xl">{copied ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}</button>
-            <button onClick={createToken} className="px-3 bg-secondary rounded-xl"><RefreshCw className="w-4 h-4" /></button>
+            <button onClick={() => createToken(true)} title="Generar nuevo token" className="px-3 bg-secondary rounded-xl"><RefreshCw className="w-4 h-4" /></button>
           </div>
         </div>
       </div>

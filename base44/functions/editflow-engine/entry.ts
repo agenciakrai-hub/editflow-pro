@@ -34,7 +34,7 @@ export default async function (req) {
     if (action === "process") return await doProcess(base44, body);
     if (action === "sync") return await doSync(base44, body);
     if (action === "plugin") return await doPlugin();
-    if (action === "lr-token") return await doLrToken(base44, user);
+    if (action === "lr-token") return await doLrToken(base44, user, body);
     if (action === "lr-push") return await doLrPush(base44, user, body);
     if (action === "lr-stats") return await doLrStats(base44, user);
     if (action === "lr-catalog-ids") return await doLrCatalogIds(base44, user);
@@ -172,9 +172,13 @@ async function findToken(base44, token) {
 }
 
 // action=lr-token (user auth) — creates/returns the pairing token for the user.
-async function doLrToken(base44, user) {
+async function doLrToken(base44, user, body) {
+  const force = body?.force === true;
   const existing = await base44.asServiceRole.entities.LrToken.filter({ user_id: user.id });
-  if (existing.length) return Response.json({ token: existing[0].token });
+  if (existing.length && !force) return Response.json({ token: existing[0].token });
+  if (existing.length && force) {
+    await base44.asServiceRole.entities.LrToken.deleteMany({ user_id: user.id });
+  }
   const token = (crypto.randomUUID().replace(/-/g, "")).slice(0, 24);
   await base44.asServiceRole.entities.LrToken.create({ token, user_id: user.id });
   return Response.json({ token });
@@ -848,6 +852,25 @@ local function jnum(n)
     s = s:gsub("0+$", "")
     s = s:gsub("%.$", "")
     return s
+end
+
+-- Helper: lee metadatos de forma segura (pcall evita "Unknown key" si una
+-- versión de Lightroom no reconoce la clave). cameraMake/cameraModel y
+-- dateTimeOriginal son claves válidas de getRawMetadata (NO de getFormattedMetadata).
+local function safeRawMeta(photo, key)
+    local ok, val = pcall(function() return photo:getRawMetadata(key) end)
+    if not ok or val == nil then return "" end
+    return tostring(val)
+end
+
+-- Helper: fecha de captura en ISO 8601. getRawMetadata("dateTimeOriginal")
+-- devuelve un timestamp (epoch segundos) en Lightroom; lo formateamos a UTC.
+local function captureTimeISO(photo)
+    local ok, dt = pcall(function() return photo:getRawMetadata("dateTimeOriginal") end)
+    if not ok or dt == nil then return "" end
+    if type(dt) == "number" then return os.date("!%Y-%m-%dT%H:%M:%SZ", dt) end
+    if type(dt) == "string" then return dt end
+    return tostring(dt)
 end
 
 LrTasks.startAsyncTask(function()
