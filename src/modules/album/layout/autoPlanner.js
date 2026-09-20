@@ -41,8 +41,11 @@ const HERO_BONUS = 0.08;
 // ---- SIMILITUD entre fotos (grupos de ráfaga/secuencia del pipeline de
 // Selección IA): penaliza repetir fotos casi idénticas en el mismo lienzo y, en
 // el planificador, también en lienzos CONSECUTIVOS (cuando es posible evitarlo). ----
-const SIM_SAME_W = 1.4; // Punto 2 — refuerzo: fotos casi idénticas en el mismo lienzo
-const SIM_CONSEC_W = 0.8; // Punto 2 — refuerzo: repetir grupo en lienzos consecutivos
+// DIVERSIDAD FUERTE (restricción, no penalización débil): fotos del mismo grupo
+// de ráfaga/secuencia en el mismo lienzo se penalizan con fuerza para que la DP
+// prefiera repartirlas en lienzos distintos cuando existan alternativas válidas.
+const SIM_SAME_W = 3.5; // same spread — restricción fuerte de distribución
+const SIM_CONSEC_W = 1.8; // consecutive spreads — evita repetir escena en lienzos vecinos
 // CALIDAD (punto 6) — penaliza colocar una foto cuya resolución nativa no alcanza
 // los ppp mínimos de impresión en su hueco (base cover): la DP prefiere otra
 // plantilla o asignación donde la foto entre con calidad.
@@ -128,6 +131,42 @@ function scoreGroup(album, layout, photos, profiles, simGroups, costs) {
 // coste total. El orden de las fotos JAMÁS se mezcla: los lienzos consumen bloques
 // consecutivos. Las fotos que no entran vuelven como `leftover` (sin colocar,
 // nunca se pierden).
+// DIVERSIDAD — reordena las fotos para maximizar la distancia entre fotos del
+// mismo grupo de ráfaga/secuencia. Round-robin por grupo: toma una foto de cada
+// grupo en cada ronda, empezando por los grupos más grandes. Las fotos sin grupo
+// (singles) se tratan como grupos de 1. Dentro de cada grupo se conserva el orden
+// temporal (capture_time). Esto hace que los bloques consecutivos que consume la
+// DP sean naturalmente diversos: el primer lienzo tomará una foto de cada grupo
+// en lugar de 6 de la misma escena.
+function diversityOrder(photos, simGroups) {
+  if (!simGroups?.size || photos.length <= 1) return photos;
+  const byGroup = new Map();
+  for (const p of photos) {
+    const g = simGroups.get(p.id);
+    const key = g != null ? `g${g}` : `s${p.id}`;
+    if (!byGroup.has(key)) byGroup.set(key, []);
+    byGroup.get(key).push(p);
+  }
+  for (const arr of byGroup.values()) {
+    arr.sort((a, b) => (a.capture_time || 0) - (b.capture_time || 0));
+  }
+  const groupList = [...byGroup.values()].sort((a, b) => b.length - a.length);
+  const result = [];
+  let round = 0;
+  let added = true;
+  while (added) {
+    added = false;
+    for (const arr of groupList) {
+      if (round < arr.length) {
+        result.push(arr[round]);
+        added = true;
+      }
+    }
+    round++;
+  }
+  return result;
+}
+
 export function planAutoLayout(album, photos, profiles, opts = {}) {
   const n = photos.length;
   if (!n) return { groups: [], leftover: [] };
@@ -143,6 +182,9 @@ export function planAutoLayout(album, photos, profiles, opts = {}) {
   const costs = { canvas: priority === "morePhotos" ? CANVAS_COST * 1.6 : priority === "moreSpace" ? CANVAS_COST * 0.5 : CANVAS_COST };
 
   const simGroups = opts?.simGroups || null;
+  // DIVERSIDAD — reordena antes de la DP para que los bloques consecutivos sean
+  // naturalmente variados (round-robin por grupo de ráfaga/secuencia).
+  const ordered = diversityOrder(photos, simGroups);
   // Límite TOTAL de lienzos del álbum (no de lienzos nuevos): si el álbum ya tiene
   // existingCount lienzos, la IA solo puede crear (limit - existingCount) lienzos
   // adicionales (mínimo 0). Los bloqueados cuentan para el total.
@@ -153,7 +195,7 @@ export function planAutoLayout(album, photos, profiles, opts = {}) {
   const maxCanvases = Number.isFinite(limit) && limit >= 1
     ? Math.max(0, Math.min(Math.floor(limit) - existing, geoMax))
     : geoMax;
-  if (maxCanvases === 0) return { groups: [], leftover: photos };
+  if (maxCanvases === 0) return { groups: [], leftover: ordered };
 
   const dp = Array.from({ length: n + 1 }, () => new Array(maxCanvases + 1).fill(null));
   dp[0][0] = { cost: 0, groups: [], lastSim: [] };
@@ -163,7 +205,7 @@ export function planAutoLayout(album, photos, profiles, opts = {}) {
       if (k > i) continue;
       // El scoring del bloque se calcula UNA vez y se reutiliza para todos los
       // conteos de lienzos c.
-      const sc = scoreGroup(album, l, photos.slice(i - k, i), profiles, simGroups, costs);
+      const sc = scoreGroup(album, l, ordered.slice(i - k, i), profiles, simGroups, costs);
       if (!sc) continue;
       const group = { layoutId: l.id, layout: l, assignment: sc.assignment };
       for (let c = 1; c <= maxCanvases; c++) {
@@ -187,7 +229,7 @@ export function planAutoLayout(album, photos, profiles, opts = {}) {
       const cand = dp[end][c];
       if (cand && (!best || cand.cost < best.cost)) best = cand;
     }
-    if (best) return { groups: best.groups, leftover: photos.slice(end) };
+    if (best) return { groups: best.groups, leftover: ordered.slice(end) };
   }
-  return { groups: [], leftover: photos };
+  return { groups: [], leftover: ordered };
 }

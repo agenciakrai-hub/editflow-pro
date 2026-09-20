@@ -385,11 +385,21 @@ Fotos: ${batch.map((p) => p.alias).join(" | ")}`;
 }
 
 function e7Prompt(eventType, target, descriptors, forced, blocked) {
-  return `Eres el asistente de selección final de un fotógrafo profesional de ${eventType}. Recibirás descriptores de TODAS las fotos analizadas del catálogo (${descriptors.length} fotos). Las marcadas PROMOTED son la mejor de su grupo/ráfaga, pero la selección puede elegir CUALQUIER foto del catálogo. Conforma la SELECCIÓN final del álbum. Objetivo aproximado: ${target.total} fotos (${target.per_spread} por doble página, ~${target.spreads} dobles).
+  return `Eres el asistente de selección final de un fotógrafo profesional de ${eventType}. Recibirás descriptores de TODAS las fotos analizadas del catálogo (${descriptors.length} fotos). Las marcadas PROMOTED son la mejor de su grupo/ráfaga, pero puedes elegir CUALQUIER foto del catálogo.
+
+OBJETIVO: CALIDAD + COBERTURA NARRATIVA + VARIEDAD VISUAL. No selecciones solo por puntuación individual.
+- Cobertura: representa TODOS los momentos del reportaje (preparativos, ceremonia, retratos, detalles, fiesta, momentos espontáneos, transiciones). No dejes un momento sin representar.
+- Variedad: busca diversidad de planos (planos generales, planos medios, retratos, detalles), orientaciones (horizontales y verticales) y composiciones.
+- Calidad: prioriza fotos técnicamente sólidas y con impacto emocional, pero una foto con score técnico medio puede ser EXCELENTE para el álbum si aporta cobertura narrativa o variedad visual que el álbum necesita.
+
+FOTOS SIMILARES: dos fotos del mismo grupo (ráfaga/secuencia) pueden COEXISTIR en la selección si ambas son buenas y aportan valor al álbum. NO elimines una foto solo por ser similar a otra. La variedad se logra al DISTRIBUIR las fotos en los lienzos, no eliminando fotos buenas del catálogo. Si dos fotos del mismo grupo son ambas buenas y representan instantes distintos, inclúyelas ambas.
+
+Objetivo aproximado: ${target.total} fotos (~${target.spreads} lienzos × ${target.per_spread} fotos). Selecciona las fotos suficientes para llenar el álbum con variedad y cobertura completa. Si hay más fotos buenas que el objetivo, INCLÚYELAS: es mejor tener cobertura completa que dejar momentos sin representar.
+
 Reglas del fotógrafo (JERARQUÍA MÁXIMA): INCLUIR SIEMPRE: ${forced.length ? forced.join(", ") : "(ninguna)"}. EXCLUIR SIEMPRE: ${blocked.length ? blocked.join(", ") : "(ninguna)"}.
-CONTROL DE SIMILITUD: cada descriptor indica su «grupo N»: fotos del MISMO grupo son disparos casi idénticos de la misma ráfaga/secuencia. Selecciona preferentemente UNA por grupo (la marcada PROMOTED, la mejor del grupo). Incluye dos o más del mismo grupo SOLO si existe una justificación narrativa clara (instantes realmente distintos que el álbum necesita) y explícalo en reasons.
+
 Asigna a cada seleccionada: role (hero | key | support | detail), moment, category, reasons (frase concreta para el fotógrafo), tech_exception (true si la eliges pese a métrica técnica inferior por su valor único/emotivo).
-Asegura cobertura de todos los momentos. Responde SOLO JSON válido:
+Responde SOLO JSON válido:
 {"selection":[{"alias":"...","role":"...","moment":"...","category":"...","reasons":"...","tech_exception":false}],"funnel_report":{"total_input":0,"selected":0,"coverage":"...","notes":"..."},"coverage":"resumen breve"}
 Descriptores: ${descriptors.map((d) => `${d.alias}: ${d.phrase}`).join(" | ")}`;
 }

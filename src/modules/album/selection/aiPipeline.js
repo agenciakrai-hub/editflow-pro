@@ -675,9 +675,9 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
     );
   }
   const target = {
-    spreads: project.spread_count_target || 20,
-    per_spread: project.max_photos_per_spread || 3,
-    total: (project.spread_count_target || 20) * (project.max_photos_per_spread || 3),
+    spreads: project.auto_layout_max_spreads || project.spread_count_target || 20,
+    per_spread: project.auto_layout_max_photos_per_spread || project.max_photos_per_spread || 6,
+    total: (project.auto_layout_max_spreads || project.spread_count_target || 20) * (project.auto_layout_max_photos_per_spread || project.max_photos_per_spread || 6),
   };
   trace.stages.e7 = { start_ms: Date.now(), descriptor_count: descriptors.length, forced: forced.length, blocked: blocked.length };
   const out = await withRetry(() =>
@@ -699,9 +699,10 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
       reasons: s.reasons || "",
       tech_exception: !!s.tech_exception,
     }));
-  // CONTROL DE SIMILITUD: tope determinista por grupo de ráfaga/secuencia (ver
-  // enforceSimilarityCaps). Se ejecuta antes de los overrides del fotógrafo.
-  selection = enforceSimilarityCaps(selection, groups, promotedByGroup);
+  // DIVERSIDAD — NO se aplica cap duro de similitud: dos fotos del mismo grupo
+  // pueden coexistir si ambas son buenas y aportan valor narrativo. La variedad
+  // se resuelve en la DISTRIBUCIÓN (maquetación), no eliminando fotos buenas.
+  // (La función enforceSimilarityCaps queda definida pero sin uso.)
   // Defensa de la jerarquía en cliente: forced dentro, blocked fuera (siempre).
   const selIds = new Set(selection.map((s) => s.photo_id));
   for (const p of photos) {
