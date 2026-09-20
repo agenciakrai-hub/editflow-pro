@@ -467,8 +467,9 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     const photos = (photoIds || []).map((id) => photosByIdRef.current.get(id)).filter(Boolean);
     const empty = (s.slots || []).filter((sl) => !sl.photo_id && sl.w_mm > 0 && sl.h_mm > 0);
     if (!photos.length || !empty.length) return null;
-    // Punto 1 — prepara caras solo si fill_photos está activo (COVER); si no, FIT.
-    if (s.fill_photos) await Promise.all(photos.map((p) => ensureFaces(project.id, p)));
+    // Detecta SIEMPRE las caras: el encuadre inteligente (Smart Cover) las necesita
+    // para calcular el offset según la posición real de los sujetos.
+    await Promise.all(photos.map((p) => ensureFaces(project.id, p)));
     const slotsSorted = empty.map((sl) => ({ sl, ratio: sl.w_mm / sl.h_mm })).sort((a, b) => a.ratio - b.ratio);
     const photosSorted = photos.map((p) => ({ p, ratio: photoRatio(p) })).sort((a, b) => a.ratio - b.ratio);
     const bySlot = new Map();
@@ -576,7 +577,21 @@ export function useAlbumStore(project, initialSpreads, photosById) {
           if (patch.fit_mode && merged.photo_id) {
             if (patch.fit_mode === "fill") {
               const photo = photosByIdRef.current.get(merged.photo_id);
-              if (photo) { const f = smartFillSlot(merged, photo); merged.fit_mode = f.fit_mode; merged.transform = f.transform; }
+              if (photo) {
+                const f = smartFillSlot(merged, photo);
+                merged.fit_mode = f.fit_mode;
+                merged.transform = f.transform;
+                // Recálculo asíncrono: detecta caras (si no estaban cacheadas) y
+                // reaplica Smart Cover face-aware. Si ya estaban cacheadas,
+                // ensureFaces es instantáneo y el resultado no cambia.
+                ensureFaces(project.id, photo).then(() => {
+                  const f2 = smartFillSlot(merged, photo);
+                  const list = spreadsRef.current.map((x) => x.id !== spreadId ? x : {
+                    ...x, slots: (x.slots || []).map((sl) => sl.slot_id !== slotId ? sl : { ...sl, transform: f2.transform }),
+                  });
+                  apply(list, [spreadId], false);
+                });
+              }
             } else {
               merged.transform = freshTransform();
             }
@@ -593,6 +608,14 @@ export function useAlbumStore(project, initialSpreads, photosById) {
                   const f = smartFillSlot(merged, photo);
                   merged.fit_mode = f.fit_mode;
                   merged.transform = f.transform;
+                  // Recálculo asíncrono de caras (igual que el cambio de modo).
+                  ensureFaces(project.id, photo).then(() => {
+                    const f2 = smartFillSlot(merged, photo);
+                    const list = spreadsRef.current.map((x) => x.id !== spreadId ? x : {
+                      ...x, slots: (x.slots || []).map((sl) => sl.slot_id !== slotId ? sl : { ...sl, transform: f2.transform }),
+                    });
+                    apply(list, [spreadId], false);
+                  });
                 } else {
                   merged.transform = freshTransform();
                   merged.fit_mode = "fit";
@@ -645,15 +668,17 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     else selectSlotContainer(slotId);
   }, [selectSlotContainer]);
 
- // Punto 1/14 — al colocar una foto: respeta fill_photos del lienzo. false → FIT
-  // (foto completa, centrada, sin recorte); true → SMART COVER (caras + focal point).
-  const assignPhotoToSlot = useCallback(async (spreadId, slotId, photoId) => {
-    const s = spreadsRef.current.find((x) => x.id === spreadId);
-    const photo = photoId ? photosByIdRef.current.get(photoId) : null;
-    if (photo) {
-      if (s?.fill_photos) await ensureFaces(project.id, photo);
-      const sl = (s?.slots || []).find((x) => x.slot_id === slotId);
-      const f = sl ? fitOrSmartFillSlot(sl, photo, s) : null;
+ // SMART COVER al colocar una foto: detecta SIEMPRE las caras (sin importar
+ // fill_photos) y aplica el encuadre inteligente. El modo del hueco (fill/fit) lo
+ // decide fitOrSmartFillSlot; la detección facial garantiza que el offset use la
+ // posición real de los sujetos, no el centro de la foto.
+ const assignPhotoToSlot = useCallback(async (spreadId, slotId, photoId) => {
+   const s = spreadsRef.current.find((x) => x.id === spreadId);
+   const photo = photoId ? photosByIdRef.current.get(photoId) : null;
+   if (photo) {
+     await ensureFaces(project.id, photo);
+     const sl = (s?.slots || []).find((x) => x.slot_id === slotId);
+     const f = sl ? fitOrSmartFillSlot(sl, photo, s) : null;
       updateSlot(spreadId, slotId, { photo_id: photoId, ...(f ? { fit_mode: f.fit_mode, transform: f.transform } : { transform: freshTransform(), fit_mode: "fit" }) });
     } else {
       updateSlot(spreadId, slotId, { photo_id: photoId, transform: freshTransform(), fit_mode: "fit" });
@@ -665,21 +690,17 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     updateSlot(spreadId, slotId, { photo_id: null, transform: freshTransform() });
   }, [updateSlot]);
 
-  // Punto 1/3 — al mover una foto entre huecos: respeta fill_photos del lienzo.
-  // false → FIT (foto completa, centrada); true → SMART COVER (caras + focal point).
-  // Nunca COVER automático si la herramienta está OFF. Al ser asíncrono, prepara
-  // caras solo si fill_photos está activo (igual que assignPhotoToSlot).
+  // SMART COVER al mover una foto entre huecos: detecta SIEMPRE las caras de ambas
+  // fotos para que el encuadre inteligente use la posición real de los sujetos.
   const movePhotoBetweenSlots = useCallback(async (spreadId, fromSlotId, toSlotId) => {
     const s = spreadsRef.current.find((x) => x.id === spreadId);
     if (!s) return;
     const from = (s.slots || []).find((x) => x.slot_id === fromSlotId);
     const to = (s.slots || []).find((x) => x.slot_id === toSlotId);
     if (!from || !to) return;
-    // Prepara caras de ambas fotos si fill_photos está activo (COVER inteligente).
-    if (s.fill_photos) {
-      const ids = [from.photo_id, to.photo_id].filter(Boolean);
-      await Promise.all(ids.map((id) => ensureFaces(project.id, photosByIdRef.current.get(id))));
-    }
+    // Prepara caras de ambas fotos (siempre: el encuadre inteligente las necesita).
+    const ids = [from.photo_id, to.photo_id].filter(Boolean);
+    await Promise.all(ids.map((id) => ensureFaces(project.id, photosByIdRef.current.get(id))));
     const list = spreadsRef.current.map((x) => {
       if (x.id !== spreadId) return x;
       const fillFor = (slotId, pid) => {
@@ -707,10 +728,10 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     const s = spreadsRef.current.find((x) => x.id === spreadId);
     if (!s) return;
     const slot = makeCustomSlot(project, photoId);
-    // Punto 1 — respeta fill_photos del lienzo.
+    // Detecta SIEMPRE las caras para el encuadre inteligente (Smart Cover).
     const photo = photoId ? photosByIdRef.current.get(photoId) : null;
     if (photo) {
-      if (s.fill_photos) await ensureFaces(project.id, photo);
+      await ensureFaces(project.id, photo);
       const f = fitOrSmartFillSlot(slot, photo, s);
       slot.fit_mode = f.fit_mode;
       slot.transform = f.transform;
