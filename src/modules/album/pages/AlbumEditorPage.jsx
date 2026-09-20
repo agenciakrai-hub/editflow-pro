@@ -20,6 +20,7 @@ import RelocateDialog from "@/modules/album/relocate/RelocateDialog";
 import ExportDialog from "@/modules/album/export/ExportDialog";
 import AutoLayoutConfigDialog from "@/modules/album/shell/AutoLayoutConfigDialog";
 import AiAssistancePreviewDialog from "@/modules/album/shell/AiAssistancePreviewDialog";
+import MaquetarFromJpgDialog from "@/modules/album/maquetarFromJpg/MaquetarFromJpgDialog";
 import ValidationReportDialog from "@/modules/album/shell/ValidationReportDialog";
 import { validateLayout } from "@/modules/album/layout/layoutValidator";
 import { validatePlan } from "@/modules/album/layout/planValidator";
@@ -345,7 +346,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   // (⌘Z deshace toda la maquetación). Desde una carpeta solo se usan fotos SIN
   // COLOCAR; las ya utilizadas permanecen intactas. El editor salta al primer
   // lienzo nuevo para revisarlo.
-  const runAutoLayout = async (ids, cfg = {}) => {
+  const runAutoLayout = async (ids, cfg = {}, roleOfOverride = null) => {
     const idSet = new Set(ids);
     const ordered = photos.filter((p) => idSet.has(p.id)).map((p) => p.id);
     if (!ordered.length) {
@@ -354,7 +355,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
     }
     const limit = Number(cfg.maxSpreads) > 0 ? Math.floor(Number(cfg.maxSpreads)) : null;
     toast({ title: "Maquetando…", description: limit ? `Preparando la distribución automática (máximo ${limit} lienzos).` : "Preparando la distribución automática de las fotos." });
-    const res = await store.autoLayoutPhotos(ordered, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf });
+    const res = await store.autoLayoutPhotos(ordered, { maxSpreads: limit, simGroups, priority: cfg.priority, maxPerSpread: cfg.maxPerSpread, roleOf: roleOfOverride || roleOf });
     if (!res) {
       toast({ title: "Sin plantillas compatibles", description: "No hay combinación de plantillas para estas fotos dentro del máximo de lienzos indicado y la configuración actual del álbum.", variant: "destructive" });
       return;
@@ -377,6 +378,18 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
   const [previewDialog, setPreviewDialog] = useState(null);
   const [applyingPreview, setApplyingPreview] = useState(false);
   const openAutoLayout = (ids) => setAutoDialog({ mode: "create", ids });
+  // MAQUETAR DESDE JPG — abre el diálogo para seleccionar la carpeta de JPG
+  // editados, leer sus metadatos XMP y maquetar con la clasificación recuperada.
+  const [maquetarFromJpgOpen, setMaquetarFromJpgOpen] = useState(false);
+  const handleMaquetarFromJpg = (ids, xmpRoleOf) => {
+    setMaquetarFromJpgOpen(false);
+    if (!ids?.length) return;
+    runAutoLayout(ids, {
+      maxSpreads: project.auto_layout_max_spreads ?? project.spread_count_target ?? 20,
+      maxPerSpread: project.auto_layout_max_photos_per_spread ?? project.max_photos_per_spread ?? 6,
+      priority: project.auto_layout_priority ?? "balanced",
+    }, xmpRoleOf);
+  };
   const openRegenerateNonLocked = () => {
     const ids = [];
     store.spreads.filter((s) => !s.locked).forEach((s) => (s.slots || []).forEach((sl) => { if (sl.photo_id) ids.push(sl.photo_id); }));
@@ -741,6 +754,7 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
         onRelocate={() => setRelocating(true)}
         relocateCount={missingPhotos.length}
         onAutoLayout={openAutoLayout}
+        onMaquetarFromJpg={() => setMaquetarFromJpgOpen(true)}
         onAutoLayoutFolder={handleAutoLayoutFolder}
         onRegenerateNonLocked={openRegenerateNonLocked}
         onRegenerateAll={openRegenerateAll}
@@ -773,6 +787,14 @@ function AlbumEditorInner({ project: initialProject, photos: initialPhotos, spre
           applying={applyingPreview}
           onApply={applyPreview}
           onCancel={() => setPreviewDialog(null)}
+        />
+      )}
+      {maquetarFromJpgOpen && (
+        <MaquetarFromJpgDialog
+          open
+          projectPhotos={photos}
+          onClose={() => setMaquetarFromJpgOpen(false)}
+          onMaquetar={handleMaquetarFromJpg}
         />
       )}
       {exporting && (

@@ -13,7 +13,7 @@ const ALL = "__all__";
 // Colocación múltiple — selección con clic (individual), Ctrl/Cmd+clic (alternar) y
 // Shift+clic (rango), con estado visual claro (anillo + check). Arrastrar la selección
 // al lienzo crea automáticamente la plantilla adecuada. Doble clic = ampliada.
-export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, onRegenerateNonLocked, onRegenerateAll, onValidate, height }) {
+export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders = [], getPhotoPreview, loadHiRes, onCreateFolder, onMovePhotos, onAddToCanvas, importing, progress, onImportFolder, onImportFiles, onRelocate, relocateCount, onAutoLayout, onAutoLayoutFolder, onRegenerateNonLocked, onRegenerateAll, onValidate, onMaquetarFromJpg, height }) {
   const [q, setQ] = useState("");
   const [folder, setFolder] = useState(ALL);
   const [onlyUnplaced, setOnlyUnplaced] = useState(false);
@@ -147,6 +147,13 @@ export default function PhotoBrowser({ photos, previews, placedPhotoIds, folders
             title={`Maqueta automáticamente las fotos SIN COLOCAR de «${folder}» en lienzos nuevos al final del álbum`}
             className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-primary/50 bg-primary/10 px-2.5 text-[11px] font-semibold text-primary hover:bg-primary/20">
             <Wand2 className="h-3 w-3" /> Maquetar carpeta
+          </button>
+        )}
+        {onMaquetarFromJpg && (
+          <button onClick={onMaquetarFromJpg}
+            title="Lee los metadatos XMP de una carpeta de JPG editados (★★★★★+Verde, ★★★★+Verde) y maqueta sin volver a analizar con IA"
+            className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-emerald-500/50 bg-emerald-50 px-2.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-400">
+            <FolderOpen className="h-3 w-3" /> Maquetar desde JPG
           </button>
         )}
         {onRegenerateNonLocked && (

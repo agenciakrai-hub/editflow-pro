@@ -8,6 +8,7 @@ import ProgressPanel from "@/modules/album/selection/components/ProgressPanel";
 import ResultsPanel from "@/modules/album/selection/components/ResultsPanel";
 import ProvidersPanel from "@/modules/album/selection/components/ProvidersPanel";
 import { useToast } from "@/components/ui/use-toast";
+import SelectionXmpExport from "@/modules/album/selection/SelectionXmpExport";
 
 const STAGE_LABEL = {
   e2: "Métricas locales",
@@ -122,6 +123,13 @@ function SelectionInner({ project, photos: initialPhotos }) {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {hasResults && (
+            <SelectionXmpExport
+              selection={selection.selection}
+              photos={photos}
+              projectName={project.name}
+            />
+          )}
           {config?.consent_mode === "saved" && config?.revoked !== true && (
             <button onClick={revoke} className={iconBtn}><ShieldOff className="h-3.5 w-3.5" /> Revocar consentimiento</button>
           )}
