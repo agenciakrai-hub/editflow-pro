@@ -456,17 +456,18 @@ async function doLrCollectCorrections(req, body) {
 
   const corrections = Array.isArray(body.corrections) ? body.corrections : [];
   let stored = 0, updated = 0, rejected = 0;
+  const rejectReasons = { no_initial: 0, no_delta: 0, snap_mismatch: 0, no_filename: 0 };
   const seenCreated = {};
   for (const c of corrections) {
     const filename = String(c.filename || "").toLowerCase();
-    if (!filename) { rejected++; continue; }
+    if (!filename) { rejected++; rejectReasons.no_filename++; continue; }
     // Identificación: snapshot localId (si existe) debe coincidir.
     const snap = snapByFilename[filename];
     if (snap && snap.localId && c.localId && String(snap.localId) !== String(c.localId)) {
-      rejected++; continue;
+      rejected++; rejectReasons.snap_mismatch++; continue;
     }
     const job = jobsByFilename[filename];
-    if (!job) { rejected++; continue; }   // sin inicial conocido
+    if (!job) { rejected++; rejectReasons.no_initial++; continue; }   // sin inicial conocido
     const initial = parseInitialValuesFromXmp(job.xmp_content);
     const current = c.current_values || c.corrected_values || {};
     const delta = {};
@@ -475,7 +476,7 @@ async function doLrCollectCorrections(req, body) {
         delta[k] = roundTo(current[k] - initial[k], 2);
       }
     }
-    if (!Object.keys(delta).length) { rejected++; continue; } // nada que aprender
+    if (!Object.keys(delta).length) { rejected++; rejectReasons.no_delta++; continue; } // nada que aprender
     const fpId = String(c.localId || c.photo_fingerprint_id || "");
     const dedupKey = fpId.toLowerCase();
     const prev = dedupKey ? recordByKey[dedupKey] : null;
@@ -512,7 +513,7 @@ async function doLrCollectCorrections(req, body) {
     } catch (e) { console.error("recompute learning", styleId, e?.message || e); }
   }
   return Response.json({
-    stored, updated, rejected,
+    stored, updated, rejected, reject_reasons: rejectReasons,
     analyzed: corrections.length,
     style_name: style.name,
     learning_percentage: updatedPct,
@@ -962,6 +963,7 @@ LrTasks.startAsyncTask(function()
             .. ',"corrections":[' .. table.concat(parts, ",") .. ']}'
         local resp = apiCall("lr-collect-corrections", body)
         local stored, rejected, analyzed, pct, sname = 0, 0, #photos, 0, selectedStyle.name or ""
+        local rr = { no_initial = 0, no_delta = 0, snap_mismatch = 0, no_filename = 0 }
         if resp then
             local okR, rdata = pcall(function() return JSON.decode(resp) end)
             if okR and rdata then
@@ -970,6 +972,19 @@ LrTasks.startAsyncTask(function()
                 analyzed = rdata.analyzed or #photos
                 pct = rdata.learning_percentage or 0
                 sname = rdata.style_name or sname
+                if rdata.reject_reasons then rr = rdata.reject_reasons end
+            end
+        end
+        -- Mensaje contextual: si todo fue rechazado, explica el motivo dominante para
+        -- que el fotógrafo sepa qué hacer (lo habitual es que no hay XMP inicial).
+        local hint = ""
+        if stored == 0 and rejected > 0 then
+            if rr.no_initial and rr.no_initial > 0 then
+                hint = "\\n\\n⚠️ " .. rr.no_initial .. " foto(s) sin XMP inicial: procesa primero esas fotos con EditFlow (Cerebro) y sincroniza para que exista un valor de partida contra el que aprender."
+            elseif rr.no_delta and rr.no_delta > 0 then
+                hint = "\\n\\n⚠️ " .. rr.no_delta .. " foto(s) sin cambios detectados: los valores actuales coinciden con los iniciales que EditFlow aplicó."
+            elseif rr.snap_mismatch and rr.snap_mismatch > 0 then
+                hint = "\\n\\n⚠️ " .. rr.snap_mismatch .. " foto(s) no coinciden con el catálogo sincronizado. Vuelve a recopilar IDs."
             end
         end
         LrDialogs.message("EditFlow Pro",
@@ -978,7 +993,9 @@ LrTasks.startAsyncTask(function()
             "Fotografías analizadas: " .. analyzed .. "\\n" ..
             "Correcciones encontradas: " .. stored .. "\\n" ..
             "Correcciones enviadas: " .. stored .. "\\n" ..
-            "Aprendizaje actual: " .. pct .. " %\\n\\n" ..
+            "Rechazadas: " .. rejected .. "\\n" ..
+            "Aprendizaje actual: " .. pct .. " %" ..
+            hint .. "\\n\\n" ..
             "Solo se envían metadatos y valores numéricos. Nunca se suben RAW ni fotos.",
             "info")
     end)
