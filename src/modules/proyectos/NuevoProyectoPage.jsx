@@ -63,6 +63,13 @@ export default function NuevoProyectoPage() {
   const projectIdParam = new URLSearchParams(window.location.search).get("project");
   const [existing, setExisting] = useState(null);
   const [restoredHandles, setRestoredHandles] = useState({ folder: null, catalog: null });
+  // Móvil: fallback cuando showDirectoryPicker/showOpenFilePicker no existen.
+  // Se guardan los File objects directamente (sin handle persistible).
+  const [folderName, setFolderName] = useState("");
+  const [folderFiles, setFolderFiles] = useState(null);
+  const [catalogFile, setCatalogFile] = useState(null);
+  const folderInputRef = useRef(null);
+  const catalogInputRef = useRef(null);
 
   // Fiabilidad: al desmontar la página (navegar fuera, ir atrás, cambiar de herramienta),
   // se marca el job de selección IA en curso como "canceled" para que no quede colgado
@@ -80,6 +87,14 @@ export default function NuevoProyectoPage() {
         currentSelJobIdRef.current = null;
       }
     };
+  }, []);
+
+  // Móvil: atributos no estándar que React no pasa por defecto.
+  useEffect(() => {
+    if (folderInputRef.current) {
+      folderInputRef.current.setAttribute("webkitdirectory", "");
+      folderInputRef.current.setAttribute("directory", "");
+    }
   }, []);
 
   useEffect(() => {
@@ -240,14 +255,29 @@ export default function NuevoProyectoPage() {
   }, [projectIdParam]);
 
   const pickCatalog = async () => {
-    try {
-      const [handle] = await window.showOpenFilePicker({
-        types: [{ description: "Catálogo Lightroom", accept: { "application/octet-stream": [".lrcat"] } }],
-      });
-      setCatalogHandle(handle);
-    } catch {
-      // Usuario canceló el selector — no es un error.
+    // Desktop: File System Access API.
+    if (typeof window.showOpenFilePicker === "function") {
+      try {
+        const [handle] = await window.showOpenFilePicker({
+          types: [{ description: "Catálogo Lightroom", accept: { "application/octet-stream": [".lrcat"] } }],
+        });
+        setCatalogHandle(handle);
+        setCatalogFile(null);
+      } catch {
+        // Usuario canceló el selector — no es un error.
+      }
+      return;
     }
+    // Móvil: <input type="file" accept=".lrcat">
+    catalogInputRef.current?.click();
+  };
+
+  const onCatalogPicked = (e) => {
+    const file = e.target.files?.[0];
+    if (e.target) e.target.value = "";
+    if (!file) return;
+    setCatalogFile(file);
+    setCatalogHandle(null);
   };
 
   // Inicia el procesado en segundo plano: extrae previews y calcula huellas de la
@@ -255,12 +285,14 @@ export default function NuevoProyectoPage() {
   // que CONTINÚA aunque el usuario navegue fuera de esta página (a Selección, Edición,
   // Historial, etc.). Al completarse, guarda huellas en la base de datos y cachea
   // previews en IndexedDB automáticamente.
-  const extractFromFolder = (handle) => {
+  const extractFromFolder = (handle, files = null, name = null) => {
     setExtracting(true);
     setPhase("extracting");
     setProgress({ done: 0, total: 0 });
     startProcessing({
       folderHandle: handle,
+      files,
+      folderName: name || handle?.name || folderName,
       catalogHandle,
       projectId: projectIdParam || existing?.projectId || null,
       existing,
@@ -275,8 +307,8 @@ export default function NuevoProyectoPage() {
             bindingId: job.bindingId || null,
             folderRef: job.folderRef || "",
             catalogRef: job.catalogRef || "",
-            folderName: handle.name,
-            catalogName: catalogHandle?.name || "",
+            folderName: handle?.name || name || "Carpeta",
+            catalogName: catalogHandle?.name || catalogFile?.name || "",
           });
           try {
             const url = new URL(window.location.href);
@@ -308,13 +340,34 @@ export default function NuevoProyectoPage() {
   };
 
   const pickFolder = async () => {
-    try {
-      const handle = await window.showDirectoryPicker();
-      setFolderHandle(handle);
-      await extractFromFolder(handle);
-    } catch {
-      // Usuario canceló el selector — no es un error.
+    // Desktop: File System Access API.
+    if (typeof window.showDirectoryPicker === "function") {
+      try {
+        const handle = await window.showDirectoryPicker();
+        setFolderHandle(handle);
+        setFolderName(handle.name);
+        setFolderFiles(null);
+        await extractFromFolder(handle);
+      } catch {
+        // Usuario canceló el selector — no es un error.
+      }
+      return;
     }
+    // Móvil: <input type="file" webkitdirectory>
+    folderInputRef.current?.click();
+  };
+
+  const onFolderPicked = (e) => {
+    const files = e.target.files;
+    if (e.target) e.target.value = "";
+    if (!files || !files.length) return;
+    const first = files[0];
+    const relPath = first.webkitRelativePath || first.name;
+    const name = relPath.includes("/") ? relPath.split("/")[0] : "Carpeta";
+    setFolderName(name);
+    setFolderHandle(null);
+    setFolderFiles(files);
+    extractFromFolder(null, files, name);
   };
 
   const cycleStatus = (id) => {
@@ -411,7 +464,7 @@ export default function NuevoProyectoPage() {
       toast({ title: "Falta el nombre del proyecto", variant: "destructive" });
       return;
     }
-    if (!items.length || (!existing && !folderHandle)) {
+    if (!items.length || (!existing && !folderHandle && !folderFiles)) {
       toast({ title: "Selecciona la carpeta RAW primero", variant: "destructive" });
       return;
     }
@@ -424,7 +477,7 @@ export default function NuevoProyectoPage() {
       const rehookCatalog = catalogHandle && catalogHandle !== restoredHandles.catalog;
       const folderRef = existing
         ? (rehookFolder ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }) : existing.folderRef)
-        : await saveHandle(folderHandle, "directory", { name: folderHandle.name });
+        : (folderHandle ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }) : "");
       const catalogRef = existing
         ? (rehookCatalog ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }) : existing.catalogRef)
         : (catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }) : null);
@@ -454,8 +507,8 @@ export default function NuevoProyectoPage() {
         selection_saved: selCount > 0,
         photo_count: items.length,
         selected_count: selCount,
-        lightroom_catalog_name: catalogHandle?.name || existing?.catalogName || "",
-        raw_folder_path: folderHandle?.name || existing?.folderName || "",
+        lightroom_catalog_name: catalogHandle?.name || catalogFile?.name || existing?.catalogName || "",
+        raw_folder_path: folderHandle?.name || folderName || existing?.folderName || "",
       };
       // La traza de la última selección IA viaja DENTRO del guardado del proyecto:
       // create/update la persisten en la misma operación atómica que el resto.
@@ -472,8 +525,8 @@ export default function NuevoProyectoPage() {
           await updateCatalogBinding(existing.bindingId, {
             catalog_handle_ref: catalogRef || "",
             raw_folder_handle_ref: folderRef || "",
-            catalog_filename: catalogHandle?.name || existing.catalogName || "",
-            raw_folder_name: folderHandle?.name || existing.folderName || "",
+            catalog_filename: catalogHandle?.name || catalogFile?.name || existing.catalogName || "",
+            raw_folder_name: folderHandle?.name || folderName || existing.folderName || "",
           });
         } else {
           // El proyecto se creó al inicio (al importar la carpeta) sin binding; se crea aquí.
@@ -492,8 +545,8 @@ export default function NuevoProyectoPage() {
           project_id: savedId,
           catalog_handle_ref: catalogRef || "",
           raw_folder_handle_ref: folderRef,
-          catalog_filename: catalogHandle?.name || "",
-          raw_folder_name: folderHandle.name,
+          catalog_filename: catalogHandle?.name || catalogFile?.name || "",
+          raw_folder_name: folderHandle?.name || folderName || "",
         });
         // TRAS CREAR el proyecto, fijar `existing` para que el SIGUIENTE guardado
         // ACTUALICE este proyecto en vez de crear un duplicado. Sin esto, cada
@@ -505,8 +558,8 @@ export default function NuevoProyectoPage() {
           bindingId: binding?.id || null,
           folderRef: folderRef || "",
           catalogRef: catalogRef || "",
-          folderName: folderHandle?.name || "",
-          catalogName: catalogHandle?.name || "",
+          folderName: folderHandle?.name || folderName || "",
+          catalogName: catalogHandle?.name || catalogFile?.name || "",
         });
         try {
           const url = new URL(window.location.href);
@@ -778,12 +831,15 @@ export default function NuevoProyectoPage() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <button onClick={pickCatalog} className="inline-flex items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary">
-            <FileText className="h-4 w-4" /> {catalogHandle ? catalogHandle.name : existing?.catalogName || "Seleccionar catálogo .lrcat"}
+            <FileText className="h-4 w-4" /> {catalogHandle ? catalogHandle.name : catalogFile?.name || existing?.catalogName || "Seleccionar catálogo .lrcat"}
           </button>
           <button onClick={pickFolder} className="inline-flex items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary">
-            <FolderOpen className="h-4 w-4" /> {folderHandle ? folderHandle.name : existing?.folderName || "Seleccionar carpeta RAW"}
+            <FolderOpen className="h-4 w-4" /> {folderHandle ? folderHandle.name : folderName || existing?.folderName || "Seleccionar carpeta RAW"}
           </button>
         </div>
+        {/* Móvil: inputs ocultos (fallback sin File System Access API) */}
+        <input ref={folderInputRef} type="file" multiple className="hidden" onChange={onFolderPicked} />
+        <input ref={catalogInputRef} type="file" accept=".lrcat" className="hidden" onChange={onCatalogPicked} />
       </div>
 
       {extracting && (

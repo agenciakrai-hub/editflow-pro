@@ -67,7 +67,7 @@ function notify(job) {
 // Inicia el procesado de una carpeta RAW. Devuelve el job inmediatamente (sin await).
 // El procesado corre en segundo plano; los callbacks notifican progreso, completado
 // y error. Si ya hay un job para el proyecto, solo añade el callback.
-export function startProcessing({ folderHandle, catalogHandle, projectId, existing, onProgress, onComplete, onError }) {
+export function startProcessing({ folderHandle, files, folderName, catalogHandle, projectId, existing, onProgress, onComplete, onError }) {
   let pid = projectId || existing?.projectId || null;
 
   if (pid && activeJobs.has(pid)) {
@@ -91,16 +91,16 @@ export function startProcessing({ folderHandle, catalogHandle, projectId, existi
   if (onProgress) job.subscribers.add(onProgress);
 
   // Fire-and-forget: el bucle corre independientemente del componente.
-  runProcessing(folderHandle, catalogHandle, pid, existing, job, onComplete, onError);
+  runProcessing(folderHandle, files, folderName, catalogHandle, pid, existing, job, onComplete, onError);
 
   return job;
 }
 
-async function runProcessing(folderHandle, catalogHandle, pid, existing, job, onComplete, onError) {
+async function runProcessing(folderHandle, files, folderName, catalogHandle, pid, existing, job, onComplete, onError) {
   try {
     // 1. Crea el proyecto si no existe.
     if (!pid) {
-      const p = await createProject({ title: folderHandle.name, status: "draft", photo_count: 0 });
+      const p = await createProject({ title: folderName || folderHandle?.name || "Nuevo proyecto", status: "draft", photo_count: 0 });
       pid = p.id;
       job.projectId = pid;
       activeJobs.set(pid, job);
@@ -110,7 +110,7 @@ async function runProcessing(folderHandle, catalogHandle, pid, existing, job, on
     }
 
     // 2. Guarda el handle de la carpeta y crea el binding del catálogo.
-    const folderRef = await saveHandle(folderHandle, "directory", { name: folderHandle.name }).catch(() => "");
+    const folderRef = folderHandle ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }).catch(() => "") : "";
     const catalogRef = catalogHandle
       ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }).catch(() => "")
       : null;
@@ -122,7 +122,7 @@ async function runProcessing(folderHandle, catalogHandle, pid, existing, job, on
         catalog_handle_ref: catalogRef || "",
         raw_folder_handle_ref: folderRef || "",
         catalog_filename: catalogHandle?.name || "",
-        raw_folder_name: folderHandle.name,
+        raw_folder_name: folderName || folderHandle?.name || "Carpeta",
       });
       job.bindingId = binding?.id || null;
     } catch {}
@@ -152,29 +152,38 @@ async function runProcessing(folderHandle, catalogHandle, pid, existing, job, on
     //    en silencio con 0 fotos.
     const raws = [];
     const seenPaths = new Set();
-    async function collectRaws(dirHandle, prefix) {
-      for await (const [name, entryHandle] of dirHandle.entries()) {
-        if (entryHandle.kind === "directory") {
-          if (isHiddenOrSystemFile(name)) continue;
-          await collectRaws(entryHandle, prefix ? `${prefix}/${name}` : name);
-          continue;
-        }
+    if (files && files.length) {
+      // Móvil: FileList de <input webkitdirectory> — sin handle de directorio.
+      for (const file of files) {
+        const name = file.name;
         if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
-        const file = await entryHandle.getFile();
-        // Anota la ruta relativa para el fingerprint (preserva la estructura de
-        // carpetas: dos fotos con el mismo nombre en distintas carpetas no
-        // colisionan).
-        const relPath = prefix ? `${prefix}/${name}` : name;
+        const relPath = file.webkitRelativePath || name;
         if (!seenPaths.has(relPath)) {
           seenPaths.add(relPath);
-          // webkitRelativePath no está disponible en FileSystemFileHandle; lo
-          // guardamos en el objeto file como propiedad no enumerable.
-          try { Object.defineProperty(file, "webkitRelativePath", { value: relPath, writable: false, configurable: true }); } catch {}
           raws.push(file);
         }
       }
+    } else if (folderHandle) {
+      // Desktop: recorre el directorio recursivamente (subcarpetas por momento).
+      async function collectRaws(dirHandle, prefix) {
+        for await (const [name, entryHandle] of dirHandle.entries()) {
+          if (entryHandle.kind === "directory") {
+            if (isHiddenOrSystemFile(name)) continue;
+            await collectRaws(entryHandle, prefix ? `${prefix}/${name}` : name);
+            continue;
+          }
+          if (isHiddenOrSystemFile(name) || !isRawFile(name)) continue;
+          const file = await entryHandle.getFile();
+          const relPath = prefix ? `${prefix}/${name}` : name;
+          if (!seenPaths.has(relPath)) {
+            seenPaths.add(relPath);
+            try { Object.defineProperty(file, "webkitRelativePath", { value: relPath, writable: false, configurable: true }); } catch {}
+            raws.push(file);
+          }
+        }
+      }
+      await collectRaws(folderHandle, "");
     }
-    await collectRaws(folderHandle, "");
     const count = raws.length;
     if (count === 0) {
       // Aviso claro: la carpeta no contiene RAW (ni en subcarpetas). Sin esto el
