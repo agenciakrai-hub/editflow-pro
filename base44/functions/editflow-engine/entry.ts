@@ -728,6 +728,25 @@ local function jsonEscape(s)
     return s
 end
 
+-- Helper: lee metadatos de forma segura (pcall evita "Unknown key" si una
+-- versión de Lightroom no reconoce la clave). cameraMake/cameraModel y
+-- dateTimeOriginal son claves válidas de getRawMetadata (NO de getFormattedMetadata).
+local function safeRawMeta(photo, key)
+    local ok, val = pcall(function() return photo:getRawMetadata(key) end)
+    if not ok or val == nil then return "" end
+    return tostring(val)
+end
+
+-- Helper: fecha de captura en ISO 8601. getRawMetadata("dateTimeOriginal")
+-- devuelve un timestamp (epoch segundos) en Lightroom; lo formateamos a UTC.
+local function captureTimeISO(photo)
+    local ok, dt = pcall(function() return photo:getRawMetadata("dateTimeOriginal") end)
+    if not ok or dt == nil then return "" end
+    if type(dt) == "number" then return os.date("!%Y-%m-%dT%H:%M:%SZ", dt) end
+    if type(dt) == "string" then return dt end
+    return tostring(dt)
+end
+
 LrTasks.startAsyncTask(function()
     LrFunctionContext.callWithContext("editflow_collect_ids", function(context)
         if not prefs.token or prefs.token == "" then
@@ -745,9 +764,9 @@ LrTasks.startAsyncTask(function()
         for i, photo in ipairs(photos) do
             local path = photo:getRawMetadata("path") or ""
             local fileName = photo:getFormattedMetadata("fileName") or ""
-            local captureTime = photo:getFormattedMetadata("dateTimeOriginalISO8601") or ""
-            local cameraMake = photo:getFormattedMetadata("cameraMake") or ""
-            local cameraModel = photo:getFormattedMetadata("cameraModel") or ""
+            local captureTime = captureTimeISO(photo)
+            local cameraMake = safeRawMeta(photo, "cameraMake")
+            local cameraModel = safeRawMeta(photo, "cameraModel")
             local fileSize = 0
             local ok, attrs = pcall(function() return LrFileUtils.fileAttributes(path) end)
             if ok and attrs and attrs.fileSize then fileSize = attrs.fileSize end
@@ -889,9 +908,9 @@ LrTasks.startAsyncTask(function()
         for i, photo in ipairs(photos) do
             local fileName = photo:getFormattedMetadata("fileName") or ""
             local localId = tostring(photo.localIdentifier)
-            local captureTime = photo:getFormattedMetadata("dateTimeOriginalISO8601") or ""
-            local cameraMake = photo:getFormattedMetadata("cameraMake") or ""
-            local cameraModel = photo:getFormattedMetadata("cameraModel") or ""
+            local captureTime = captureTimeISO(photo)
+            local cameraMake = safeRawMeta(photo, "cameraMake")
+            local cameraModel = safeRawMeta(photo, "cameraModel")
             local path = photo:getRawMetadata("path") or ""
             local fileSize = 0
             local okA, attrs = pcall(function() return LrFileUtils.fileAttributes(path) end)
