@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FolderOpen, FileText, Loader2, ArrowLeft, X } from "lucide-react";
+import { FolderOpen, FileText, Loader2, ArrowLeft, X, Plus } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { selectBursts } from "@/lib/ai/aiGateway";
@@ -530,41 +530,13 @@ export default function NuevoProyectoPage() {
 
       if (existing) {
         await updateProject(existing.projectId, payload);
-        if (existing.bindingId) {
-          await updateCatalogBinding(existing.bindingId, {
-            catalog_handle_ref: catalogRef || "",
-            raw_folder_handle_ref: folderRef || "",
-            catalog_filename: catalogHandle?.name || catalogFile?.name || existing.catalogName || "",
-            raw_folder_name: folderHandle?.name || folderName || existing.folderName || "",
-          });
-        } else {
-          // El proyecto se creó al inicio (al importar la carpeta) sin binding; se crea aquí.
-          const binding = await createCatalogBinding({
-            project_id: savedId,
-            catalog_handle_ref: catalogRef || "",
-            raw_folder_handle_ref: folderRef || "",
-            catalog_filename: catalogHandle?.name || "",
-            raw_folder_name: folderHandle?.name || existing.folderName || "",
-          });
-          setExisting((prev) => ({ ...prev, bindingId: binding?.id || null }));
-        }
         await deleteFingerprintsByFolder(existing.folderId);
       } else {
-        const binding = await createCatalogBinding({
-          project_id: savedId,
-          catalog_handle_ref: catalogRef || "",
-          raw_folder_handle_ref: folderRef,
-          catalog_filename: catalogHandle?.name || catalogFile?.name || "",
-          raw_folder_name: folderHandle?.name || folderName || "",
-        });
         // TRAS CREAR el proyecto, fijar `existing` para que el SIGUIENTE guardado
-        // ACTUALICE este proyecto en vez de crear un duplicado. Sin esto, cada
-        // guardado tras la creación genera un proyecto nuevo (bug de duplicación).
-        // También actualiza la URL con ?project=<id> para que un refresh no pierda
-        // el contexto y siga abriendo el mismo proyecto.
+        // ACTUALICE este proyecto en vez de crear un duplicado.
         setExisting({
           projectId: savedId,
-          bindingId: binding?.id || null,
+          bindingId: null,
           folderRef: folderRef || "",
           catalogRef: catalogRef || "",
           folderName: folderHandle?.name || folderName || "",
@@ -820,6 +792,38 @@ export default function NuevoProyectoPage() {
     if (id) navigate("/album");
   };
 
+  // Crear proyecto nuevo: nombre + fecha + catálogo. NO requiere carpeta de fotos.
+  // Crea el Project + CatalogBinding (catálogo a nivel de proyecto) y redirige a
+  // la página de carpetas del proyecto, donde el usuario añade carpetas de fotos.
+  const handleCreateProject = async () => {
+    if (!title.trim()) {
+      toast({ title: "Falta el nombre del proyecto", variant: "destructive" });
+      return;
+    }
+    setSaving(true);
+    try {
+      const catalogRef = catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }) : null;
+      const p = await createProject({
+        title: title.trim(),
+        event_date: eventDate || undefined,
+        status: "draft",
+        photo_count: 0,
+        lightroom_catalog_name: catalogHandle?.name || catalogFile?.name || "",
+      });
+      await createCatalogBinding({
+        project_id: p.id,
+        catalog_handle_ref: catalogRef || "",
+        catalog_filename: catalogHandle?.name || catalogFile?.name || "",
+        raw_folder_name: "",
+      });
+      navigate(`/proyectos/${p.id}`);
+    } catch (e) {
+      toast({ title: "No se pudo crear el proyecto", description: e?.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Auto-acción desde ProjectFoldersPage: mode=seleccion lanza la selección IA al
   // cargar la carpeta; mode=edicion lleva las fotos seleccionadas a AjustesIA.
   // Solo se dispara una vez (ref) y solo cuando hay fotos cargadas.
@@ -833,6 +837,60 @@ export default function NuevoProyectoPage() {
     else if (modeParam === "edicion") goEditar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items.length, modeParam, existing?.projectId]);
+
+  // Modo «nuevo proyecto» (sin projectId): formulario simple con nombre + fecha +
+  // catálogo. NO pide carpeta de fotos — las carpetas se añaden después, desde
+  // la página de carpetas del proyecto.
+  if (!projectIdParam) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-semibold">Nuevo proyecto</h1>
+          <button
+            onClick={() => navigate("/proyectos")}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" /> Mis proyectos
+          </button>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Nombre del proyecto</label>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              placeholder="Boda Curro y Celia"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Fecha del evento</label>
+            <input
+              type="date"
+              value={eventDate}
+              onChange={(e) => setEventDate(e.target.value)}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Catálogo de Lightroom (.lrcat)</label>
+            <button onClick={pickCatalog} className="mt-1 inline-flex w-full items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary">
+              <FileText className="h-4 w-4" /> {catalogHandle ? catalogHandle.name : catalogFile?.name || "Seleccionar catálogo .lrcat"}
+            </button>
+          </div>
+          <input ref={catalogInputRef} type="file" accept=".lrcat" className="hidden" onChange={onCatalogPicked} />
+        </div>
+        <button
+          onClick={handleCreateProject}
+          disabled={saving}
+          className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-accent-foreground disabled:opacity-40"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+          Crear proyecto
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -849,37 +907,7 @@ export default function NuevoProyectoPage() {
         </button>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">Nombre del proyecto</label>
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            placeholder="Boda García-López"
-          />
-        </div>
-        <div>
-          <label className="text-xs font-medium text-muted-foreground">Fecha del evento</label>
-          <input
-            type="date"
-            value={eventDate}
-            onChange={(e) => setEventDate(e.target.value)}
-            className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-          />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <button onClick={pickCatalog} className="inline-flex items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary">
-            <FileText className="h-4 w-4" /> {catalogHandle ? catalogHandle.name : catalogFile?.name || existing?.catalogName || "Seleccionar catálogo .lrcat"}
-          </button>
-          <button onClick={pickFolder} className="inline-flex items-center justify-center gap-2 rounded-md border border-border px-4 py-2.5 text-sm font-medium hover:bg-secondary">
-            <FolderOpen className="h-4 w-4" /> {folderHandle ? folderHandle.name : folderName || existing?.folderName || "Seleccionar carpeta RAW"}
-          </button>
-        </div>
-        {/* Móvil: inputs ocultos (fallback sin File System Access API) */}
-        <input ref={folderInputRef} type="file" multiple className="hidden" onChange={onFolderPicked} />
-        <input ref={catalogInputRef} type="file" accept=".lrcat" className="hidden" onChange={onCatalogPicked} />
-      </div>
+      <input ref={folderInputRef} type="file" multiple className="hidden" onChange={onFolderPicked} />
 
       {extracting && (
         <div className="rounded-xl border border-border bg-card p-4 space-y-2">
@@ -968,6 +996,15 @@ export default function NuevoProyectoPage() {
           onGoEditar={goEditar}
           onGoAlbum={goAlbum}
         />
+      )}
+
+      {!extracting && items.length === 0 && (
+        <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
+          <FolderOpen className="mx-auto h-8 w-8 text-muted-foreground" />
+          <p className="mt-3 text-sm text-muted-foreground">
+            Esta carpeta no tiene fotos. Vuelve a «Carpetas» y pulsa «Reintentar» si el procesado falló.
+          </p>
+        </div>
       )}
     </div>
   );

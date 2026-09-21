@@ -15,8 +15,6 @@ import { computeFingerprint } from "./projectFingerprint";
 import { saveHandle } from "./idbHandles";
 import { cachePreviews } from "./previewCache";
 import {
-  createProject,
-  createCatalogBinding,
   bulkCreateFingerprints,
   deleteFingerprintsByFolder,
   updateProject,
@@ -103,13 +101,10 @@ async function runProcessing(folderHandle, files, folderName, folderId, catalogH
   const jobKey = pid && folderId ? `${pid}:${folderId}` : pid;
   if (jobKey) activeJobs.set(jobKey, job);
   try {
-    // 1. Crea el proyecto si no existe.
+    // 1. El proyecto debe existir antes de procesar una carpeta (se crea al
+    //    crear el proyecto desde NuevoProyectoPage, no aquí).
     if (!pid) {
-      const p = await createProject({ title: folderName || folderHandle?.name || "Nuevo proyecto", status: "draft", photo_count: 0 });
-      pid = p.id;
-      job.projectId = pid;
-      if (folderId) activeJobs.set(`${pid}:${folderId}`, job); else activeJobs.set(pid, job);
-      notify(job);
+      throw new Error("No se puede procesar sin projectId: crea el proyecto antes de añadir carpetas.");
     }
 
     // 2. Crea o actualiza el ProjectFolder (carpeta/sesión independiente).
@@ -147,17 +142,6 @@ async function runProcessing(folderHandle, files, folderName, folderId, catalogH
         last_modified: new Date().toISOString(),
       }).catch(() => {});
     }
-    // Catálogo binding legado (retrocompatibilidad con DetalleProyectoPage).
-    try {
-      const binding = await createCatalogBinding({
-        project_id: pid,
-        catalog_handle_ref: job.catalogRef || "",
-        raw_folder_handle_ref: job.folderRef || "",
-        catalog_filename: catalogHandle?.name || "",
-        raw_folder_name: folderName || folderHandle?.name || "Carpeta",
-      });
-      job.bindingId = binding?.id || null;
-    } catch {}
     notify(job);
 
     // 3. Crea el ProjectProcessingJob para el Historial.
