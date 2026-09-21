@@ -19,6 +19,9 @@ export default function ProjectFoldersPage() {
   const [adding, setAdding] = useState(false);
   const [renaming, setRenaming] = useState(null);
   const [folderName, setFolderName] = useState("");
+  // Progreso en vivo por carpeta: { [folderId]: { done, total, phase, status } }.
+  // total = fotos * 2 (fase extracting + fingerprinting); fotos detectadas = total/2.
+  const [jobProgress, setJobProgress] = useState({});
   const folderInputRef = useRef(null);
 
   useEffect(() => {
@@ -60,10 +63,13 @@ export default function ProjectFoldersPage() {
     const ids = processingIds.split(",");
     const unsubs = ids.map((fid) =>
       subscribe(id, fid, (job) => {
+        setJobProgress((prev) => ({ ...prev, [fid]: { done: job.progress?.done || 0, total: job.progress?.total || 0, phase: job.phase, status: job.status } }));
         if (job.status === "completed") {
           setFolders((prev) => prev.map((f) => f.id === fid ? { ...f, import_status: "completed", photo_count: job.items?.length || f.photo_count } : f));
+          setJobProgress((prev) => { const next = { ...prev }; delete next[fid]; return next; });
         } else if (job.status === "failed") {
           setFolders((prev) => prev.map((f) => f.id === fid ? { ...f, import_status: "failed" } : f));
+          setJobProgress((prev) => { const next = { ...prev }; delete next[fid]; return next; });
         }
       })
     );
@@ -114,7 +120,9 @@ export default function ProjectFoldersPage() {
         folderName: name,
         folderId: folder.id,
         projectId: id,
-        onProgress: () => {},
+        onProgress: (job) => {
+          setJobProgress((prev) => ({ ...prev, [folder.id]: { done: job.progress?.done || 0, total: job.progress?.total || 0, phase: job.phase, status: job.status } }));
+        },
         onComplete: (job) => {
           setFolders((prev) => prev.map((f) => f.id === folder.id ? { ...f, import_status: "completed", photo_count: job.items?.length || 0 } : f));
           toast({ title: "Carpeta importada", description: `${job.items?.length || 0} fotos procesadas en "${displayName}".` });
@@ -169,8 +177,10 @@ export default function ProjectFoldersPage() {
         folderName: f.raw_folder_name || f.name,
         folderId: f.id,
         projectId: id,
-        existing: { folderRef: f.raw_folder_handle_ref, catalogRef: f.catalog_handle_ref || "" },
-        onProgress: () => {},
+        existing: { folderRef: f.raw_folder_handle_ref },
+        onProgress: (job) => {
+          setJobProgress((prev) => ({ ...prev, [f.id]: { done: job.progress?.done || 0, total: job.progress?.total || 0, phase: job.phase, status: job.status } }));
+        },
         onComplete: (job) => {
           setFolders((prev) => prev.map((x) => x.id === f.id ? { ...x, import_status: "completed", photo_count: job.items?.length || 0 } : x));
           toast({ title: "Carpeta importada", description: `${job.items?.length || 0} fotos procesadas en "${f.name}".` });
@@ -209,7 +219,11 @@ export default function ProjectFoldersPage() {
     await Promise.all(reordered.map((x) => updateFolder(x.id, { order_index: x.order_index }).catch(() => {})));
   };
 
-  const totalPhotos = folders.reduce((s, f) => s + (f.photo_count || 0), 0);
+  const totalPhotos = folders.reduce((s, f) => {
+    const jp = jobProgress[f.id];
+    if (f.import_status === "processing" && jp?.total) return s + Math.floor(jp.total / 2);
+    return s + (f.photo_count || 0);
+  }, 0);
   const selCompleted = folders.filter((f) => f.selection_status === "completed").length;
   const editCompleted = folders.filter((f) => f.edit_status === "completed").length;
 
@@ -293,6 +307,7 @@ export default function ProjectFoldersPage() {
               onSeleccion={() => openFolder(f, "seleccion")}
               onEdicion={() => openFolder(f, "edicion")}
               onRetry={() => retryFolder(f)}
+              progress={jobProgress[f.id]}
             />
           ))}
         </div>
@@ -317,7 +332,10 @@ function StatusBadge({ label, status }) {
   );
 }
 
-function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderName, onRename, onConfirmRename, onCancelRename, onDelete, onMoveUp, onMoveDown, onOpen, onSeleccion, onEdicion, onRetry }) {
+function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderName, onRename, onConfirmRename, onCancelRename, onDelete, onMoveUp, onMoveDown, onOpen, onSeleccion, onEdicion, onRetry, progress }) {
+  const isProcessing = folder.import_status === "processing" && progress;
+  const detectedCount = isProcessing && progress.total ? Math.floor(progress.total / 2) : 0;
+  const pct = isProcessing && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
@@ -339,7 +357,35 @@ function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderNam
             ) : (
               <p className="text-sm font-semibold">{folder.name}</p>
             )}
-            <p className="mt-0.5 text-xs text-muted-foreground">{folder.photo_count || 0} fotos · {folder.raw_folder_name || "Sin ruta local"}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {isProcessing && detectedCount > 0
+                ? `${detectedCount} fotos detectadas · ${folder.raw_folder_name || ""}`
+                : `${folder.photo_count || 0} fotos · ${folder.raw_folder_name || "Sin ruta local"}`}
+            </p>
+            {isProcessing && (
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin text-yellow-500" />
+                    {progress.total
+                      ? (progress.phase === "extracting" ? "Leyendo previews" : "Calculando huellas")
+                      : "Detectando fotos"}…
+                  </span>
+                  {progress.total > 0 && (
+                    <span className="font-mono font-semibold tabular-nums">
+                      {progress.phase === "extracting"
+                        ? `${progress.done} / ${detectedCount} fotos`
+                        : `${Math.max(0, progress.done - detectedCount)} / ${detectedCount} huellas`}
+                    </span>
+                  )}
+                </div>
+                {progress.total > 0 && (
+                  <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-secondary">
+                    <div className="h-full rounded-full bg-yellow-500 transition-all duration-150" style={{ width: `${pct}%` }} />
+                  </div>
+                )}
+              </div>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-4">
               <StatusBadge label="Importación" status={folder.import_status} />
               <StatusBadge label="Selección" status={folder.selection_status} />
