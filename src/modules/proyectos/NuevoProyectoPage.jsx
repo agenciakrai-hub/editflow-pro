@@ -63,6 +63,7 @@ export default function NuevoProyectoPage() {
   const urlParams = new URLSearchParams(window.location.search);
   const projectIdParam = urlParams.get("project");
   const folderIdParam = urlParams.get("folder");
+  const modeParam = urlParams.get("mode"); // "seleccion" | "edicion" | null
   const [existing, setExisting] = useState(null);
   const [restoredHandles, setRestoredHandles] = useState({ folder: null, catalog: null });
   // Móvil: fallback cuando showDirectoryPicker/showOpenFilePicker no existen.
@@ -661,6 +662,7 @@ export default function NuevoProyectoPage() {
         if (!selJobId) {
           const j = await base44.entities.AlbumAISelection.create({
             project_id: selectionProjectId,
+            folder_id: existing?.folderId || folderIdParam || "",
             status,
             stage,
             stats: stats || { photo_count: marked.length },
@@ -679,8 +681,9 @@ export default function NuevoProyectoPage() {
     // uno nuevo. Evita jobs duplicados colgados que confunden al sondeo al volver.
     if (selectionProjectId) {
       try {
+        const selFolderId = existing?.folderId || folderIdParam || "";
         await base44.entities.AlbumAISelection.updateMany(
-          { project_id: selectionProjectId, status: "running" },
+          { project_id: selectionProjectId, folder_id: selFolderId, status: "running" },
           { $set: { status: "canceled", error: "Reemplazado por una nueva selección" } }
         );
       } catch {}
@@ -816,6 +819,20 @@ export default function NuevoProyectoPage() {
     const id = await save().finally(() => setBusyAction(null));
     if (id) navigate("/album");
   };
+
+  // Auto-acción desde ProjectFoldersPage: mode=seleccion lanza la selección IA al
+  // cargar la carpeta; mode=edicion lleva las fotos seleccionadas a AjustesIA.
+  // Solo se dispara una vez (ref) y solo cuando hay fotos cargadas.
+  const autoActionFiredRef = useRef(false);
+  useEffect(() => {
+    if (autoActionFiredRef.current) return;
+    if (!items.length || !modeParam) return;
+    if (!existing?.projectId && !projectIdParam) return;
+    autoActionFiredRef.current = true;
+    if (modeParam === "seleccion") runAiSelection();
+    else if (modeParam === "edicion") goEditar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items.length, modeParam, existing?.projectId]);
 
   return (
     <div className="space-y-6">

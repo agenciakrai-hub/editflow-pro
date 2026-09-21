@@ -7,7 +7,7 @@ import { selectBursts } from "@/lib/ai/aiGateway";
 import { addRatingAndLabel } from "@/lib/rawaistudio/xmpTagPatcher";
 import { base44 } from "@/api/base44Client";
 import { setSession } from "@/lib/rawaistudio/localSession";
-import { getProject, getCatalogBinding, listFingerprints, updateProject, updateCatalogBinding, bulkUpdateFingerprints } from "@/modules/proyectos/hooks/useProjectStore";
+import { getProject, listFingerprintsByFolder, updateProject, updateFolder, bulkUpdateFingerprints } from "@/modules/proyectos/hooks/useProjectStore";
 import { useFileSync } from "@/modules/proyectos/hooks/useFileSync";
 import { computeFingerprint, matchFingerprints } from "@/modules/proyectos/lib/projectFingerprint";
 import SelectionSummary from "@/modules/proyectos/components/SelectionSummary";
@@ -49,6 +49,7 @@ export default function Seleccion() {
   // ---- Modo proyecto (aditivo, no toca el flujo normal) ----
   const [searchParams] = useSearchParams();
   const projectId = searchParams.get("project");
+  const folderId = searchParams.get("folder");
   const [project, setProject] = useState(null);
   const [binding, setBinding] = useState(null);
   const [fingerprints, setFingerprints] = useState([]);
@@ -127,11 +128,25 @@ export default function Seleccion() {
   // fotos y selección guardada, y las carga en este mismo flujo de revisión. No crea un
   // segundo motor: reutiliza extractPreviews + el grid de revisión existente. ----
   const loadProject = async () => {
+    if (!folderId) {
+      setError("Selecciona una carpeta del proyecto para trabajar. Ve a Mis proyectos → abre el proyecto → elige una carpeta.");
+      setProjectLoading(false);
+      return;
+    }
     setProjectLoading(true);
     try {
       const p = await getProject(projectId);
-      const b = await getCatalogBinding(projectId);
-      const fps = await listFingerprints(projectId);
+      const folder = await base44.entities.ProjectFolder.get(folderId);
+      const fps = await listFingerprintsByFolder(folderId);
+      // Construye un objeto "binding" compatible desde el ProjectFolder: los campos
+      // de ruta/catálogo ahora viven en la carpeta, no en CatalogBinding.
+      const b = {
+        id: folder.id,
+        catalog_handle_ref: folder.catalog_handle_ref || "",
+        raw_folder_handle_ref: folder.raw_folder_handle_ref || "",
+        catalog_filename: folder.catalog_filename || "",
+        raw_folder_name: folder.raw_folder_name || "",
+      };
       setProject(p);
       setBinding(b);
       setFingerprints(fps);
@@ -188,7 +203,7 @@ export default function Seleccion() {
         // en vivo en lugar de empezar una recuperación propia que duplicaría el trabajo.
         let remote = null;
         try {
-          const jobs = await base44.entities.ProjectProcessingJob.filter({ project_id: projectId, status: "processing" }, "-updated_date", 1);
+          const jobs = await base44.entities.ProjectProcessingJob.filter({ project_id: projectId, folder_id: folderId, status: "processing" }, "-updated_date", 1);
           remote = jobs?.[0];
         } catch {}
         if (remote && Date.now() - new Date(remote.updated_date).getTime() < 120000) {
@@ -303,7 +318,7 @@ export default function Seleccion() {
     setResyncing(true);
     try {
       const handle = await resyncFolder(binding.raw_folder_handle_ref);
-      await updateCatalogBinding(binding.id, { raw_folder_name: handle.name });
+      await updateFolder(binding.id, { raw_folder_name: handle.name, last_modified: new Date().toISOString() });
       const s = await checkSync(binding.catalog_handle_ref, binding.raw_folder_handle_ref);
       setSync(s);
       if (s.folderOk) await recoverFromFolder(handle, fingerprints);
@@ -318,7 +333,7 @@ export default function Seleccion() {
     setResyncing(true);
     try {
       const handle = await resyncCatalog(binding.catalog_handle_ref);
-      await updateCatalogBinding(binding.id, { catalog_filename: handle.name });
+      await updateFolder(binding.id, { catalog_filename: handle.name, last_modified: new Date().toISOString() });
       const s = await checkSync(binding.catalog_handle_ref, binding.raw_folder_handle_ref);
       setSync(s);
       toast({ title: "Catálogo reubicado" });
@@ -352,6 +367,9 @@ export default function Seleccion() {
       }));
       const selCount = updates.filter((u) => u.selection_status === "TOP_PICK" || u.selection_status === "SELECT").length;
       await updateProject(projectId, { selection_saved: true, status: "editing", selected_count: selCount });
+      if (folderId) {
+        await updateFolder(folderId, { selection_status: "completed", last_modified: new Date().toISOString() }).catch(() => {});
+      }
       setProject((p) => (p ? { ...p, selection_saved: true, status: "editing", selected_count: selCount } : p));
       if (showSummary) setShowProjectSummary(true);
       if (!silent) toast({ title: "Selección guardada", description: `${selCount} de ${photos.length} fotos seleccionadas` });
@@ -437,7 +455,7 @@ export default function Seleccion() {
     if (!projectId) return;
     loadProject();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+  }, [projectId, folderId]);
 
   // Sondea el trabajo de procesado que otro dispositivo del mismo usuario está ejecutando:
   // actualiza el progreso en vivo y, cuando termina (o caduca), arranca la recuperación local.
@@ -446,7 +464,7 @@ export default function Seleccion() {
     let alive = true;
     const poll = async () => {
       try {
-        const jobs = await base44.entities.ProjectProcessingJob.filter({ project_id: projectId, status: "processing" }, "-updated_date", 1);
+        const jobs = await base44.entities.ProjectProcessingJob.filter({ project_id: projectId, folder_id: folderId, status: "processing" }, "-updated_date", 1);
         const j = jobs?.[0];
         if (!alive) return;
         if (!j) { setRemoteJob(null); startOwnRecovery(binding, fingerprints); return; }

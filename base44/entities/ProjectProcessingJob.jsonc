@@ -6,6 +6,10 @@
       "type": "string",
       "description": "Proyecto cuyo procesado (extracci\u00f3n de previews + huellas) est\u00e1 en curso."
     },
+    "folder_id": {
+      "type": "string",
+      "description": "Carpeta/sesi\u00f3n del proyecto cuyo procesado est\u00e1 en curso. Aislamiento: los jobs se filtran por project_id + folder_id, nunca solo por project_id."
+    },
     "status": {
       "type": "string",
       "enum": [

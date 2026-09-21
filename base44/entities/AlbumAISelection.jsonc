@@ -6,6 +6,10 @@
       "type": "string",
       "description": "Referencia al AlbumProject."
     },
+    "folder_id": {
+      "type": "string",
+      "description": "Carpeta/sesi\u00f3n del proyecto a la que pertenece este job de selecci\u00f3n. Aislamiento: los jobs se filtran por project_id + folder_id, nunca solo por project_id."
+    },
     "status": {
       "type": "string",
       "enum": [

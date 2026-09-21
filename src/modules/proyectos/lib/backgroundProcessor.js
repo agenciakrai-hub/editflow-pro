@@ -18,7 +18,7 @@ import {
   createProject,
   createCatalogBinding,
   bulkCreateFingerprints,
-  deleteFingerprintsByProject,
+  deleteFingerprintsByFolder,
   updateProject,
 } from "../hooks/useProjectStore";
 import { base44 } from "@/api/base44Client";
@@ -167,7 +167,7 @@ async function runProcessing(folderHandle, files, folderName, folderId, catalogH
     const syncJob = async (progress, phase, status = "processing") => {
       try {
         if (!jobId) {
-          const j = await base44.entities.ProjectProcessingJob.create({ project_id: pid, status, progress, phase });
+          const j = await base44.entities.ProjectProcessingJob.create({ project_id: pid, folder_id: folderId || "", status, progress, phase });
           jobId = j.id;
         } else if (status !== "processing" || Math.abs(progress - lastPct) >= 4 || phase !== lastPhase) {
           await base44.entities.ProjectProcessingJob.update(jobId, { status, progress, phase });
@@ -282,7 +282,13 @@ async function runProcessing(folderHandle, files, folderName, folderId, catalogH
     // 9. Auto-guarda huellas en la base de datos (para que no se pierdan si el
     //    usuario navegó fuera durante el procesado).
     try {
-      await deleteFingerprintsByProject(pid);
+      // AISLAMIENTO POR CARPETA: solo se borran los fingerprints de la carpeta ACTIVA.
+      // Nunca se borran los fingerprints de las demás carpetas del proyecto.
+      // Si folderId no existe, es un error controlado: no se ejecuta ninguna eliminación.
+      if (!folderId) {
+        throw new Error("No se puede autoguardar sin folderId: la carpeta activa no está identificada.");
+      }
+      await deleteFingerprintsByFolder(folderId);
       await bulkCreateFingerprints(
         withFingerprint.map((p) => ({
           project_id: pid,
@@ -311,12 +317,6 @@ async function runProcessing(folderHandle, files, folderName, folderId, catalogH
       }
     } catch {}
 
-    if (folderId) {
-      await base44.entities.ProjectFolder.update(folderId, {
-        import_status: "failed",
-        last_modified: new Date().toISOString(),
-      }).catch(() => {});
-    }
     if (onComplete) try { onComplete(snapshotJob(job)); } catch {}
 
     // Limpia el job después de 2 minutos (tiempo suficiente para que el componente

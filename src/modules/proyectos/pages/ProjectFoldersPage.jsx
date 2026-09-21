@@ -161,7 +161,7 @@ export default function ProjectFoldersPage() {
   const selCompleted = folders.filter((f) => f.selection_status === "completed").length;
   const editCompleted = folders.filter((f) => f.edit_status === "completed").length;
 
-  const openFolder = (f) => navigate(`/proyectos/nuevo?project=${id}&folder=${f.id}`);
+  const openFolder = (f, mode) => navigate(`/proyectos/nuevo?project=${id}&folder=${f.id}${mode ? `&mode=${mode}` : ""}`);
 
   if (loading) {
     return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando proyecto…</div>;
@@ -238,6 +238,8 @@ export default function ProjectFoldersPage() {
               onMoveUp={() => moveFolder(f, -1)}
               onMoveDown={() => moveFolder(f, 1)}
               onOpen={() => openFolder(f)}
+              onSeleccion={() => openFolder(f, "seleccion")}
+              onEdicion={() => openFolder(f, "edicion")}
             />
           ))}
         </div>
@@ -262,7 +264,7 @@ function StatusBadge({ label, status }) {
   );
 }
 
-function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderName, onRename, onConfirmRename, onCancelRename, onDelete, onMoveUp, onMoveDown, onOpen }) {
+function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderName, onRename, onConfirmRename, onCancelRename, onDelete, onMoveUp, onMoveDown, onOpen, onSeleccion, onEdicion }) {
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
@@ -303,10 +305,10 @@ function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderNam
         <button onClick={onOpen} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground">
           <FolderOpen className="h-3.5 w-3.5" /> Abrir
         </button>
-        <button onClick={onOpen} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary">
+        <button onClick={onSeleccion} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary">
           Selección
         </button>
-        <button onClick={onOpen} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary">
+        <button onClick={onEdicion} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary">
           Edición
         </button>
       </div>
