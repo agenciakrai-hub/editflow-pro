@@ -110,12 +110,20 @@ export default function PresetXMP() {
     if (!results.length) return;
     setSyncing(true);
     try {
-      const res = await base44.functions.invoke("editflow-engine", {
-        action: "lr-push",
-        jobs: results.map((r) => ({ filename: r.filename, xmp_content: r.xmp })),
-      });
+      const BATCH_SIZE = 200;
+      const allJobs = results.map((r) => ({ filename: r.filename, xmp_content: r.xmp }));
+      let totalPushed = 0;
+      for (let i = 0; i < allJobs.length; i += BATCH_SIZE) {
+        const batch = allJobs.slice(i, i + BATCH_SIZE);
+        const res = await base44.functions.invoke("editflow-engine", {
+          action: "lr-push",
+          jobs: batch,
+          append: i > 0,
+        });
+        totalPushed += res?.data?.pushed ?? batch.length;
+      }
       setSynced(true);
-      toast({ title: "Enviado a Lightroom", description: `${res?.data?.pushed ?? results.length} fotos listas` });
+      toast({ title: "Enviado a Lightroom", description: `${totalPushed} fotos listas` });
     } catch (e) {
       toast({ title: "Error al sincronizar", description: e.message, variant: "destructive" });
     }

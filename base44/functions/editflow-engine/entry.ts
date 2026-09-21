@@ -195,7 +195,13 @@ async function doLrPush(base44, user, body) {
   const jobs = Array.isArray(body.jobs) ? body.jobs : [];
   if (!jobs.length) return Response.json({ error: "No hay fotos que enviar" }, { status: 400 });
 
-  await base44.asServiceRole.entities.LrJob.deleteMany({ token, status: "pending" });
+  // Solo borra los pendientes anteriores si NO es un lote de continuación (append).
+  // El frontend envía el primer lote sin append (limpia la cola) y los siguientes
+  // con append=true (añade sin borrar los anteriores). Esto permite sincronizar
+  // carpetas de miles de fotos en lotes sin que cada lote borre el anterior.
+  if (!body.append) {
+    await base44.asServiceRole.entities.LrJob.deleteMany({ token, status: "pending" });
+  }
   const records = jobs.map((j) => ({
     token,
     filename: String(j.filename || ""),

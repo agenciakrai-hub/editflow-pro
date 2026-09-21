@@ -659,12 +659,23 @@ export default function AjustesIA() {
     if (!results.length) return;
     setSyncing(true);
     try {
-      const res = await base44.functions.invoke("editflow-engine", {
-        action: "lr-push",
-        jobs: results.map((r) => ({ filename: r.filename, xmp_content: r.xmp })),
-      });
+      // Envía en lotes de 200: el backend (bulkCreate) no puede crear miles de
+      // registros LrJob en una sola petición (límite ~500). El primer lote limpia
+      // la cola pendiente; los siguientes llevan append=true para no borrarla.
+      const BATCH_SIZE = 200;
+      const allJobs = results.map((r) => ({ filename: r.filename, xmp_content: r.xmp }));
+      let totalPushed = 0;
+      for (let i = 0; i < allJobs.length; i += BATCH_SIZE) {
+        const batch = allJobs.slice(i, i + BATCH_SIZE);
+        const res = await base44.functions.invoke("editflow-engine", {
+          action: "lr-push",
+          jobs: batch,
+          append: i > 0,
+        });
+        totalPushed += res?.data?.pushed ?? batch.length;
+      }
       setSynced(true);
-      toast({ title: "Enviado a Lightroom", description: `${res?.data?.pushed ?? results.length} fotos listas` });
+      toast({ title: "Enviado a Lightroom", description: `${totalPushed} fotos listas` });
     } catch (e) {
       toast({ title: "Error al sincronizar", description: e.message, variant: "destructive" });
     }
