@@ -8,6 +8,7 @@ import { statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { saveHandle } from "./lib/idbHandles";
 import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, listFingerprintsByFolder, deleteFingerprintsByFolder, ensureFoldersMigrated, updateFolder, updateProject } from "./hooks/useProjectStore";
 import { startProcessing, getJob, subscribe } from "./lib/backgroundProcessor";
+import { startAiSelection, getJob as getAiJob, subscribe as subscribeAi, cancelSelection as cancelAiSelection } from "./lib/backgroundAiSelection";
 import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
 import { useToast } from "@/components/ui/use-toast";
 import useUndoRedo from "@/hooks/useUndoRedo";
@@ -75,14 +76,9 @@ export default function NuevoProyectoPage() {
   useEffect(() => {
     return () => {
       mountedRef.current = false;
-      const jobId = currentSelJobIdRef.current;
-      if (jobId) {
-        base44.entities.AlbumAISelection.update(jobId, {
-          status: "canceled",
-          error: "Cancelado: el usuario abandonó la página",
-        }).catch(() => {});
-        currentSelJobIdRef.current = null;
-      }
+      // NO se cancela el job de selección IA al abandonar la página: el proceso
+      // corre en segundo plano (backgroundAiSelection) y continúa independientemente
+      // del componente. Al volver, el componente se suscribe y muestra el progreso.
     };
   }, []);
 
@@ -168,14 +164,18 @@ export default function NuevoProyectoPage() {
   // navegar fuera y volver). Sondea el job de AlbumAISelection hasta que termina
   // y entonces oculta la barra y avisa al usuario.
   useEffect(() => {
-    if (!projectIdParam) return;
+    if (!projectIdParam || !folderIdParam) return;
+    // Si hay un job de selección IA en segundo plano (en memoria), la suscripción lo
+    // maneja — no se necesita sondeo de la base de datos. El sondeo solo es para jobs
+    // que se quedaron "running" en la BD sin proceso en memoria (pestaña cerrada).
+    if (getAiJob(projectIdParam, folderIdParam)) return;
     let alive = true;
     let pollTimer = null;
 
     const checkAndPoll = async () => {
       try {
         const jobs = await base44.entities.AlbumAISelection.filter(
-          { project_id: projectIdParam, status: "running" },
+          { project_id: projectIdParam, folder_id: folderIdParam, status: "running" },
           "-created_date",
           1
         );
@@ -198,7 +198,6 @@ export default function NuevoProyectoPage() {
           toast({ title: "Selección IA cancelada", description: "El trabajo anterior estaba parado. Vuelve a lanzar la selección si lo necesitas." });
           return;
         }
-        currentSelJobIdRef.current = job.id;
         setAiRunning(true);
         setBusyAction("seleccion");
         setAiTotal(job.stats?.photo_count || 0);
@@ -227,7 +226,42 @@ export default function NuevoProyectoPage() {
       alive = false;
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, [projectIdParam]);
+  }, [projectIdParam, folderIdParam]);
+
+  // Suscripción al job de selección IA en segundo plano: si el usuario sale y vuelve
+  // mientras la selección está corriendo, este effect reconecta con el job activo y
+  // muestra el progreso en vivo. Si el job ya terminó, aplica los resultados al estado.
+  useEffect(() => {
+    if (!projectIdParam || !folderIdParam) return;
+    const bgJob = getAiJob(projectIdParam, folderIdParam);
+    if (!bgJob) return;
+    setAiRunning(bgJob.status === "running");
+    setBusyAction(bgJob.status === "running" ? "seleccion" : null);
+    setAiDone(bgJob.done);
+    setAiTotal(bgJob.total);
+    if (bgJob.status === "completed" && bgJob.results?.size) {
+      applyAiResults(bgJob);
+    }
+    const unsub = subscribeAi(projectIdParam, folderIdParam, (job) => {
+      if (!mountedRef.current) return;
+      setAiDone(job.done);
+      if (typeof job.total === "number") setAiTotal(job.total);
+      if (job.status === "completed") {
+        applyAiResults(job);
+        setAiRunning(false);
+        setBusyAction(null);
+        toast({ title: "Selección IA completada" });
+      } else if (job.status === "failed") {
+        setAiRunning(false);
+        setBusyAction(null);
+        toast({ title: "Selección IA no completada", description: job.error || "Error", variant: "destructive" });
+      } else if (job.status === "canceled") {
+        setAiRunning(false);
+        setBusyAction(null);
+      }
+    });
+    return unsub;
+  }, [projectIdParam, folderIdParam]);
 
   const pickCatalog = async () => {
     // Desktop: File System Access API.
@@ -472,10 +506,25 @@ export default function NuevoProyectoPage() {
   // Las elegidas por la IA quedan con las 5 estrellas ACTIVAS; las que la IA envía a
   // revisión pasan su cuadrado/borde a AMARILLO. No navega a otra pantalla: el proceso
   // completo ocurre aquí. Guardar persiste el resultado (5★ + verde viaja al XMP).
+  const applyAiResults = (job) => {
+    if (!job.results) return;
+    setItems((prev) => prev.map((it) => {
+      const r = job.results.get(it.id);
+      if (!r) return it;
+      return { ...it, status: r.status, rating: r.rating, aiReview: r.aiReview };
+    }));
+  };
+
   const runAiSelection = async () => {
     const marked = items.filter((it) => selectedIds.has(it.id));
     if (!marked.length) {
       toast({ title: "Marca al menos una foto para la selección IA", variant: "destructive" });
+      return;
+    }
+    const selectionProjectId = existing?.projectId || projectIdParam || null;
+    const selectionFolderId = existing?.folderId || folderIdParam || null;
+    if (!selectionProjectId || !selectionFolderId) {
+      toast({ title: "Guarda el proyecto primero", variant: "destructive" });
       return;
     }
     record();
@@ -483,127 +532,44 @@ export default function NuevoProyectoPage() {
     setAiRunning(true);
     setAiDone(0);
     setAiTotal(marked.length);
-    const selectionProjectId = existing?.projectId || projectIdParam || null;
-    let selJobId = null;
-    const syncSelJob = async (status, stage, stats = null, error = null) => {
-      if (!selectionProjectId) return;
-      try {
-        if (!selJobId) {
-          const j = await base44.entities.AlbumAISelection.create({
-            project_id: selectionProjectId,
-            folder_id: existing?.folderId || folderIdParam || "",
-            status,
-            stage,
-            stats: stats || { photo_count: marked.length },
-          });
-          selJobId = j.id;
-          currentSelJobIdRef.current = j.id;
-        } else {
-          const patch = { status, stage };
-          if (stats) patch.stats = stats;
-          if (error) patch.error = String(error).slice(0, 500);
-          await base44.entities.AlbumAISelection.update(selJobId, patch);
-        }
-      } catch {}
-    };
-    // Fiabilidad: cancela jobs "running" anteriores de este proyecto antes de empezar
-    // uno nuevo. Evita jobs duplicados colgados que confunden al sondeo al volver.
-    if (selectionProjectId) {
-      try {
-        const selFolderId = existing?.folderId || folderIdParam || "";
-        await base44.entities.AlbumAISelection.updateMany(
-          { project_id: selectionProjectId, folder_id: selFolderId, status: "running" },
-          { $set: { status: "canceled", error: "Reemplazado por una nueva selección" } }
-        );
-      } catch {}
-    }
-    await syncSelJob("running", "e2");
-    try {
-      const aiItems = marked.map((it) => {
-        const dataUrl = it.preview?.dataUrl;
-        const preview = it.preview?.base64
-          ? it.preview
-          : dataUrl
-            ? { dataUrl, base64: dataUrl.split(",")[1] || "", isPlaceholder: false }
-            : null;
-        return {
-          id: it.id,
-          file: it.file,
-          preview,
-          // phash restaurado del fingerprint guardado (proyectos reabiertos): sin él la
-          // agrupación de ráfagas degrada a solo-temporal.
-          phash: it.phash || (it.fingerprint?.fingerprint_hash ? BigInt("0x" + it.fingerprint.fingerprint_hash) : null),
-          captureTime: it.captureTime ?? it.fingerprint?.capture_time ?? null,
-          cameraInfo: it.cameraInfo || { make: it.fingerprint?.camera_make, model: it.fingerprint?.camera_model },
-          technical: it.technical || { sharpness: 0, exposureScore: 0.5, corrupt: false },
-        };
-      });
-      const { keep, meta, trace } = await selectBursts(aiItems, (d, t) => {
+    // La selección corre en SEGUNDO PLANO (backgroundAiSelection): sobrevive a la
+    // navegación. Si el usuario sale de la página, el proceso continúa y auto-guarda
+    // los resultados en la base de datos. Al volver, el componente se suscribe y
+    // muestra el progreso o los resultados ya guardados.
+    startAiSelection({
+      projectId: selectionProjectId,
+      folderId: selectionFolderId,
+      items,
+      selectedIds,
+      onProgress: (job) => {
         if (!mountedRef.current) return;
-        setAiDone(d);
-        if (typeof t === "number") setAiTotal(t);
-      });
-      // Si el componente se desmontó durante la selección (el usuario navegó fuera),
-      // el job ya se canceló en el cleanup. No actualizamos estado ni mostramos toast:
-      // evitar "error 5" y warnings de React.
-      if (!mountedRef.current) return;
-      // Persiste la traza completa de la ejecución en el proyecto para auditarla.
-      // Se guarda en el ref: «Guardar» la re-escribe junto con el proyecto. La
-      // escritura inmediata sigue siendo fire-and-forget, pero si falla se avisa
-      // (antes el error se tragaba en silencio y la traza se perdía sin rastro).
-      lastTraceRef.current = trace || null;
-      const traceProjectId = existing?.projectId || projectIdParam;
-      if (trace && traceProjectId) {
-        base44.entities.Project.update(traceProjectId, { ai_config_snapshot: { selection_trace: trace } })
-          .catch((e) => toast({
-            title: "Traza de selección no guardada",
-            description: `Se guardará al pulsar «Guardar». Motivo: ${e?.message || "desconocido"}`,
-            variant: "destructive",
-          }));
-      }
-      setItems((prev) => prev.map((it) => {
-        if (!selectedIds.has(it.id)) return it; // solo participan las marcadas
-        const m = meta.get(it.id);
-        if (!m) return it;
-        const status = m.status || (keep.has(it.id) ? "SELECT" : "REVIEW");
-        const aiSelected = status === "SELECT" || status === "TOP_PICK";
-        const review = !aiSelected && status !== "REJECT";
-        return {
-          ...it,
-          status,
-          // Elegidas por la IA: 5★ · enviadas a revisar: 3★ (amarillo) · descartadas: 0★.
-          rating: aiSelected ? 5 : review ? 3 : 0,
-          aiReview: review,
-        };
-      }));
-      await syncSelJob("completed", "done", { photo_count: marked.length, provider_used: trace?.provider || null });
-      toast({ title: "Selección IA completada" });
-    } catch (e) {
-      if (mountedRef.current) {
-        await syncSelJob("failed", "e2", null, e?.message || "Error desconocido");
+        setAiDone(job.done);
+        if (typeof job.total === "number") setAiTotal(job.total);
+      },
+      onComplete: (job) => {
+        if (!mountedRef.current) return;
+        applyAiResults(job);
+        setAiRunning(false);
+        setBusyAction(null);
+        toast({ title: "Selección IA completada" });
+      },
+      onError: (e) => {
+        if (!mountedRef.current) return;
+        setAiRunning(false);
+        setBusyAction(null);
         toast({ title: "No se pudo ejecutar la selección IA", description: e?.message, variant: "destructive" });
-      }
-    }
-    currentSelJobIdRef.current = null;
-    if (mountedRef.current) {
-      setAiRunning(false);
-      setBusyAction(null);
-    }
+      },
+    });
   };
 
   // Cancela el job de selección IA en curso (botón Cancelar). Marca el job como
   // "canceled" en la base de datos y desbloquea la UI. El proceso asíncrono que corre
   // en la página se abandona (su resultado se ignora porque mountedRef/job ya no activos).
   const cancelSelection = async () => {
-    const jobId = currentSelJobIdRef.current;
-    if (jobId) {
-      try {
-        await base44.entities.AlbumAISelection.update(jobId, {
-          status: "canceled",
-          error: "Cancelado por el usuario",
-        });
-      } catch {}
-      currentSelJobIdRef.current = null;
+    const selectionProjectId = existing?.projectId || projectIdParam;
+    const selectionFolderId = existing?.folderId || folderIdParam;
+    if (selectionProjectId && selectionFolderId) {
+      cancelAiSelection(selectionProjectId, selectionFolderId);
     }
     setAiRunning(false);
     setBusyAction(null);
@@ -808,7 +774,7 @@ export default function NuevoProyectoPage() {
             </div>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            La selección se ejecuta en esta página, solo sobre las fotos marcadas. Si sales y vuelves, puedes cancelar y volver a lanzarla.
+            La selección corre en segundo plano sobre las fotos marcadas. Puedes salir de esta página y volver cuando quieras: el proceso continúa y los resultados se guardan automáticamente.
           </p>
         </div>
       )}
