@@ -1,0 +1,94 @@
+{
+  "name": "ProjectFolder",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al Project contenedor."
+    },
+    "name": {
+      "type": "string",
+      "description": "Nombre de la carpeta/sesi\u00f3n dentro del proyecto (p. ej. '01 - Preparativos'). La identidad l\u00f3gica se mantiene aunque la ruta f\u00edsica cambie."
+    },
+    "order_index": {
+      "type": "number",
+      "default": 0,
+      "description": "Posici\u00f3n de la carpeta dentro del proyecto (orden manual del fot\u00f3grafo)."
+    },
+    "raw_folder_name": {
+      "type": "string",
+      "description": "Nombre de la carpeta local (informativo). La ruta puede cambiar; la identidad l\u00f3gica es el id."
+    },
+    "raw_folder_handle_ref": {
+      "type": "string",
+      "description": "Referencia opaca a IndexedDB (NUNCA el handle real). Vac\u00edo en m\u00f3vil (sin File System Access API)."
+    },
+    "catalog_filename": {
+      "type": "string",
+      "description": "Nombre del cat\u00e1logo .lrcat asociado a ESTA carpeta (informativo)."
+    },
+    "catalog_handle_ref": {
+      "type": "string",
+      "description": "Referencia opaca a IndexedDB del cat\u00e1logo de ESTA carpeta."
+    },
+    "photo_count": {
+      "type": "number",
+      "default": 0,
+      "description": "N\u00famero de fotograf\u00edas en esta carpeta."
+    },
+    "import_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "processing",
+        "completed",
+        "failed"
+      ],
+      "default": "pending",
+      "description": "Estado de importaci\u00f3n de esta carpeta (independiente del resto)."
+    },
+    "selection_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed"
+      ],
+      "default": "pending",
+      "description": "Estado de selecci\u00f3n de esta carpeta (independiente del resto)."
+    },
+    "edit_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed"
+      ],
+      "default": "pending",
+      "description": "Estado de edici\u00f3n de esta carpeta (independiente del resto)."
+    },
+    "last_modified": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Fecha de \u00faltima modificaci\u00f3n de la carpeta."
+    }
+  },
+  "required": [
+    "project_id",
+    "name"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}

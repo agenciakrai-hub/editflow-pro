@@ -60,3 +60,62 @@ export async function bulkUpdateFingerprints(rows) {
 export async function deleteFingerprintsByProject(projectId) {
   return base44.entities.ProjectPhotoFingerprint.deleteMany({ project_id: projectId });
 }
+
+// ---- Carpetas / sesiones del proyecto (ProjectFolder) ----
+// Cada carpeta es una unidad de trabajo independiente dentro del proyecto: tiene sus
+// propias fotos (fingerprints con folder_id), su propia selección y su propia edición.
+export async function listFolders(projectId) {
+  return base44.entities.ProjectFolder.filter({ project_id: projectId }, "order_index", 200);
+}
+
+export async function createFolder(data) {
+  return base44.entities.ProjectFolder.create(data);
+}
+
+export async function updateFolder(id, data) {
+  return base44.entities.ProjectFolder.update(id, data);
+}
+
+export async function deleteFolder(id) {
+  return base44.entities.ProjectFolder.delete(id);
+}
+
+// Fingerprints de UNA carpeta concreta (la unidad de trabajo independiente).
+export async function listFingerprintsByFolder(folderId) {
+  return base44.entities.ProjectPhotoFingerprint.filter({ folder_id: folderId });
+}
+
+// Borra solo los fingerprints de UNA carpeta (no toca las demás carpetas del proyecto).
+export async function deleteFingerprintsByFolder(folderId) {
+  return base44.entities.ProjectPhotoFingerprint.deleteMany({ folder_id: folderId });
+}
+
+// Migración automática de proyectos existentes (una sola carpeta RAW → una ProjectFolder).
+// Idempotente: si el proyecto ya tiene carpetas, no hace nada. Si no tiene carpetas pero
+// tiene fingerprints, crea una carpeta por defecto y asigna todos los fingerprints a ella.
+// Devuelve la lista de carpetas del proyecto (vacía si es un proyecto nuevo sin fotos).
+export async function ensureFoldersMigrated(projectId) {
+  const folders = await listFolders(projectId);
+  if (folders.length > 0) return folders;
+  const fps = await listFingerprints(projectId);
+  if (fps.length === 0) return [];
+  // Proyecto existente sin carpetas: migra desde el CatalogBinding legado.
+  const binding = await getCatalogBinding(projectId);
+  const defaultFolder = await createFolder({
+    project_id: projectId,
+    name: "01 - Carpeta actual",
+    order_index: 0,
+    raw_folder_name: binding?.raw_folder_name || "",
+    raw_folder_handle_ref: binding?.raw_folder_handle_ref || "",
+    catalog_filename: binding?.catalog_filename || "",
+    catalog_handle_ref: binding?.catalog_handle_ref || "",
+    photo_count: fps.length,
+    import_status: "completed",
+    selection_status: fps.some((f) => f.selection_status === "TOP_PICK" || f.selection_status === "SELECT") ? "completed" : "pending",
+    edit_status: "pending",
+    last_modified: new Date().toISOString(),
+  });
+  // Asigna todos los fingerprints existentes a la carpeta por defecto.
+  await bulkUpdateFingerprints(fps.map((f) => ({ id: f.id, folder_id: defaultFolder.id })));
+  return [defaultFolder];
+}

@@ -5,6 +5,10 @@
     "project_id": {
       "type": "string"
     },
+    "folder_id": {
+      "type": "string",
+      "description": "Referencia al ProjectFolder al que pertenece esta foto. Vac\u00edo = carpeta por defecto (migraci\u00f3n de proyectos existentes sin carpetas)."
+    },
     "fingerprint_hash": {
       "type": "string",
       "description": "pHash hexadecimal (identidad visual principal)."

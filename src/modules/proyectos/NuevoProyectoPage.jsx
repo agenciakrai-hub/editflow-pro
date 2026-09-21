@@ -6,7 +6,7 @@ import { base44 } from "@/api/base44Client";
 import { selectBursts } from "@/lib/ai/aiGateway";
 import { statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { saveHandle, getHandleRecord } from "./lib/idbHandles";
-import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, getCatalogBinding, listFingerprints, updateProject, updateCatalogBinding, deleteFingerprintsByProject } from "./hooks/useProjectStore";
+import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, getCatalogBinding, listFingerprints, listFingerprintsByFolder, deleteFingerprintsByProject, deleteFingerprintsByFolder, ensureFoldersMigrated, updateFolder, updateProject, updateCatalogBinding } from "./hooks/useProjectStore";
 import { startProcessing, getJob, subscribe } from "./lib/backgroundProcessor";
 import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
 import { useToast } from "@/components/ui/use-toast";
@@ -60,7 +60,9 @@ export default function NuevoProyectoPage() {
   // Reabrir un proyecto existente: «Abrir» (Mis proyectos) llega con ?project=<id> y
   // carga en ESTA MISMA página los datos guardados — nombre, fecha, catálogo/carpeta
   // y las fotos con sus estados — para continuar exactamente donde se dejó.
-  const projectIdParam = new URLSearchParams(window.location.search).get("project");
+  const urlParams = new URLSearchParams(window.location.search);
+  const projectIdParam = urlParams.get("project");
+  const folderIdParam = urlParams.get("folder");
   const [existing, setExisting] = useState(null);
   const [restoredHandles, setRestoredHandles] = useState({ folder: null, catalog: null });
   // Móvil: fallback cuando showDirectoryPicker/showOpenFilePicker no existen.
@@ -99,63 +101,71 @@ export default function NuevoProyectoPage() {
 
   useEffect(() => {
     if (!projectIdParam) return;
-    // Si hay un job activo (procesando en segundo plano), se suscribe a él en vez
-    // de cargar desde la base de datos: el usuario ve el progreso en tiempo real
-    // aunque haya navegado fuera y vuelto.
-    const activeJob = getJob(projectIdParam);
-    if (activeJob) {
-      setExtracting(activeJob.status === "processing");
-      setPhase(activeJob.phase);
-      setProgress(activeJob.progress);
-      if (activeJob.status === "completed" && activeJob.items?.length) {
-        const loaded = activeJob.items.map((p) => ({
-          id: p.id, file: p.file, status: p.status || "REVIEW", rating: p.rating || 0,
-          aiReview: false, fingerprint: p.fingerprint, preview: p.preview,
-        }));
-        setItems(loaded);
-        setSelectedIds(new Set(loaded.map((p) => p.id)));
-      }
-      const unsub = subscribe(projectIdParam, (job) => {
-        setExtracting(job.status === "processing");
-        setPhase(job.phase);
-        setProgress(job.progress);
-        if (job.status === "completed" && job.items?.length) {
-          const loaded = job.items.map((p) => ({
-            id: p.id, file: p.file, status: p.status || "REVIEW", rating: p.rating || 0,
-            aiReview: false, fingerprint: p.fingerprint, preview: p.preview,
-          }));
-          setItems(loaded);
-          setSelectedIds(new Set(loaded.map((p) => p.id)));
-          reset();
-        }
-      });
-      return unsub;
-    }
+    // Carpeta/sesión activa: si no se especificó folderId, redirige a la página de
+    // carpetas del proyecto. Migra proyectos existentes sin carpetas (idempotente).
     let alive = true;
+    let unsub = null;
     (async () => {
       try {
-        const [p, b, fps] = await Promise.all([getProject(projectIdParam), getCatalogBinding(projectIdParam), listFingerprints(projectIdParam)]);
+        const folders = await ensureFoldersMigrated(projectIdParam);
+        if (!alive) return;
+        if (!folderIdParam) { navigate(`/proyectos/${projectIdParam}`, { replace: true }); return; }
+        const folder = folders.find((f) => f.id === folderIdParam);
+        if (!folder) { navigate(`/proyectos/${projectIdParam}`, { replace: true }); return; }
+        // Si hay un job activo de ESTA carpeta, se suscribe a él.
+        const activeJob = getJob(projectIdParam, folder.id);
+        if (activeJob) {
+          setExtracting(activeJob.status === "processing");
+          setPhase(activeJob.phase);
+          setProgress(activeJob.progress);
+          if (activeJob.status === "completed" && activeJob.items?.length) {
+            const loaded = activeJob.items.map((p) => ({
+              id: p.id, file: p.file, status: p.status || "REVIEW", rating: p.rating || 0,
+              aiReview: false, fingerprint: p.fingerprint, preview: p.preview,
+            }));
+            setItems(loaded);
+            setSelectedIds(new Set(loaded.map((p) => p.id)));
+          }
+          unsub = subscribe(projectIdParam, folder.id, (job) => {
+            if (!alive) return;
+            setExtracting(job.status === "processing");
+            setPhase(job.phase);
+            setProgress(job.progress);
+            if (job.status === "completed" && job.items?.length) {
+              const loaded = job.items.map((p) => ({
+                id: p.id, file: p.file, status: p.status || "REVIEW", rating: p.rating || 0,
+                aiReview: false, fingerprint: p.fingerprint, preview: p.preview,
+              }));
+              setItems(loaded);
+              setSelectedIds(new Set(loaded.map((p) => p.id)));
+              reset();
+            }
+          });
+          return;
+        }
+        const [p, fps] = await Promise.all([getProject(projectIdParam), listFingerprintsByFolder(folder.id)]);
         if (!alive) return;
         setTitle(p?.title || "");
         setEventDate(p?.event_date || "");
         setExisting({
           projectId: projectIdParam,
-          bindingId: b?.id || null,
-          folderRef: b?.raw_folder_handle_ref || "",
-          catalogRef: b?.catalog_handle_ref || "",
-          folderName: b?.raw_folder_name || "",
-          catalogName: b?.catalog_filename || "",
+          folderId: folder.id,
+          bindingId: null,
+          folderRef: folder.raw_folder_handle_ref || "",
+          catalogRef: folder.catalog_handle_ref || "",
+          folderName: folder.raw_folder_name || folder.name || "",
+          catalogName: folder.catalog_filename || "",
         });
         // Restaura los handles locales (mismo navegador) para seguir trabajando sin
         // volver a elegir carpeta/catálogo.
         try {
           const restores = { folder: null, catalog: null };
-          if (b?.catalog_handle_ref) {
-            const rec = await getHandleRecord(b.catalog_handle_ref);
+          if (folder.catalog_handle_ref) {
+            const rec = await getHandleRecord(folder.catalog_handle_ref);
             if (rec?.handle) { setCatalogHandle(rec.handle); restores.catalog = rec.handle; }
           }
-          if (b?.raw_folder_handle_ref) {
-            const rec = await getHandleRecord(b.raw_folder_handle_ref);
+          if (folder.raw_folder_handle_ref) {
+            const rec = await getHandleRecord(folder.raw_folder_handle_ref);
             if (rec?.handle) { setFolderHandle(rec.handle); restores.folder = rec.handle; }
           }
           setRestoredHandles(restores);
@@ -169,25 +179,21 @@ export default function NuevoProyectoPage() {
             id: f.id,
             file: { name: f.filename },
             status: f.selection_status || "REVIEW",
-            rating: f.rating || 0, // estrellas guardadas (apagadas si no se tocó)
-            aiReview: f.color_label === "yellow", // restaura el amarillo de la IA
+            rating: f.rating || 0,
+            aiReview: f.color_label === "yellow",
             fingerprint: f,
-            // Restaura AMBAS resoluciones: lo (800px, galería) y hi (2400px, visor).
             preview: cached ? { dataUrl: cached.dataUrl, hiResDataUrl: cached.hiResDataUrl } : null,
           };
         });
         if (!alive) return;
         setItems(loaded);
-        // La marca (checkbox) se guarda por foto: el proyecto se reabre EXACTAMENTE
-        // como se dejó (fotos desmarcadas incluidas). Registros antiguos sin el
-        // campo marcado → todas marcadas (comportamiento original).
         setSelectedIds(new Set(loaded.filter((it) => it.fingerprint.marked !== false).map((it) => it.id)));
       } catch (e) {
         toast({ title: "No se pudo abrir el proyecto", description: e?.message, variant: "destructive" });
       }
     })();
-    return () => { alive = false; };
-  }, [projectIdParam]);
+    return () => { alive = false; if (unsub) unsub(); };
+  }, [projectIdParam, folderIdParam]);
 
   // Detecta una selección IA en curso al reabrir el proyecto (el usuario pudo
   // navegar fuera y volver). Sondea el job de AlbumAISelection hasta que termina
@@ -293,6 +299,7 @@ export default function NuevoProyectoPage() {
       folderHandle: handle,
       files,
       folderName: name || handle?.name || folderName,
+      folderId: existing?.folderId || folderIdParam || null,
       catalogHandle,
       projectId: projectIdParam || existing?.projectId || null,
       existing,
@@ -309,6 +316,7 @@ export default function NuevoProyectoPage() {
             catalogRef: job.catalogRef || "",
             folderName: handle?.name || name || "Carpeta",
             catalogName: catalogHandle?.name || catalogFile?.name || "",
+            folderId: job.folderId || existing?.folderId || folderIdParam || null,
           });
           try {
             const url = new URL(window.location.href);
@@ -539,7 +547,7 @@ export default function NuevoProyectoPage() {
           });
           setExisting((prev) => ({ ...prev, bindingId: binding?.id || null }));
         }
-        await deleteFingerprintsByProject(existing.projectId);
+        await deleteFingerprintsByFolder(existing.folderId);
       } else {
         const binding = await createCatalogBinding({
           project_id: savedId,
@@ -560,6 +568,7 @@ export default function NuevoProyectoPage() {
           catalogRef: catalogRef || "",
           folderName: folderHandle?.name || folderName || "",
           catalogName: catalogHandle?.name || catalogFile?.name || "",
+          folderId: existing?.folderId || folderIdParam || null,
         });
         try {
           const url = new URL(window.location.href);
@@ -571,6 +580,7 @@ export default function NuevoProyectoPage() {
       await bulkCreateFingerprints(
         items.map((it) => ({
           project_id: savedId,
+          folder_id: existing?.folderId || folderIdParam || "",
           fingerprint_hash: it.fingerprint.fingerprint_hash,
           filename: it.fingerprint.filename,
           relative_path: it.fingerprint.relative_path,
@@ -588,6 +598,15 @@ export default function NuevoProyectoPage() {
           ...(it.aiReview || it.rating === 3 ? { rating: 3, color_label: "yellow" } : {}),
         }))
       );
+
+      // Actualiza el estado de la carpeta: selección completada si hay fotos seleccionadas.
+      if (existing?.folderId) {
+        await updateFolder(existing.folderId, {
+          selection_status: selCount > 0 ? "completed" : "pending",
+          photo_count: items.length,
+          last_modified: new Date().toISOString(),
+        }).catch(() => {});
+      }
 
       // Pasa las previews ya extraídas al detalle para no volver a procesarlas al abrir.
       setPendingProjectPreviews(
@@ -801,12 +820,15 @@ export default function NuevoProyectoPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{existing ? "Editar proyecto" : "Nuevo proyecto"}</h1>
+        <div>
+          <h1 className="text-2xl font-semibold">{existing ? title : "Nuevo proyecto"}</h1>
+          {existing && <p className="text-sm text-muted-foreground">{existing.folderName || folderName}</p>}
+        </div>
         <button
-          onClick={() => navigate("/proyectos")}
+          onClick={() => navigate(existing ? `/proyectos/${existing.projectId}` : "/proyectos")}
           className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary"
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Mis proyectos
+          <ArrowLeft className="h-3.5 w-3.5" /> {existing ? "Proyecto" : "Mis proyectos"}
         </button>
       </div>
 

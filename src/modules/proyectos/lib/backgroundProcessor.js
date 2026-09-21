@@ -26,7 +26,8 @@ import { base44 } from "@/api/base44Client";
 // Jobs activos en memoria: projectId -> job
 const activeJobs = new Map();
 
-export function getJob(projectId) {
+export function getJob(projectId, folderId) {
+  if (folderId) return activeJobs.get(`${projectId}:${folderId}`) || null;
   return activeJobs.get(projectId) || null;
 }
 
@@ -36,8 +37,8 @@ export function getActiveJobIds() {
 
 // Suscribe un callback a las actualizaciones de un job. Devuelve la función de
 // des-suscripción. Si el job no existe, devuelve un no-op.
-export function subscribe(projectId, callback) {
-  const job = activeJobs.get(projectId);
+export function subscribe(projectId, folderId, callback) {
+  const job = getJob(projectId, folderId);
   if (!job) return () => {};
   job.subscribers.add(callback);
   // Envía el estado actual inmediatamente.
@@ -48,6 +49,7 @@ export function subscribe(projectId, callback) {
 function snapshotJob(job) {
   return {
     projectId: job.projectId,
+    folderId: job.folderId,
     status: job.status,
     progress: job.progress,
     phase: job.phase,
@@ -67,17 +69,18 @@ function notify(job) {
 // Inicia el procesado de una carpeta RAW. Devuelve el job inmediatamente (sin await).
 // El procesado corre en segundo plano; los callbacks notifican progreso, completado
 // y error. Si ya hay un job para el proyecto, solo añade el callback.
-export function startProcessing({ folderHandle, files, folderName, catalogHandle, projectId, existing, onProgress, onComplete, onError }) {
+export function startProcessing({ folderHandle, files, folderName, folderId, catalogHandle, projectId, existing, onProgress, onComplete, onError }) {
   let pid = projectId || existing?.projectId || null;
 
-  if (pid && activeJobs.has(pid)) {
-    const existing_job = activeJobs.get(pid);
+  if (pid && folderId && activeJobs.has(`${pid}:${folderId}`)) {
+    const existing_job = activeJobs.get(`${pid}:${folderId}`);
     if (onProgress) existing_job.subscribers.add(onProgress);
     return existing_job;
   }
 
   const job = {
     projectId: pid,
+    folderId: folderId || null,
     status: "processing",
     progress: { done: 0, total: 0 },
     phase: "extracting",
@@ -91,36 +94,65 @@ export function startProcessing({ folderHandle, files, folderName, catalogHandle
   if (onProgress) job.subscribers.add(onProgress);
 
   // Fire-and-forget: el bucle corre independientemente del componente.
-  runProcessing(folderHandle, files, folderName, catalogHandle, pid, existing, job, onComplete, onError);
+  runProcessing(folderHandle, files, folderName, folderId, catalogHandle, pid, existing, job, onComplete, onError);
 
   return job;
 }
 
-async function runProcessing(folderHandle, files, folderName, catalogHandle, pid, existing, job, onComplete, onError) {
+async function runProcessing(folderHandle, files, folderName, folderId, catalogHandle, pid, existing, job, onComplete, onError) {
+  const jobKey = pid && folderId ? `${pid}:${folderId}` : pid;
+  if (jobKey) activeJobs.set(jobKey, job);
   try {
     // 1. Crea el proyecto si no existe.
     if (!pid) {
       const p = await createProject({ title: folderName || folderHandle?.name || "Nuevo proyecto", status: "draft", photo_count: 0 });
       pid = p.id;
       job.projectId = pid;
-      activeJobs.set(pid, job);
+      if (folderId) activeJobs.set(`${pid}:${folderId}`, job); else activeJobs.set(pid, job);
       notify(job);
-    } else {
-      activeJobs.set(pid, job);
     }
 
-    // 2. Guarda el handle de la carpeta y crea el binding del catálogo.
-    const folderRef = folderHandle ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }).catch(() => "") : "";
-    const catalogRef = catalogHandle
-      ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }).catch(() => "")
-      : null;
-    job.folderRef = folderRef;
-    job.catalogRef = catalogRef;
+    // 2. Crea o actualiza el ProjectFolder (carpeta/sesión independiente).
+    //    Si folderId viene dado (añadir carpeta a proyecto existente), actualiza ese
+    //    registro. Si no (crear proyecto nuevo), crea la carpeta aquí.
+    if (!folderId) {
+      const existingFolders = await base44.entities.ProjectFolder.filter({ project_id: pid }, "order_index", 200).catch(() => []);
+      const folder = await base44.entities.ProjectFolder.create({
+        project_id: pid,
+        name: folderName || folderHandle?.name || "Carpeta",
+        order_index: existingFolders.length,
+        raw_folder_name: folderName || folderHandle?.name || "",
+        raw_folder_handle_ref: folderHandle ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }).catch(() => "") : "",
+        catalog_filename: catalogHandle?.name || "",
+        catalog_handle_ref: catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }).catch(() => "") : "",
+        photo_count: 0,
+        import_status: "processing",
+        selection_status: "pending",
+        edit_status: "pending",
+        last_modified: new Date().toISOString(),
+      });
+      folderId = folder.id;
+      job.folderId = folderId;
+      job.folderRef = folder.raw_folder_handle_ref;
+      job.catalogRef = folder.catalog_handle_ref;
+    } else {
+      job.folderRef = folderHandle ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }).catch(() => "") : "";
+      job.catalogRef = catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }).catch(() => "") : "";
+      await base44.entities.ProjectFolder.update(folderId, {
+        import_status: "processing",
+        raw_folder_name: folderName || folderHandle?.name || "",
+        raw_folder_handle_ref: job.folderRef,
+        catalog_filename: catalogHandle?.name || "",
+        catalog_handle_ref: job.catalogRef,
+        last_modified: new Date().toISOString(),
+      }).catch(() => {});
+    }
+    // Catálogo binding legado (retrocompatibilidad con DetalleProyectoPage).
     try {
       const binding = await createCatalogBinding({
         project_id: pid,
-        catalog_handle_ref: catalogRef || "",
-        raw_folder_handle_ref: folderRef || "",
+        catalog_handle_ref: job.catalogRef || "",
+        raw_folder_handle_ref: job.folderRef || "",
         catalog_filename: catalogHandle?.name || "",
         raw_folder_name: folderName || folderHandle?.name || "Carpeta",
       });
@@ -254,6 +286,7 @@ async function runProcessing(folderHandle, files, folderName, catalogHandle, pid
       await bulkCreateFingerprints(
         withFingerprint.map((p) => ({
           project_id: pid,
+          folder_id: folderId || "",
           fingerprint_hash: p.fingerprint.fingerprint_hash,
           filename: p.fingerprint.filename,
           relative_path: p.fingerprint.relative_path,
@@ -268,22 +301,42 @@ async function runProcessing(folderHandle, files, folderName, catalogHandle, pid
         }))
       );
       await updateProject(pid, { photo_count: withFingerprint.length }).catch(() => {});
+      // Actualiza el ProjectFolder con el recuento final y estado de importación.
+      if (folderId) {
+        await base44.entities.ProjectFolder.update(folderId, {
+          photo_count: withFingerprint.length,
+          import_status: "completed",
+          last_modified: new Date().toISOString(),
+        }).catch(() => {});
+      }
     } catch {}
 
+    if (folderId) {
+      await base44.entities.ProjectFolder.update(folderId, {
+        import_status: "failed",
+        last_modified: new Date().toISOString(),
+      }).catch(() => {});
+    }
     if (onComplete) try { onComplete(snapshotJob(job)); } catch {}
 
     // Limpia el job después de 2 minutos (tiempo suficiente para que el componente
     // lo lea al volver, pero sin retenerlo indefinidamente).
     setTimeout(() => {
-      activeJobs.delete(pid);
+      activeJobs.delete(jobKey || pid);
     }, 120000);
   } catch (e) {
     job.status = "failed";
     job.error = e?.message || String(e);
     notify(job);
+    if (folderId) {
+      await base44.entities.ProjectFolder.update(folderId, {
+        import_status: "failed",
+        last_modified: new Date().toISOString(),
+      }).catch(() => {});
+    }
     if (onError) try { onError(e); } catch {}
     setTimeout(() => {
-      activeJobs.delete(pid);
+      activeJobs.delete(jobKey || pid);
     }, 120000);
   }
 }

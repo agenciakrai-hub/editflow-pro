@@ -21,7 +21,7 @@ import LightroomPage from '@/modules/lightroom/LightroomPage';
 import Hub from '@/pages/Hub';
 import MisProyectos from '@/pages/MisProyectos';
 import NuevoProyectoPage from '@/modules/proyectos/NuevoProyectoPage';
-import DetalleProyectoPage from '@/modules/proyectos/DetalleProyectoPage';
+import ProjectFoldersPage from '@/modules/proyectos/pages/ProjectFoldersPage';
 import AjustesIA from '@/pages/AjustesIA';
 import PresetXMP from '@/pages/PresetXMP';
 import AIProviders from '@/pages/AIProviders';
@@ -67,7 +67,7 @@ const AuthenticatedApp = () => {
           <Route path="/herramientas" element={<Hub />} />
           <Route path="/proyectos" element={<MisProyectos />} />
           <Route path="/proyectos/nuevo" element={<NuevoProyectoPage />} />
-          <Route path="/proyectos/:id" element={<DetalleProyectoPage />} />
+          <Route path="/proyectos/:id" element={<ProjectFoldersPage />} />
           <Route path="/ajustes-ia" element={<AjustesIA />} />
           <Route path="/preset-xmp" element={<PresetXMP />} />
           <Route path="/proveedores-ia" element={<AIProviders />} />
