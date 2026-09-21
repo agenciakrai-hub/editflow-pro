@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen, ArrowDownUp, Undo2, Redo2, Star } from "lucide-react";
-import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
+import { CheckSquare, Square, Trash2, Save, Sparkles, Wand2, Loader2, BookOpen, ArrowDownUp, Undo2, Redo2 } from "lucide-react";
 import PreviewLightbox from "./PreviewLightbox";
+import LazyPhotoCard from "./LazyPhotoCard";
 
 // Espacio de trabajo a pantalla completa para las fotos subidas al proyecto.
 // Reemplaza al PhotoFingerprintGrid + botón Guardar sueltos. Incluye:
@@ -215,70 +215,21 @@ export default function ProjectPhotoWorkspace({
           className="mt-3 grid gap-2"
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
         >
-          {displayed.map((item, i) => {
-            const checked = selectedIds.has(item.id);
-            // Amarillo = revisión (la IA la envió a revisar O tiene 3 estrellas);
-            // verde = validada (5 estrellas) o marcada; sin borde = sin marcar.
-            const review = !!item.aiReview || item.rating === 3;
-            const green = item.rating === 5 || checked;
-            return (
-              <div key={item.id} className={`relative overflow-hidden rounded-lg border bg-card ${review ? "border-yellow-400 ring-1 ring-yellow-400" : green ? "border-green-500 ring-1 ring-green-500" : "border-border"}`}>
-                <div className="absolute left-1.5 top-1.5 z-10">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); resetRange(); onToggleSelect(item.id); }}
-                    className={`flex h-5 w-5 items-center justify-center rounded border ${checked ? (review ? "border-yellow-400 bg-yellow-400 text-black" : "border-green-500 bg-green-500 text-white") : "border-white/70 bg-black/40 text-transparent hover:bg-black/60"}`}
-                  >
-                    {checked ? <span className="text-[11px] font-bold leading-none">✓</span> : null}
-                  </button>
-                </div>
-                {item.previewUrl ? (
-                  <div
-                    className="aspect-square w-full cursor-pointer bg-black/5"
-                    title="Un clic cicla: verde (5★) → amarillo (3★) → sin color · Cmd/Ctrl+clic selecciona o deselecciona un rango (dos clics) · doble clic abre la vista previa"
-                    onClick={(e) => handlePhotoClick(e, item, i)}
-                    onDoubleClick={() => handlePhotoDoubleClick(i)}
-                  >
-                    <img src={item.previewUrl} alt={item.filename} className="h-full w-full object-contain" />
-                  </div>
-                ) : (
-                  <div className="aspect-square w-full bg-muted" />
-                )}
-                <div className="space-y-1 p-1.5">
-                  <p className="truncate text-[10px] font-mono text-muted-foreground">{item.filename}</p>
-                  {/* 5 estrellas por foto, APAGADAS por defecto: pulsar la n-ésima la
-                      enciende; pulsar la misma otra vez la apaga. Se guarda con el
-                      proyecto y viaja al XMP (xmp:Rating). La selección (verde) no
-                      toca las estrellas: solo añade xmp:Label="Green". */}
-                  <div className="flex items-center justify-center gap-0.5">
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <button
-                        key={n}
-                        type="button"
-                        onClick={() => onSetRating(item.id, item.rating === n ? 0 : n)}
-                        title={item.rating === n ? `Quitar ${n} estrellas` : `${n} estrellas`}
-                        className="p-0.5"
-                      >
-                        <Star
-                          className={
-                            "h-3 w-3 " +
-                            (item.rating >= n ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40")
-                          }
-                        />
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onCycleStatus(item.id)}
-                    className={`w-full rounded-md border px-1.5 py-1 text-[10px] font-medium ${STATUS_COLOR[item.status] || ""}`}
-                  >
-                    {STATUS_LABEL[item.status] || item.status}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
+          {displayed.map((item, i) => (
+            <LazyPhotoCard
+              key={item.id}
+              item={item}
+              index={i}
+              checked={selectedIds.has(item.id)}
+              onToggleSelect={onToggleSelect}
+              onCycleClickState={onCycleClickState}
+              onCycleStatus={onCycleStatus}
+              onSetRating={onSetRating}
+              onPhotoClick={handlePhotoClick}
+              onPhotoDoubleClick={handlePhotoDoubleClick}
+              onRangeReset={resetRange}
+            />
+          ))}
         </div>
       </div>
 
