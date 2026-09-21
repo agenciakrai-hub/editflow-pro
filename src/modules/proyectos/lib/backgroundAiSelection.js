@@ -11,6 +11,7 @@
 
 import { selectBursts } from "@/lib/ai/aiGateway";
 import { statusMeta } from "./projectFingerprint";
+import { getCachedPreviews } from "./previewCache";
 import {
   listFingerprintsByFolder,
   bulkUpdateFingerprints,
@@ -125,41 +126,83 @@ async function runSelection(job, marked, onComplete, onError) {
   }).catch(() => {});
 
   try {
-    const aiItems = marked.map((it) => {
-      const dataUrl = it.preview?.dataUrl;
-      const preview = it.preview?.base64
-        ? it.preview
-        : dataUrl
-          ? { dataUrl, base64: dataUrl.split(",")[1] || "", isPlaceholder: false }
-          : null;
-      return {
-        id: it.id,
-        file: it.file,
-        preview,
-        phash: it.phash || (it.fingerprint?.fingerprint_hash ? BigInt("0x" + it.fingerprint.fingerprint_hash) : null),
-        captureTime: it.captureTime ?? it.fingerprint?.capture_time ?? null,
-        cameraInfo: it.cameraInfo || { make: it.fingerprint?.camera_make, model: it.fingerprint?.camera_model },
-        technical: it.technical || { sharpness: 0, exposureScore: 0.5, corrupt: false },
-      };
+    // PROCESO POR LOTES (chunks): con carpetas de 4000-20000 fotos, cargar todas
+    // las previews base64 en memoria a la vez agota el navegador (Error 5). Se
+    // ordenan las fotos por hora de captura (para no partir escenas/ráfagas entre
+    // chunks) y se procesan en lotes de CHUNK_SIZE, cargando solo las previews de
+    // cada lote desde IndexedDB. La memoria se mantiene acotada (~200 previews).
+    const CHUNK_SIZE = 200;
+    const sorted = [...marked].sort((a, b) => {
+      const at = a.captureTime ?? a.fingerprint?.capture_time ?? 0;
+      const bt = b.captureTime ?? b.fingerprint?.capture_time ?? 0;
+      return (at || 0) - (bt || 0);
     });
+    const chunks = [];
+    for (let i = 0; i < sorted.length; i += CHUNK_SIZE) {
+      chunks.push(sorted.slice(i, i + CHUNK_SIZE));
+    }
 
-    const { keep, meta, trace } = await selectBursts(aiItems, (d, t) => {
+    const allKeep = new Set();
+    const allMeta = new Map();
+    let lastTrace = null;
+    let photosDone = 0;
+
+    for (let ci = 0; ci < chunks.length; ci++) {
       if (job.canceled) return;
-      job.done = d;
-      if (typeof t === "number") job.total = t;
-      notify(job);
-    });
+      const chunk = chunks[ci];
+      // Carga previews SOLO para este chunk desde IndexedDB.
+      const chunkHashes = chunk.map((it) => it.fingerprint?.fingerprint_hash).filter(Boolean);
+      let previewByHash = new Map();
+      if (chunkHashes.length) {
+        try { previewByHash = await getCachedPreviews(chunkHashes); } catch {}
+      }
+      const aiItems = chunk.map((it) => {
+        const pv = previewByHash.get(it.fingerprint?.fingerprint_hash);
+        const dataUrl = pv?.dataUrl;
+        const preview = pv?.base64
+          ? pv
+          : dataUrl
+            ? { dataUrl, base64: dataUrl.split(",")[1] || "", isPlaceholder: false }
+            : null;
+        return {
+          id: it.id,
+          file: it.file,
+          preview,
+          phash: it.phash || (it.fingerprint?.fingerprint_hash ? BigInt("0x" + it.fingerprint.fingerprint_hash) : null),
+          captureTime: it.captureTime ?? it.fingerprint?.capture_time ?? null,
+          cameraInfo: it.cameraInfo || { make: it.fingerprint?.camera_make, model: it.fingerprint?.camera_model },
+          technical: it.technical || { sharpness: 0, exposureScore: 0.5, corrupt: false },
+        };
+      });
 
-    if (job.canceled) return;
+      const photosBefore = photosDone;
+      const { keep, meta, trace } = await selectBursts(aiItems, (d, t) => {
+        if (job.canceled) return;
+        if (typeof t === "number" && t > 0) {
+          job.done = Math.min(marked.length, photosBefore + Math.round((d / t) * chunk.length));
+        }
+        notify(job);
+      });
+      if (job.canceled) return;
+
+      for (const id of keep) allKeep.add(id);
+      for (const [id, m] of meta) allMeta.set(id, m);
+      if (trace) lastTrace = trace;
+      photosDone += chunk.length;
+      job.done = Math.min(marked.length, photosDone);
+      notify(job);
+      // Libera las previews de este chunk (permite GC).
+      previewByHash = null;
+    }
 
     // Construye el mapa de resultados: photoId -> { status, rating, aiReview }
     // y fingerprint_hash -> resultado (para auto-guardar en la BD).
     const resultsById = new Map();
     const resultsByHash = new Map();
     for (const it of marked) {
-      const m = meta.get(it.id);
+      const m = allMeta.get(it.id);
       if (!m) continue;
-      const status = m.status || (keep.has(it.id) ? "SELECT" : "REVIEW");
+      const status = m.status || (allKeep.has(it.id) ? "SELECT" : "REVIEW");
       const aiSelected = status === "SELECT" || status === "TOP_PICK";
       const review = !aiSelected && status !== "REJECT";
       const rating = aiSelected ? 5 : review ? 3 : 0;
@@ -178,7 +221,7 @@ async function runSelection(job, marked, onComplete, onError) {
         await base44.entities.AlbumAISelection.update(selJobId, {
           status: "completed",
           stage: "done",
-          stats: { photo_count: marked.length, provider_used: trace?.provider || null },
+          stats: { photo_count: marked.length, provider_used: lastTrace?.provider || null },
         });
       } catch {}
     }
@@ -210,8 +253,8 @@ async function runSelection(job, marked, onComplete, onError) {
     } catch {}
 
     // Guarda la traza de la ejecución en el proyecto.
-    if (trace && job.projectId) {
-      updateProject(job.projectId, { ai_config_snapshot: { selection_trace: trace } }).catch(() => {});
+    if (lastTrace && job.projectId) {
+      updateProject(job.projectId, { ai_config_snapshot: { selection_trace: lastTrace } }).catch(() => {});
     }
 
     if (onComplete) try { onComplete(snapshotJob(job)); } catch {}

@@ -13,7 +13,6 @@ import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
 import { useToast } from "@/components/ui/use-toast";
 import useUndoRedo from "@/hooks/useUndoRedo";
 import { setPendingProjectPreviews, setSession } from "@/lib/rawaistudio/localSession";
-import { getCachedPreviews } from "./lib/previewCache";
 
 // Crea un proyecto: nombre + fecha + catálogo .lrcat + carpeta RAW. Lee los RAW igual que
 // el flujo de Selección (extractPreviews, reutilizado sin modificar) y calcula un
@@ -530,28 +529,13 @@ export default function NuevoProyectoPage() {
     setAiRunning(true);
     setAiDone(0);
     setAiTotal(marked.length);
-    // Carga previews bajo demanda SOLO para las fotos marcadas (selección IA).
-    // Con 4000+ fotos en la carpeta, cargar todas las previews agotaría la memoria;
-    // la selección IA solo necesita las previews de las fotos marcadas.
-    let itemsForAi = items;
-    try {
-      const markedHashes = marked.map((it) => it.fingerprint?.fingerprint_hash).filter(Boolean);
-      if (markedHashes.length) {
-        const previewByHash = await getCachedPreviews(markedHashes);
-        itemsForAi = items.map((it) => ({
-          ...it,
-          preview: previewByHash.get(it.fingerprint?.fingerprint_hash) || null,
-        }));
-      }
-    } catch {}
     // La selección corre en SEGUNDO PLANO (backgroundAiSelection): sobrevive a la
-    // navegación. Si el usuario sale de la página, el proceso continúa y auto-guarda
-    // los resultados en la base de datos. Al volver, el componente se suscribe y
-    // muestra el progreso o los resultados ya guardados.
+    // navegación y carga las previews por lotes desde IndexedDB (no todas a la vez,
+    // para no agotar la memoria con carpetas de 4000-20000 fotos).
     startAiSelection({
       projectId: selectionProjectId,
       folderId: selectionFolderId,
-      items: itemsForAi,
+      items,
       selectedIds,
       onProgress: (job) => {
         if (!mountedRef.current) return;
@@ -606,11 +590,14 @@ export default function NuevoProyectoPage() {
       toast({ title: "Sin fotos seleccionadas", description: "Marca al menos una foto para llevarla a Editar.", variant: "destructive" });
       return;
     }
-    // Carga previews bajo demanda SOLO para las fotos seleccionadas (edición).
-    let selected = selectedBase.map((it) => ({
+    // NO se cargan las previews aquí: con 4000+ fotos seleccionadas, cargar todas
+    // las previews agotaría la memoria. Se pasa el fingerprintHash de cada foto y
+    // AjustesIA carga cada preview bajo demanda al procesar esa foto concreta.
+    const selected = selectedBase.map((it) => ({
       id: it.id,
       file: it.file,
       preview: null,
+      fingerprintHash: it.fingerprint?.fingerprint_hash,
       manualRotation: 0,
       rating: it.rating || 0,
       colorLabel: it.aiReview ? "yellow" : "green",
@@ -618,16 +605,6 @@ export default function NuevoProyectoPage() {
       asShotWB: it.asShotWB || null,
       skinStats: it.skinStats || null,
     }));
-    try {
-      const selectedHashes = selectedBase.map((it) => it.fingerprint?.fingerprint_hash).filter(Boolean);
-      if (selectedHashes.length) {
-        const previewByHash = await getCachedPreviews(selectedHashes);
-        selected = selected.map((it, i) => ({
-          ...it,
-          preview: previewByHash.get(selectedBase[i].fingerprint?.fingerprint_hash) || null,
-        }));
-      }
-    } catch {}
     setSession({ photos: selected });
     navigate("/ajustes-ia");
   };

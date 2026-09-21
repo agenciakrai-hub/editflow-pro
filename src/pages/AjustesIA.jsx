@@ -15,6 +15,7 @@ import { styleProfileToXmpTemplate } from "@/lib/style/styleProfileToXmpTemplate
 import { lightroomLabelFor } from "@/lib/rawaistudio/labels";
 import { computeFolderKey, savePartialResults, loadPartialResults, clearPartialResults } from "@/lib/rawaistudio/batchProgress";
 import { getSession } from "@/lib/rawaistudio/localSession";
+import { getCachedPreview } from "@/modules/proyectos/lib/previewCache";
 import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
 import { pickRepresentatives, adaptPhotoWithProfile } from "@/lib/rawaistudio/hybridAdaptEngine";
 import { useToast } from "@/components/ui/use-toast";
@@ -100,6 +101,23 @@ export default function AjustesIA() {
   const outRef = useRef([]);
   const okRef = useRef(0);
   const errorsRef = useRef([]);
+
+  // Carga bajo demanda la preview de una foto desde IndexedDB. Con carpetas de
+  // 4000-20000 fotos, no se pueden cargar todas las previews en la sesión (agota
+  // la memoria). Cada foto lleva su fingerprintHash; la preview se carga solo al
+  // procesar esa foto concreta. Si ya tiene preview (flujo directo sin proyecto),
+  // se devuelve tal cual.
+  const ensurePreview = async (photo) => {
+    if (photo.preview?.base64 || photo.preview?.dataUrl) return photo;
+    if (!photo.fingerprintHash) return photo;
+    try {
+      const pv = await getCachedPreview(photo.fingerprintHash);
+      if (pv?.dataUrl) {
+        return { ...photo, preview: { dataUrl: pv.dataUrl, base64: pv.dataUrl.split(",")[1] || "", isPlaceholder: false } };
+      }
+    } catch {}
+    return photo;
+  };
 
   // Restaura resultados parciales de una sesión anterior (mismos nombres de archivo).
   // Precarga outRef con las fotos que ya tienen XMP y activa el estado "pausado" para
@@ -358,7 +376,8 @@ export default function AjustesIA() {
     // Procesa UNA foto: misma lógica que antes, extraída a función para que el pool
     // la pueda lanzar concurrentemente. Devuelve el resultado o lanza si falla.
     const processOnePhoto = async (photo) => {
-        const base64 = photo.preview?.base64;
+        const p = await ensurePreview(photo);
+        const base64 = p.preview?.base64;
         const stats = base64 ? await analyzePhotometrics(base64) : null;
         let aiValues = {};
         let wb = null;
@@ -380,7 +399,7 @@ export default function AjustesIA() {
           // base64). Se deriva el base64 desde dataUrl para que la imagen llegue al
           // proveedor. No altera ninguna otra lógica.
           const base64ForVisual = base64
-            || (photo.preview?.dataUrl ? photo.preview.dataUrl.split(",")[1] || "" : "");
+            || (p.preview?.dataUrl ? p.preview.dataUrl.split(",")[1] || "" : "");
           const data = await developPhotosVisual({
             photos: [{ id: photo.id, preview_base64: base64ForVisual }],
             preferences,
@@ -504,9 +523,9 @@ export default function AjustesIA() {
     setAwaitingConfirm(false);
     try {
       const reps = pickRepresentatives(photos, 8);
-      // Fallback de imagen: mismo principio que processAll — preview.base64 puede no
-      // existir en fotos reabiertas desde la caché IndexedDB. Se deriva desde dataUrl.
-      const repData = reps
+      // Carga previews bajo demanda para los representantes (máx. 8 fotos).
+      const repsWithPreview = await Promise.all(reps.map(ensurePreview));
+      const repData = repsWithPreview
         .map((p) => ({
           id: p.id,
           preview_base64: p.preview?.base64
@@ -523,8 +542,9 @@ export default function AjustesIA() {
       setProfile(sessionProfile);
       // 5 fotos de muestra (muestreo uniforme) con sus valores finales adaptados localmente.
       const samplePhotos = pickRepresentatives(photos, 5);
+      const samplesWithPreview = await Promise.all(samplePhotos.map(ensurePreview));
       const sampleOut = [];
-      for (const photo of samplePhotos) {
+      for (const photo of samplesWithPreview) {
         const base64 = photo.preview?.base64;
         const photometricStart = performance.now();
         const stats = base64 ? await analyzePhotometrics(base64, photo.preview?.decodedSource) : null;
@@ -557,9 +577,10 @@ export default function AjustesIA() {
     let completed = 0;
     const processed = await runPool(photos, 4, async (photo) => {
       try {
-        const base64 = photo.preview?.base64;
+        const p = await ensurePreview(photo);
+        const base64 = p.preview?.base64;
         const photometricStart = performance.now();
-        const stats = base64 ? await analyzePhotometrics(base64, photo.preview?.decodedSource) : null;
+        const stats = base64 ? await analyzePhotometrics(base64, p.preview?.decodedSource) : null;
         const photometricMs = performance.now() - photometricStart;
         const adaptationStart = performance.now();
         const { values: rawValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
