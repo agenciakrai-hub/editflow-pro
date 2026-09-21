@@ -157,19 +157,22 @@ export default function NuevoProyectoPage() {
     return () => { alive = false; if (unsub) unsub(); };
   }, [projectIdParam, folderIdParam]);
 
-  // Detecta una selección IA en curso al reabrir el proyecto (el usuario pudo
-  // navegar fuera y volver). Sondea el job de AlbumAISelection hasta que termina
-  // y entonces oculta la barra y avisa al usuario.
+  // Detecta una selección IA interrumpida al reabrir el proyecto (el usuario cerró
+  // la pestaña o navegó fuera a mitad de proceso). En lugar de mostrar un error de
+  // "cancelado", REANUDA automáticamente la selección desde el último lote
+  // completado. Los resultados de cada lote se guardan en los fingerprints según se
+  // procesan, así que al reanudar solo se procesan las fotos que faltan.
+  const autoResumeFiredRef = useRef(false);
   useEffect(() => {
     if (!projectIdParam || !folderIdParam) return;
-    // Si hay un job de selección IA en segundo plano (en memoria), la suscripción lo
-    // maneja — no se necesita sondeo de la base de datos. El sondeo solo es para jobs
-    // que se quedaron "running" en la BD sin proceso en memoria (pestaña cerrada).
+    if (autoResumeFiredRef.current) return;
+    if (!items.length) return; // Espera a que las fotos estén cargadas.
+    if (modeParam) return; // Si hay una acción explícita (seleccion/edicion), no reanudar.
+    // Si hay un job en memoria, la suscripción lo maneja.
     if (getAiJob(projectIdParam, folderIdParam)) return;
+    autoResumeFiredRef.current = true;
     let alive = true;
-    let pollTimer = null;
-
-    const checkAndPoll = async () => {
+    (async () => {
       try {
         const jobs = await base44.entities.AlbumAISelection.filter(
           { project_id: projectIdParam, folder_id: folderIdParam, status: "running" },
@@ -177,53 +180,54 @@ export default function NuevoProyectoPage() {
           1
         );
         if (!alive || !jobs?.length) return;
-        const job = jobs[0];
-        // Fiabilidad: si el job lleva "running" más de 30 min sin actualizarse, es un
-        // job stale (el usuario navegó fuera a mitad de proceso y el trabajo se
-        // abandonó). Se cancela automáticamente para que la página no se quede
-        // bloqueada mostrando un spinner muerto al volver.
-        const STALE_MS = 30 * 60 * 1000;
-        const age = Date.now() - new Date(job.created_date).getTime();
-        if (age > STALE_MS) {
-          try {
-            await base44.entities.AlbumAISelection.update(job.id, {
-              status: "canceled",
-              error: "Cancelado automáticamente: el trabajo estaba parado",
-            });
-          } catch {}
-          if (!alive) return;
-          toast({ title: "Selección IA cancelada", description: "El trabajo anterior estaba parado. Vuelve a lanzar la selección si lo necesitas." });
-          return;
-        }
+        const oldJob = jobs[0];
+        const resumeFrom = oldJob.stage_progress?.photos_done || 0;
+        // Marca el job antiguo como reemplazado por la reanudación.
+        try {
+          await base44.entities.AlbumAISelection.update(oldJob.id, {
+            status: "canceled",
+            error: "Reanudado automáticamente",
+          });
+        } catch {}
+        if (!alive) return;
+        // Reanuda la selección desde el último lote completado.
+        const markedCount = itemsRef.current.filter((it) => selectedRef.current.has(it.id)).length;
         setAiRunning(true);
         setBusyAction("seleccion");
-        setAiTotal(job.stats?.photo_count || 0);
-        setAiDone(0);
-        pollTimer = setInterval(async () => {
-          try {
-            const updated = await base44.entities.AlbumAISelection.get(job.id);
-            if (!alive) return;
-            if (["completed", "failed", "canceled"].includes(updated.status)) {
-              setAiRunning(false);
-              setBusyAction(null);
-              if (pollTimer) clearInterval(pollTimer);
-              if (updated.status === "completed") {
-                toast({ title: "Selección IA completada" });
-              } else {
-                toast({ title: "Selección IA no completada", description: updated.error || "Cancelada", variant: "destructive" });
-              }
-            }
-          } catch {}
-        }, 4000);
+        setAiTotal(markedCount);
+        setAiDone(resumeFrom);
+        if (resumeFrom > 0) {
+          toast({ title: "Reanudando selección IA", description: `Continuando desde la foto ${resumeFrom} de ${markedCount}` });
+        }
+        startAiSelection({
+          projectId: projectIdParam,
+          folderId: folderIdParam,
+          items: itemsRef.current,
+          selectedIds: selectedRef.current,
+          resumeFrom,
+          onProgress: (j) => {
+            if (!mountedRef.current) return;
+            setAiDone(j.done);
+            if (typeof j.total === "number") setAiTotal(j.total);
+          },
+          onComplete: (j) => {
+            if (!mountedRef.current) return;
+            applyAiResults(j);
+            setAiRunning(false);
+            setBusyAction(null);
+            toast({ title: "Selección IA completada" });
+          },
+          onError: (e) => {
+            if (!mountedRef.current) return;
+            setAiRunning(false);
+            setBusyAction(null);
+            toast({ title: "No se pudo reanudar la selección IA", description: e?.message, variant: "destructive" });
+          },
+        });
       } catch {}
-    };
-
-    checkAndPoll();
-    return () => {
-      alive = false;
-      if (pollTimer) clearInterval(pollTimer);
-    };
-  }, [projectIdParam, folderIdParam]);
+    })();
+    return () => { alive = false; };
+  }, [projectIdParam, folderIdParam, items.length, modeParam]);
 
   // Suscripción al job de selección IA en segundo plano: si el usuario sale y vuelve
   // mientras la selección está corriendo, este effect reconecta con el job activo y
