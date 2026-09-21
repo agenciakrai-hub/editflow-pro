@@ -22,8 +22,11 @@ import { readCameraMetadataFromBytes, readAsShotWhiteBalance } from "./cameraMet
 import { analyzeSkinTone } from "./skinToneAnalysis";
 import { decodePreviewImage } from "./previewDecodeCache";
 
-const PREVIEW_CONCURRENCY = 6;
-const BATCH_CONCURRENCY = 5;
+// Concurrencia aumentada para acelerar el culling: más previews en paralelo (importación)
+// y más ráfagas analizadas simultáneamente (selección IA). Los VLM modernos y el backend
+// toleran esta carga sin degradar la precisión.
+const PREVIEW_CONCURRENCY = 10;
+const BATCH_CONCURRENCY = 8;
 
 // Umbral MUY estricto para considerar dos seleccionados de grupos distintos como
 // casi-duplicados (mu más bajo que el de agrupación). Solo se fusionan los
@@ -160,7 +163,10 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   // por su mérito propio en una sola llamada, reduciendo el nº de llamadas de N (una por
   // foto) a N/INDEPENDENT_BATCH. Se preserva el groupId original de cada singleton para
   // que la cobertura/dedup sigan funcionando por escena.
-  const INDEPENDENT_BATCH = 6;
+  // Singletons agrupados en lotes más grandes: menos llamadas IA (menos HTTP round trips)
+  // manteniendo la calidad del análisis individual (10 imágenes por llamada es seguro
+  // para VLM modernos: Gemini, Qwen, etc.).
+  const INDEPENDENT_BATCH = 10;
   const realGroups = groups.filter((g) => g.files.length > 1);
   const singletonGroups = groups.filter((g) => g.files.length === 1);
   const bursts = realGroups.map((g) => ({ id: g.id, files: g.files, independent: false, sceneOf: null }));
@@ -182,150 +188,164 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   let maxActive = 0;
   const concurrencySamples = [];
 
+  // AGRUPACIÓN DE RÁFAGAS POR LLAMADA HTTP: envía BURSTS_PER_CALL ráfagas en una sola
+  // petición a rawAiSmartSelect. El backend ya soporta múltiples ráfagas por petición
+  // (las procesa con MAX_CONCURRENT_LLM en paralelo). Esto reduce los round trips HTTP
+  // (auth, JSON, connection setup) por factor BURSTS_PER_CALL, acelerando el culling.
+  const BURSTS_PER_CALL = 3;
+  const burstChunks = [];
+  for (let i = 0; i < bursts.length; i += BURSTS_PER_CALL) {
+    burstChunks.push(bursts.slice(i, i + BURSTS_PER_CALL));
+  }
+
   trace.stages.ai_analysis = { start_ms: Date.now(), bursts_total: bursts.length };
-  await runPool(bursts, BATCH_CONCURRENCY, async (burst) => {
-    const bStart = Date.now();
+  await runPool(burstChunks, BATCH_CONCURRENCY, async (chunk) => {
+    const chunkStart = Date.now();
     activeNow += 1;
     if (activeNow > maxActive) maxActive = activeNow;
     concurrencySamples.push({ t_ms: Date.now() - trace.started_ms, active: activeNow });
     const concAtStart = activeNow;
-    const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
-    const groupSizeFor = () => (burst.independent ? 1 : burst.files.length);
-    let burstProvider = null, burstModel = null, burstFallback = false, burstIaCalls = 0;
-    let beActiveProvider = null, beConfiguredModel = null, beFinalProvider = null, beFinalModel = null;
-    let beProviderFailover = false, beFailoverReason = null, beAttempts = [];
-    // Telemetría por llamada (solo medición; no cambia comportamiento). Las previews ya
-    // fueron extraídas en Pass 1 (base64 + dimensiones en f.preview); aquí solo se
-    // registran bytes/dimensiones/MIME. La conversión base64 ya ocurrió → prep_duration_ms
-    // mide solo el ensamblado del payload (despreciable).
-    const tPrep0 = performance.now();
-    const photosPayload = [];
-    const prepPhotos = [];
-    for (const f of burst.files) {
-      const p = f.preview || {};
-      const dataUrl = p.dataUrl || "";
-      const mimeMatch = /^data:([^;]+);/.exec(dataUrl);
-      const b64 = p.base64 || "";
-      photosPayload.push({
-        id: f.id,
-        preview_base64: b64,
-        technical: {
-          sharpness: f.technical?.sharpness ?? 0,
-          exposureScore: f.technical?.exposureScore ?? 0.5,
-          corrupt: !!f.technical?.corrupt,
-        },
-      });
-      prepPhotos.push({
-        id: f.id,
-        mime: mimeMatch ? mimeMatch[1] : "image/jpeg",
-        width: p.width || null,
-        height: p.height || null,
-        base64_chars: b64.length,
-        image_bytes_approx: b64.length ? Math.round((b64.length * 3) / 4) : null,
-      });
+    // Prepara el payload de TODAS las ráfagas del chunk en una sola petición.
+    const burstsPayload = [];
+    const prepPhotosByBurst = new Map();
+    for (const burst of chunk) {
+      const photosPayload = [];
+      const prepPhotos = [];
+      for (const f of burst.files) {
+        const p = f.preview || {};
+        const dataUrl = p.dataUrl || "";
+        const mimeMatch = /^data:([^;]+);/.exec(dataUrl);
+        const b64 = p.base64 || "";
+        photosPayload.push({
+          id: f.id,
+          preview_base64: b64,
+          technical: {
+            sharpness: f.technical?.sharpness ?? 0,
+            exposureScore: f.technical?.exposureScore ?? 0.5,
+            corrupt: !!f.technical?.corrupt,
+          },
+        });
+        prepPhotos.push({
+          id: f.id,
+          mime: mimeMatch ? mimeMatch[1] : "image/jpeg",
+          width: p.width || null,
+          height: p.height || null,
+          base64_chars: b64.length,
+          image_bytes_approx: b64.length ? Math.round((b64.length * 3) / 4) : null,
+        });
+      }
+      burstsPayload.push({ burst_id: burst.id, independent: burst.independent, photos: photosPayload });
+      prepPhotosByBurst.set(burst.id, prepPhotos);
     }
-    const prepDurationMs = Math.round(performance.now() - tPrep0);
     const invokeStartMs = Date.now();
     let invokeDurationMs = null;
-    let beUploadMs = null, beRequestMs = null, beBase64Ms = null, beParseMs = null;
-    let beHttpStatus = null, beTokensIn = null, beTokensOut = null, beEndpoint = null;
+    let chunkError = null;
+    let responseData = null;
     try {
-      const { data } = await base44.functions.invoke("rawAiSmartSelect", {
-        bursts: [{
-          burst_id: burst.id,
-          independent: burst.independent,
-          photos: photosPayload,
-        }],
-      });
-      invokeDurationMs = Date.now() - invokeStartMs;
-      const g = data?.groups?.[burst.id];
-      burstProvider = g?._meta?.provider || null;
-      burstModel = g?._meta?.model || null;
-      burstFallback = !!g?._meta?.fallback;
-      burstIaCalls = g?._meta?.ia_calls || 0;
-      beUploadMs = g?._meta?.upload_ms ?? null;
-      beRequestMs = g?._meta?.request_ms ?? null;
-      beBase64Ms = g?._meta?.base64_convert_ms ?? null;
-      beParseMs = g?._meta?.parse_ms ?? null;
-      beHttpStatus = g?._meta?.http_status ?? null;
-      beTokensIn = g?._meta?.tokens_in ?? null;
-      beTokensOut = g?._meta?.tokens_out ?? null;
-      beEndpoint = g?._meta?.endpoint ?? null;
-      beActiveProvider = g?._meta?.active_provider ?? null;
-      beConfiguredModel = g?._meta?.configured_model ?? null;
-      beFinalProvider = g?._meta?.final_provider ?? null;
-      beFinalModel = g?._meta?.final_model ?? null;
-      beProviderFailover = !!g?._meta?.provider_failover;
-      beFailoverReason = g?._meta?.failover_reason ?? null;
-      beAttempts = Array.isArray(g?._meta?.attempts) ? g?._meta.attempts : [];
-      const rankings = Array.isArray(g?.rankings) ? g.rankings : [];
-      const byId = new Map(rankings.map((r) => [String(r.id), r]));
-      const category = g?.category || null;
-      const reason = g?.reason || null;
-      const keepIds = new Set((g?.keep_ids || []).map(String));
-      burst.files.forEach((f, i) => {
-        const r = byId.get(f.id);
-        const status = r?.status || "REVIEW";
-        const groupRank = burst.independent ? 1 : (typeof r?.rank === "number" ? r.rank : i + 1);
-        const selectable = status === "SELECT" || status === "TOP_PICK";
-        if (selectable) keep.add(f.id);
-        meta.set(f.id, {
-          groupId: groupIdFor(f),
-          groupSize: groupSizeFor(),
-          status,
-          scores: r?.scores || null,
-          rejectReasons: r?.reject_reasons || [],
-          reason,
-          confidence: r?.scores?.confidence ?? null,
-          confidenceTier: r?.confidence_tier || "UNCERTAIN_REVIEW",
-          comparedWith: burst.independent ? [] : burst.files.map((f2) => f2.id).filter((id2) => id2 !== f.id),
-          category,
-          groupRank,
-          complementary: !burst.independent && keepIds.size > 1 && keepIds.has(f.id) && status !== "TOP_PICK",
-          category_note: r?.note || "",
-          analysisComplete: r?.analysis_complete ?? false,
-          missingDimensions: r?.missing_dimensions || [],
-          previewWarning: false,
-        });
-      });
-    } catch {
-      invokeDurationMs = Date.now() - invokeStartMs;
-      burstFallback = true;
-      // Fallo de IA: fallback técnico conservador POR RÁFAGA.
-      const fb = technicalFallbackForGroup(burst);
-      fb.forEach((m, i) => {
-        const f = burst.files[i];
-        if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(f.id);
-        meta.set(f.id, {
-          groupId: groupIdFor(f), groupSize: groupSizeFor(), status: m.status,
-          scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
-          confidence: m.confidence, confidenceTier: "UNCERTAIN_REVIEW", comparedWith: [],
-          category: m.category, groupRank: burst.independent ? 1 : m.groupRank,
-          complementary: m.complementary, category_note: m.category_note,
-          analysisComplete: m.analysis_complete, missingDimensions: m.missing_dimensions,
-          previewWarning: false,
-        });
-      });
-    } finally {
-      activeNow = Math.max(0, activeNow - 1);
-      concurrencySamples.push({ t_ms: Date.now() - trace.started_ms, active: activeNow });
+      const { data } = await base44.functions.invoke("rawAiSmartSelect", { bursts: burstsPayload });
+      responseData = data;
+    } catch (e) {
+      chunkError = e;
     }
-    trace.bursts.push({
-      burst_id: burst.id, independent: burst.independent, photo_count: burst.files.length,
-      start_ms: bStart, end_ms: Date.now(), duration_ms: Date.now() - bStart,
-      provider: burstProvider, model: burstModel, ia_calls: burstIaCalls, fallback: burstFallback,
-      active_provider: beActiveProvider, configured_model: beConfiguredModel,
-      final_provider: beFinalProvider, final_model: beFinalModel,
-      provider_failover: beProviderFailover, failover_reason: beFailoverReason,
-      attempts: beAttempts,
-      concurrency_at_start: concAtStart,
-      prep: { duration_ms: prepDurationMs, photos: prepPhotos },
-      transport: { invoke_ms: invokeDurationMs, upload_ms: beUploadMs, base64_convert_ms: beBase64Ms },
-      gemini: { request_ms: beRequestMs, http_status: beHttpStatus, endpoint: beEndpoint, tokens_in: beTokensIn, tokens_out: beTokensOut },
-      parse: { duration_ms: beParseMs },
-    });
-    resolved += 1;
-    onProgress?.(resolved, totalBursts);
+    invokeDurationMs = Date.now() - invokeStartMs;
+    // Procesa el resultado de cada ráfaga del chunk.
+    for (const burst of chunk) {
+      const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
+      const groupSizeFor = () => (burst.independent ? 1 : burst.files.length);
+      let burstProvider = null, burstModel = null, burstFallback = false, burstIaCalls = 0;
+      let beActiveProvider = null, beConfiguredModel = null, beFinalProvider = null, beFinalModel = null;
+      let beProviderFailover = false, beFailoverReason = null, beAttempts = [];
+      let beUploadMs = null, beRequestMs = null, beBase64Ms = null, beParseMs = null;
+      let beHttpStatus = null, beTokensIn = null, beTokensOut = null, beEndpoint = null;
+      const prepPhotos = prepPhotosByBurst.get(burst.id) || [];
+      try {
+        if (chunkError) throw chunkError;
+        const g = responseData?.groups?.[burst.id];
+        burstProvider = g?._meta?.provider || null;
+        burstModel = g?._meta?.model || null;
+        burstFallback = !!g?._meta?.fallback;
+        burstIaCalls = g?._meta?.ia_calls || 0;
+        beUploadMs = g?._meta?.upload_ms ?? null;
+        beRequestMs = g?._meta?.request_ms ?? null;
+        beBase64Ms = g?._meta?.base64_convert_ms ?? null;
+        beParseMs = g?._meta?.parse_ms ?? null;
+        beHttpStatus = g?._meta?.http_status ?? null;
+        beTokensIn = g?._meta?.tokens_in ?? null;
+        beTokensOut = g?._meta?.tokens_out ?? null;
+        beEndpoint = g?._meta?.endpoint ?? null;
+        beActiveProvider = g?._meta?.active_provider ?? null;
+        beConfiguredModel = g?._meta?.configured_model ?? null;
+        beFinalProvider = g?._meta?.final_provider ?? null;
+        beFinalModel = g?._meta?.final_model ?? null;
+        beProviderFailover = !!g?._meta?.provider_failover;
+        beFailoverReason = g?._meta?.failover_reason ?? null;
+        beAttempts = Array.isArray(g?._meta?.attempts) ? g?._meta.attempts : [];
+        const rankings = Array.isArray(g?.rankings) ? g.rankings : [];
+        const byId = new Map(rankings.map((r) => [String(r.id), r]));
+        const category = g?.category || null;
+        const reason = g?.reason || null;
+        const keepIds = new Set((g?.keep_ids || []).map(String));
+        burst.files.forEach((f, i) => {
+          const r = byId.get(f.id);
+          const status = r?.status || "REVIEW";
+          const groupRank = burst.independent ? 1 : (typeof r?.rank === "number" ? r.rank : i + 1);
+          const selectable = status === "SELECT" || status === "TOP_PICK";
+          if (selectable) keep.add(f.id);
+          meta.set(f.id, {
+            groupId: groupIdFor(f),
+            groupSize: groupSizeFor(),
+            status,
+            scores: r?.scores || null,
+            rejectReasons: r?.reject_reasons || [],
+            reason,
+            confidence: r?.scores?.confidence ?? null,
+            confidenceTier: r?.confidence_tier || "UNCERTAIN_REVIEW",
+            comparedWith: burst.independent ? [] : burst.files.map((f2) => f2.id).filter((id2) => id2 !== f.id),
+            category,
+            groupRank,
+            complementary: !burst.independent && keepIds.size > 1 && keepIds.has(f.id) && status !== "TOP_PICK",
+            category_note: r?.note || "",
+            analysisComplete: r?.analysis_complete ?? false,
+            missingDimensions: r?.missing_dimensions || [],
+            previewWarning: false,
+          });
+        });
+      } catch {
+        burstFallback = true;
+        const fb = technicalFallbackForGroup(burst);
+        fb.forEach((m, i) => {
+          const f = burst.files[i];
+          if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(f.id);
+          meta.set(f.id, {
+            groupId: groupIdFor(f), groupSize: groupSizeFor(), status: m.status,
+            scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
+            confidence: m.confidence, confidenceTier: "UNCERTAIN_REVIEW", comparedWith: [],
+            category: m.category, groupRank: burst.independent ? 1 : m.groupRank,
+            complementary: m.complementary, category_note: m.category_note,
+            analysisComplete: m.analysisComplete, missingDimensions: m.missing_dimensions,
+            previewWarning: false,
+          });
+        });
+      }
+      trace.bursts.push({
+        burst_id: burst.id, independent: burst.independent, photo_count: burst.files.length,
+        start_ms: chunkStart, end_ms: Date.now(), duration_ms: Date.now() - chunkStart,
+        provider: burstProvider, model: burstModel, ia_calls: burstIaCalls, fallback: burstFallback,
+        active_provider: beActiveProvider, configured_model: beConfiguredModel,
+        final_provider: beFinalProvider, final_model: beFinalModel,
+        provider_failover: beProviderFailover, failover_reason: beFailoverReason,
+        attempts: beAttempts,
+        concurrency_at_start: concAtStart,
+        prep: { duration_ms: 0, photos: prepPhotos },
+        transport: { invoke_ms: invokeDurationMs, upload_ms: beUploadMs, base64_convert_ms: beBase64Ms },
+        gemini: { request_ms: beRequestMs, http_status: beHttpStatus, endpoint: beEndpoint, tokens_in: beTokensIn, tokens_out: beTokensOut },
+        parse: { duration_ms: beParseMs },
+      });
+      resolved += 1;
+      onProgress?.(resolved, totalBursts);
+    }
+    activeNow = Math.max(0, activeNow - 1);
+    concurrencySamples.push({ t_ms: Date.now() - trace.started_ms, active: activeNow });
   }, () => {});
   trace.stages.ai_analysis.end_ms = Date.now();
   trace.stages.ai_analysis.duration_ms = trace.stages.ai_analysis.end_ms - trace.stages.ai_analysis.start_ms;

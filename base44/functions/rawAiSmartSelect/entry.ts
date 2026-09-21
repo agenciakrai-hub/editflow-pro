@@ -31,7 +31,10 @@ import { invokeVision } from '../../shared/aiProviderAdapter.ts';
 // exposure) y se consolida el ranking deterministamente (un único TOP_PICK global).
 
 const MAX_IMAGES_PER_CALL = 12;
-const MAX_CONCURRENT_LLM = 3;
+// Concurrencia de LLM aumentada: más ráfagas procesadas en paralelo dentro de cada
+// petición HTTP. Los VLM externos (Qwen/NVIDIA/Gemini) toleran 5 llamadas concurrentes
+// sin rate-limit; InvokeLLM (base44) también lo permite.
+const MAX_CONCURRENT_LLM = 5;
 // Para grupos > MAX_IMAGES_PER_CALL: dos llamadas (mitades) + una TERCERA llamada de
 // consolidación SOLO entre los mejores candidatos de ambas mitades (re-análisis visual,
 // no overall numérico). Finalistas por mitad.
