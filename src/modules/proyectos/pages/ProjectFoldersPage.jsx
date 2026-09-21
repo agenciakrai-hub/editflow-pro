@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, FolderOpen, Plus, Loader2, Trash2, Pencil, ChevronUp, ChevronDown, Check, X, CheckCircle2, Circle, CircleDot, AlertCircle } from "lucide-react";
+import { ArrowLeft, FolderOpen, Plus, Loader2, Trash2, Pencil, ChevronUp, ChevronDown, Check, X, CheckCircle2, Circle, CircleDot, AlertCircle, RotateCcw } from "lucide-react";
 import { getProject, ensureFoldersMigrated, createFolder, updateFolder, deleteFolder, deleteFingerprintsByFolder } from "../hooks/useProjectStore";
 import { startProcessing, getJob, subscribe } from "../lib/backgroundProcessor";
-import { saveHandle } from "../lib/idbHandles";
+import { saveHandle, getHandleRecord } from "../lib/idbHandles";
 import { useToast } from "@/components/ui/use-toast";
 
 // Centro de trabajo del proyecto: muestra las carpetas/sesiones independientes.
@@ -34,6 +34,16 @@ export default function ProjectFoldersPage() {
       const p = await getProject(id);
       setProject(p);
       const folders = await ensureFoldersMigrated(id);
+      // Detecta carpetas "processing" stale: si no hay job activo en memoria, el
+      // procesado se interrumpió (pestaña cerrada, navegación fuera). Se marcan como
+      // "failed" para que el usuario pueda reintentar con el botón «Reintentar».
+      const stale = folders.filter((f) => f.import_status === "processing" && !getJob(id, f.id));
+      if (stale.length > 0) {
+        await Promise.all(stale.map((f) =>
+          updateFolder(f.id, { import_status: "failed", last_modified: new Date().toISOString() }).catch(() => {})
+        ));
+        stale.forEach((f) => { f.import_status = "failed"; });
+      }
       setFolders(folders.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
     } catch (e) {
       toast({ title: "No se pudo cargar el proyecto", description: e?.message, variant: "destructive" });
@@ -131,6 +141,48 @@ export default function ProjectFoldersPage() {
     }
     setRenaming(null);
     setFolderName("");
+  };
+
+  const retryFolder = async (f) => {
+    // Reintenta el procesado de una carpeta que quedó en "failed". Lee el handle
+    // guardado en IndexedDB (mismo navegador) y reinicia el procesado en segundo
+    // plano. Si el handle ya no existe (otro dispositivo), avisa al usuario.
+    try {
+      let handle = null;
+      if (f.raw_folder_handle_ref) {
+        const rec = await getHandleRecord(f.raw_folder_handle_ref);
+        if (rec?.handle) handle = rec.handle;
+      }
+      if (!handle) {
+        toast({
+          title: "No se puede reintentar automáticamente",
+          description: "La carpeta local no está disponible en este dispositivo. Vuelve a seleccionarla con «Añadir carpeta».",
+          variant: "destructive",
+        });
+        return;
+      }
+      await updateFolder(f.id, { import_status: "processing", last_modified: new Date().toISOString() });
+      setFolders((prev) => prev.map((x) => x.id === f.id ? { ...x, import_status: "processing" } : x));
+      startProcessing({
+        folderHandle: handle,
+        files: null,
+        folderName: f.raw_folder_name || f.name,
+        folderId: f.id,
+        projectId: id,
+        existing: { folderRef: f.raw_folder_handle_ref, catalogRef: f.catalog_handle_ref || "" },
+        onProgress: () => {},
+        onComplete: (job) => {
+          setFolders((prev) => prev.map((x) => x.id === f.id ? { ...x, import_status: "completed", photo_count: job.items?.length || 0 } : x));
+          toast({ title: "Carpeta importada", description: `${job.items?.length || 0} fotos procesadas en "${f.name}".` });
+        },
+        onError: (e) => {
+          setFolders((prev) => prev.map((x) => x.id === f.id ? { ...x, import_status: "failed" } : x));
+          toast({ title: "Error al importar carpeta", description: e?.message, variant: "destructive" });
+        },
+      });
+    } catch (e) {
+      toast({ title: "No se pudo reintentar", description: e?.message, variant: "destructive" });
+    }
   };
 
   const removeFolder = async (f) => {
@@ -240,6 +292,7 @@ export default function ProjectFoldersPage() {
               onOpen={() => openFolder(f)}
               onSeleccion={() => openFolder(f, "seleccion")}
               onEdicion={() => openFolder(f, "edicion")}
+              onRetry={() => retryFolder(f)}
             />
           ))}
         </div>
@@ -264,7 +317,7 @@ function StatusBadge({ label, status }) {
   );
 }
 
-function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderName, onRename, onConfirmRename, onCancelRename, onDelete, onMoveUp, onMoveDown, onOpen, onSeleccion, onEdicion }) {
+function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderName, onRename, onConfirmRename, onCancelRename, onDelete, onMoveUp, onMoveDown, onOpen, onSeleccion, onEdicion, onRetry }) {
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
@@ -302,6 +355,11 @@ function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderNam
         </div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
+        {folder.import_status === "failed" && (
+          <button onClick={onRetry} className="inline-flex items-center gap-1.5 rounded-md border border-yellow-500/50 px-3 py-1.5 text-xs font-medium text-yellow-600 hover:bg-yellow-500/5">
+            <RotateCcw className="h-3.5 w-3.5" /> Reintentar
+          </button>
+        )}
         <button onClick={onOpen} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground">
           <FolderOpen className="h-3.5 w-3.5" /> Abrir
         </button>
