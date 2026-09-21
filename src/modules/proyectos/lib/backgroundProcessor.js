@@ -53,9 +53,7 @@ function snapshotJob(job) {
     phase: job.phase,
     items: job.items,
     error: job.error,
-    bindingId: job.bindingId,
     folderRef: job.folderRef,
-    catalogRef: job.catalogRef,
   };
 }
 
@@ -67,7 +65,7 @@ function notify(job) {
 // Inicia el procesado de una carpeta RAW. Devuelve el job inmediatamente (sin await).
 // El procesado corre en segundo plano; los callbacks notifican progreso, completado
 // y error. Si ya hay un job para el proyecto, solo añade el callback.
-export function startProcessing({ folderHandle, files, folderName, folderId, catalogHandle, projectId, existing, onProgress, onComplete, onError }) {
+export function startProcessing({ folderHandle, files, folderName, folderId, projectId, existing, onProgress, onComplete, onError }) {
   let pid = projectId || existing?.projectId || null;
 
   if (pid && folderId && activeJobs.has(`${pid}:${folderId}`)) {
@@ -84,20 +82,18 @@ export function startProcessing({ folderHandle, files, folderName, folderId, cat
     phase: "extracting",
     items: [],
     error: null,
-    bindingId: existing?.bindingId || null,
     folderRef: existing?.folderRef || "",
-    catalogRef: existing?.catalogRef || "",
     subscribers: new Set(),
   };
   if (onProgress) job.subscribers.add(onProgress);
 
   // Fire-and-forget: el bucle corre independientemente del componente.
-  runProcessing(folderHandle, files, folderName, folderId, catalogHandle, pid, existing, job, onComplete, onError);
+  runProcessing(folderHandle, files, folderName, folderId, pid, existing, job, onComplete, onError);
 
   return job;
 }
 
-async function runProcessing(folderHandle, files, folderName, folderId, catalogHandle, pid, existing, job, onComplete, onError) {
+async function runProcessing(folderHandle, files, folderName, folderId, pid, existing, job, onComplete, onError) {
   const jobKey = pid && folderId ? `${pid}:${folderId}` : pid;
   if (jobKey) activeJobs.set(jobKey, job);
   try {
@@ -118,8 +114,6 @@ async function runProcessing(folderHandle, files, folderName, folderId, catalogH
         order_index: existingFolders.length,
         raw_folder_name: folderName || folderHandle?.name || "",
         raw_folder_handle_ref: folderHandle ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }).catch(() => "") : "",
-        catalog_filename: catalogHandle?.name || "",
-        catalog_handle_ref: catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }).catch(() => "") : "",
         photo_count: 0,
         import_status: "processing",
         selection_status: "pending",
@@ -129,16 +123,12 @@ async function runProcessing(folderHandle, files, folderName, folderId, catalogH
       folderId = folder.id;
       job.folderId = folderId;
       job.folderRef = folder.raw_folder_handle_ref;
-      job.catalogRef = folder.catalog_handle_ref;
     } else {
       job.folderRef = folderHandle ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }).catch(() => "") : "";
-      job.catalogRef = catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }).catch(() => "") : "";
       await base44.entities.ProjectFolder.update(folderId, {
         import_status: "processing",
         raw_folder_name: folderName || folderHandle?.name || "",
         raw_folder_handle_ref: job.folderRef,
-        catalog_filename: catalogHandle?.name || "",
-        catalog_handle_ref: job.catalogRef,
         last_modified: new Date().toISOString(),
       }).catch(() => {});
     }

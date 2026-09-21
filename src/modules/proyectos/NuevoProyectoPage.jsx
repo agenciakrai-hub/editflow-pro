@@ -5,8 +5,8 @@ import { base44 } from "@/api/base44Client";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { selectBursts } from "@/lib/ai/aiGateway";
 import { statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
-import { saveHandle, getHandleRecord } from "./lib/idbHandles";
-import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, getCatalogBinding, listFingerprints, listFingerprintsByFolder, deleteFingerprintsByProject, deleteFingerprintsByFolder, ensureFoldersMigrated, updateFolder, updateProject, updateCatalogBinding } from "./hooks/useProjectStore";
+import { saveHandle } from "./lib/idbHandles";
+import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, listFingerprintsByFolder, deleteFingerprintsByFolder, ensureFoldersMigrated, updateFolder, updateProject } from "./hooks/useProjectStore";
 import { startProcessing, getJob, subscribe } from "./lib/backgroundProcessor";
 import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
 import { useToast } from "@/components/ui/use-toast";
@@ -24,7 +24,6 @@ export default function NuevoProyectoPage() {
   const [title, setTitle] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [catalogHandle, setCatalogHandle] = useState(null);
-  const [folderHandle, setFolderHandle] = useState(null);
   const [items, setItems] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -65,13 +64,8 @@ export default function NuevoProyectoPage() {
   const folderIdParam = urlParams.get("folder");
   const modeParam = urlParams.get("mode"); // "seleccion" | "edicion" | null
   const [existing, setExisting] = useState(null);
-  const [restoredHandles, setRestoredHandles] = useState({ folder: null, catalog: null });
-  // Móvil: fallback cuando showDirectoryPicker/showOpenFilePicker no existen.
-  // Se guardan los File objects directamente (sin handle persistible).
-  const [folderName, setFolderName] = useState("");
-  const [folderFiles, setFolderFiles] = useState(null);
+  // Móvil: fallback cuando showOpenFilePicker no existe.
   const [catalogFile, setCatalogFile] = useState(null);
-  const folderInputRef = useRef(null);
   const catalogInputRef = useRef(null);
 
   // Fiabilidad: al desmontar la página (navegar fuera, ir atrás, cambiar de herramienta),
@@ -90,14 +84,6 @@ export default function NuevoProyectoPage() {
         currentSelJobIdRef.current = null;
       }
     };
-  }, []);
-
-  // Móvil: atributos no estándar que React no pasa por defecto.
-  useEffect(() => {
-    if (folderInputRef.current) {
-      folderInputRef.current.setAttribute("webkitdirectory", "");
-      folderInputRef.current.setAttribute("directory", "");
-    }
   }, []);
 
   useEffect(() => {
@@ -151,26 +137,8 @@ export default function NuevoProyectoPage() {
         setExisting({
           projectId: projectIdParam,
           folderId: folder.id,
-          bindingId: null,
-          folderRef: folder.raw_folder_handle_ref || "",
-          catalogRef: folder.catalog_handle_ref || "",
           folderName: folder.raw_folder_name || folder.name || "",
-          catalogName: folder.catalog_filename || "",
         });
-        // Restaura los handles locales (mismo navegador) para seguir trabajando sin
-        // volver a elegir carpeta/catálogo.
-        try {
-          const restores = { folder: null, catalog: null };
-          if (folder.catalog_handle_ref) {
-            const rec = await getHandleRecord(folder.catalog_handle_ref);
-            if (rec?.handle) { setCatalogHandle(rec.handle); restores.catalog = rec.handle; }
-          }
-          if (folder.raw_folder_handle_ref) {
-            const rec = await getHandleRecord(folder.raw_folder_handle_ref);
-            if (rec?.handle) { setFolderHandle(rec.handle); restores.folder = rec.handle; }
-          }
-          setRestoredHandles(restores);
-        } catch {}
         // Previews cacheadas en IndexedDB: la galería se ve al instante.
         let previewByHash = new Map();
         try { previewByHash = await getCachedPreviews(fps.map((f) => f.fingerprint_hash).filter(Boolean)); } catch {}
@@ -287,98 +255,6 @@ export default function NuevoProyectoPage() {
     setCatalogHandle(null);
   };
 
-  // Inicia el procesado en segundo plano: extrae previews y calcula huellas de la
-  // carpeta RAW. El bucle vive en backgroundProcessor.js, NO en este componente, así
-  // que CONTINÚA aunque el usuario navegue fuera de esta página (a Selección, Edición,
-  // Historial, etc.). Al completarse, guarda huellas en la base de datos y cachea
-  // previews en IndexedDB automáticamente.
-  const extractFromFolder = (handle, files = null, name = null) => {
-    setExtracting(true);
-    setPhase("extracting");
-    setProgress({ done: 0, total: 0 });
-    startProcessing({
-      folderHandle: handle,
-      files,
-      folderName: name || handle?.name || folderName,
-      folderId: existing?.folderId || folderIdParam || null,
-      catalogHandle,
-      projectId: projectIdParam || existing?.projectId || null,
-      existing,
-      onProgress: (job) => {
-        setPhase(job.phase);
-        setProgress(job.progress);
-        // Si el procesador creó el proyecto (nuevo), actualiza `existing` y la URL
-        // para que el componente sepa que el proyecto ya existe.
-        if (job.projectId && !existing && !projectIdParam) {
-          setExisting({
-            projectId: job.projectId,
-            bindingId: job.bindingId || null,
-            folderRef: job.folderRef || "",
-            catalogRef: job.catalogRef || "",
-            folderName: handle?.name || name || "Carpeta",
-            catalogName: catalogHandle?.name || catalogFile?.name || "",
-            folderId: job.folderId || existing?.folderId || folderIdParam || null,
-          });
-          try {
-            const url = new URL(window.location.href);
-            url.searchParams.set("project", job.projectId);
-            window.history.replaceState({}, "", url.toString());
-          } catch {}
-        }
-      },
-      onComplete: (job) => {
-        setExtracting(false);
-        const loaded = job.items.map((p) => ({
-          id: p.id,
-          file: p.file,
-          status: p.status || "REVIEW",
-          rating: p.rating || 0,
-          aiReview: false,
-          fingerprint: p.fingerprint,
-          preview: p.preview,
-        }));
-        setItems(loaded);
-        setSelectedIds(new Set(loaded.map((p) => p.id)));
-        reset();
-      },
-      onError: (e) => {
-        setExtracting(false);
-        toast({ title: "Error en el procesado", description: e?.message, variant: "destructive" });
-      },
-    });
-  };
-
-  const pickFolder = async () => {
-    // Desktop: File System Access API.
-    if (typeof window.showDirectoryPicker === "function") {
-      try {
-        const handle = await window.showDirectoryPicker();
-        setFolderHandle(handle);
-        setFolderName(handle.name);
-        setFolderFiles(null);
-        await extractFromFolder(handle);
-      } catch {
-        // Usuario canceló el selector — no es un error.
-      }
-      return;
-    }
-    // Móvil: <input type="file" webkitdirectory>
-    folderInputRef.current?.click();
-  };
-
-  const onFolderPicked = (e) => {
-    const files = e.target.files;
-    if (e.target) e.target.value = "";
-    if (!files || !files.length) return;
-    const first = files[0];
-    const relPath = first.webkitRelativePath || first.name;
-    const name = relPath.includes("/") ? relPath.split("/")[0] : "Carpeta";
-    setFolderName(name);
-    setFolderHandle(null);
-    setFolderFiles(files);
-    extractFromFolder(null, files, name);
-  };
-
   const cycleStatus = (id) => {
     record();
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, status: SELECTION_CYCLE[it.status] || "REVIEW" } : it)));
@@ -473,24 +349,12 @@ export default function NuevoProyectoPage() {
       toast({ title: "Falta el nombre del proyecto", variant: "destructive" });
       return;
     }
-    if (!items.length || (!existing && !folderHandle && !folderFiles)) {
+    if (!items.length || !existing) {
       toast({ title: "Selecciona la carpeta RAW primero", variant: "destructive" });
       return;
     }
     setSaving(true);
     try {
-      // Handles: al reabrir un proyecto, solo se guardan refs NUEVOS si el usuario
-      // volvió a elegir carpeta/catálogo en esta sesión; si no, se conservan los ya
-      // vinculados al proyecto (restoredHandles evita duplicarlos).
-      const rehookFolder = folderHandle && folderHandle !== restoredHandles.folder;
-      const rehookCatalog = catalogHandle && catalogHandle !== restoredHandles.catalog;
-      const folderRef = existing
-        ? (rehookFolder ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }) : existing.folderRef)
-        : (folderHandle ? await saveHandle(folderHandle, "directory", { name: folderHandle.name }) : "");
-      const catalogRef = existing
-        ? (rehookCatalog ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }) : existing.catalogRef)
-        : (catalogHandle ? await saveHandle(catalogHandle, "file", { name: catalogHandle.name }) : null);
-
       // La SELECCIÓN que se guarda son las fotos MARCADAS (checkbox): al crear el
       // proyecto están todas marcadas por defecto, así que se guardan todas. Las
       // marcadas sin curar (REVIEW) suben a SELECT (etiqueta verde, sin forzar estrellas);
@@ -516,8 +380,6 @@ export default function NuevoProyectoPage() {
         selection_saved: selCount > 0,
         photo_count: items.length,
         selected_count: selCount,
-        lightroom_catalog_name: catalogHandle?.name || catalogFile?.name || existing?.catalogName || "",
-        raw_folder_path: folderHandle?.name || folderName || existing?.folderName || "",
       };
       // La traza de la última selección IA viaja DENTRO del guardado del proyecto:
       // create/update la persisten en la misma operación atómica que el resto.
@@ -536,11 +398,6 @@ export default function NuevoProyectoPage() {
         // ACTUALICE este proyecto en vez de crear un duplicado.
         setExisting({
           projectId: savedId,
-          bindingId: null,
-          folderRef: folderRef || "",
-          catalogRef: catalogRef || "",
-          folderName: folderHandle?.name || folderName || "",
-          catalogName: catalogHandle?.name || catalogFile?.name || "",
           folderId: existing?.folderId || folderIdParam || null,
         });
         try {
@@ -897,7 +754,7 @@ export default function NuevoProyectoPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">{existing ? title : "Nuevo proyecto"}</h1>
-          {existing && <p className="text-sm text-muted-foreground">{existing.folderName || folderName}</p>}
+          {existing && <p className="text-sm text-muted-foreground">{existing.folderName}</p>}
         </div>
         <button
           onClick={() => navigate(existing ? `/proyectos/${existing.projectId}` : "/proyectos")}
@@ -906,8 +763,6 @@ export default function NuevoProyectoPage() {
           <ArrowLeft className="h-3.5 w-3.5" /> {existing ? "Proyecto" : "Mis proyectos"}
         </button>
       </div>
-
-      <input ref={folderInputRef} type="file" multiple className="hidden" onChange={onFolderPicked} />
 
       {extracting && (
         <div className="rounded-xl border border-border bg-card p-4 space-y-2">
