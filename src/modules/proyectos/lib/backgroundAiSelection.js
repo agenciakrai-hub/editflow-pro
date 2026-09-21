@@ -117,6 +117,13 @@ async function runSelection(job, marked, onComplete, onError) {
     selJobId = j.id;
   } catch {}
 
+  // Marca la carpeta como "selección en curso" para que la página del proyecto
+  // refleje el estado aunque el usuario no esté en la página de la carpeta.
+  await updateFolder(job.folderId, {
+    selection_status: "in_progress",
+    last_modified: new Date().toISOString(),
+  }).catch(() => {});
+
   try {
     const aiItems = marked.map((it) => {
       const dataUrl = it.preview?.dataUrl;
@@ -221,6 +228,11 @@ async function runSelection(job, marked, onComplete, onError) {
         });
       } catch {}
     }
+    // Revierte el estado de selección de la carpeta si la selección falló.
+    await updateFolder(job.folderId, {
+      selection_status: "pending",
+      last_modified: new Date().toISOString(),
+    }).catch(() => {});
     if (onError) try { onError(e); } catch {}
   }
 
@@ -241,6 +253,11 @@ export function cancelSelection(projectId, folderId) {
   job.canceled = true;
   job.status = "canceled";
   notify(job);
+  // Revierte el estado de selección de la carpeta al cancelar.
+  updateFolder(job.folderId, {
+    selection_status: "pending",
+    last_modified: new Date().toISOString(),
+  }).catch(() => {});
   // Limpia inmediatamente: no retiene un job cancelado en memoria.
   setTimeout(() => { activeJobs.delete(key); }, 5000);
 }

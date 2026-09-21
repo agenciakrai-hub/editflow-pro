@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, FolderOpen, Plus, Loader2, Trash2, Pencil, ChevronUp, ChevronDown, Check, X, CheckCircle2, Circle, CircleDot, AlertCircle, RotateCcw } from "lucide-react";
 import { getProject, ensureFoldersMigrated, createFolder, updateFolder, deleteFolder, deleteFingerprintsByFolder } from "../hooks/useProjectStore";
 import { startProcessing, getJob, subscribe } from "../lib/backgroundProcessor";
+import { getJob as getAiJob, subscribe as subscribeAi, cancelSelection as cancelAiSelection } from "../lib/backgroundAiSelection";
 import { saveHandle, getHandleRecord } from "../lib/idbHandles";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -22,6 +23,8 @@ export default function ProjectFoldersPage() {
   // Progreso en vivo por carpeta: { [folderId]: { done, total, phase, status } }.
   // total = fotos * 2 (fase extracting + fingerprinting); fotos detectadas = total/2.
   const [jobProgress, setJobProgress] = useState({});
+  // Progreso en vivo de selección IA por carpeta: { [folderId]: { done, total, status } }.
+  const [aiProgress, setAiProgress] = useState({});
   const folderInputRef = useRef(null);
 
   useEffect(() => {
@@ -75,6 +78,41 @@ export default function ProjectFoldersPage() {
     );
     return () => unsubs.forEach((u) => u());
   }, [id, processingIds]);
+
+  // Suscribe a jobs de selección IA en segundo plano para mostrar progreso en vivo
+  // en las tarjetas de carpeta. El usuario ve qué carpeta se está seleccionando sin
+  // necesidad de abrirla, y puede cancelar directamente desde aquí.
+  const aiSelectionIds = folders.filter((f) => getAiJob(id, f.id)?.status === "running").map((f) => f.id).join(",");
+  useEffect(() => {
+    if (!aiSelectionIds) return;
+    const ids = aiSelectionIds.split(",");
+    const unsubs = ids.map((fid) =>
+      subscribeAi(id, fid, (job) => {
+        setAiProgress((prev) => {
+          const next = { ...prev };
+          if (job.status === "running") {
+            next[fid] = { done: job.done, total: job.total, status: job.status };
+          } else {
+            delete next[fid];
+            if (job.status === "completed") {
+              setFolders((prev2) => prev2.map((x) => x.id === fid ? { ...x, selection_status: "completed" } : x));
+            } else if (job.status === "canceled" || job.status === "failed") {
+              setFolders((prev2) => prev2.map((x) => x.id === fid ? { ...x, selection_status: "pending" } : x));
+            }
+          }
+          return next;
+        });
+      })
+    );
+    // Inicializa el progreso para los jobs ya activos.
+    const initial = {};
+    ids.forEach((fid) => {
+      const job = getAiJob(id, fid);
+      if (job) initial[fid] = { done: job.done, total: job.total, status: job.status };
+    });
+    if (Object.keys(initial).length > 0) setAiProgress((prev) => ({ ...prev, ...initial }));
+    return () => unsubs.forEach((u) => u());
+  }, [id, aiSelectionIds]);
 
   const addFolder = async () => {
     if (typeof window.showDirectoryPicker === "function") {
@@ -308,6 +346,8 @@ export default function ProjectFoldersPage() {
               onEdicion={() => openFolder(f, "edicion")}
               onRetry={() => retryFolder(f)}
               progress={jobProgress[f.id]}
+              aiProgress={aiProgress[f.id]}
+              onCancelSeleccion={() => cancelAiSelection(id, f.id)}
             />
           ))}
         </div>
@@ -332,7 +372,7 @@ function StatusBadge({ label, status }) {
   );
 }
 
-function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderName, onRename, onConfirmRename, onCancelRename, onDelete, onMoveUp, onMoveDown, onOpen, onSeleccion, onEdicion, onRetry, progress }) {
+function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderName, onRename, onConfirmRename, onCancelRename, onDelete, onMoveUp, onMoveDown, onOpen, onSeleccion, onEdicion, onRetry, progress, aiProgress, onCancelSeleccion }) {
   const isProcessing = folder.import_status === "processing" && progress;
   const detectedCount = isProcessing && progress.total ? Math.floor(progress.total / 2) : 0;
   const pct = isProcessing && progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -386,9 +426,33 @@ function FolderCard({ folder, isFirst, isLast, renaming, folderName, onFolderNam
                 )}
               </div>
             )}
+            {aiProgress && (
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin text-yellow-500" />
+                    Analizando ráfagas con IA…
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono font-semibold tabular-nums">
+                      {aiProgress.done} / {aiProgress.total}
+                    </span>
+                    <button
+                      onClick={onCancelSeleccion}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs font-medium text-destructive hover:bg-destructive/5"
+                    >
+                      <X className="h-3 w-3" /> Cancelar
+                    </button>
+                  </div>
+                </div>
+                <div className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-secondary">
+                  <div className="h-full rounded-full bg-yellow-500 transition-all duration-150" style={{ width: `${aiProgress.total ? Math.round((aiProgress.done / aiProgress.total) * 100) : 0}%` }} />
+                </div>
+              </div>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-4">
               <StatusBadge label="Importación" status={folder.import_status} />
-              <StatusBadge label="Selección" status={folder.selection_status} />
+              <StatusBadge label="Selección" status={aiProgress ? "in_progress" : folder.selection_status} />
               <StatusBadge label="Edición" status={folder.edit_status} />
             </div>
           </div>
