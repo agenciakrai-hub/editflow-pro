@@ -135,21 +135,19 @@ export default function NuevoProyectoPage() {
           folderId: folder.id,
           folderName: folder.raw_folder_name || folder.name || "",
         });
-        // Previews cacheadas en IndexedDB: la galería se ve al instante.
-        let previewByHash = new Map();
-        try { previewByHash = await getCachedPreviews(fps.map((f) => f.fingerprint_hash).filter(Boolean)); } catch {}
-        const loaded = fps.map((f) => {
-          const cached = previewByHash.get(f.fingerprint_hash);
-          return {
-            id: f.id,
-            file: { name: f.filename },
-            status: f.selection_status || "REVIEW",
-            rating: f.rating || 0,
-            aiReview: f.color_label === "yellow",
-            fingerprint: f,
-            preview: cached ? { dataUrl: cached.dataUrl, hiResDataUrl: cached.hiResDataUrl } : null,
-          };
-        });
+        // NO se cargan todas las previews al abrir: con 4000+ fotos, cargar todas
+        // las previews agotaría la memoria del navegador. Las previews se cargan
+        // bajo demanda (LazyPhotoCard en la galería, PreviewLightbox en el visor)
+        // desde IndexedDB usando el fingerprint_hash de cada foto.
+        const loaded = fps.map((f) => ({
+          id: f.id,
+          file: { name: f.filename },
+          status: f.selection_status || "REVIEW",
+          rating: f.rating || 0,
+          aiReview: f.color_label === "yellow",
+          fingerprint: f,
+          preview: null,
+        }));
         if (!alive) return;
         setItems(loaded);
         setSelectedIds(new Set(loaded.filter((it) => it.fingerprint.marked !== false).map((it) => it.id)));
@@ -532,6 +530,20 @@ export default function NuevoProyectoPage() {
     setAiRunning(true);
     setAiDone(0);
     setAiTotal(marked.length);
+    // Carga previews bajo demanda SOLO para las fotos marcadas (selección IA).
+    // Con 4000+ fotos en la carpeta, cargar todas las previews agotaría la memoria;
+    // la selección IA solo necesita las previews de las fotos marcadas.
+    let itemsForAi = items;
+    try {
+      const markedHashes = marked.map((it) => it.fingerprint?.fingerprint_hash).filter(Boolean);
+      if (markedHashes.length) {
+        const previewByHash = await getCachedPreviews(markedHashes);
+        itemsForAi = items.map((it) => ({
+          ...it,
+          preview: previewByHash.get(it.fingerprint?.fingerprint_hash) || null,
+        }));
+      }
+    } catch {}
     // La selección corre en SEGUNDO PLANO (backgroundAiSelection): sobrevive a la
     // navegación. Si el usuario sale de la página, el proceso continúa y auto-guarda
     // los resultados en la base de datos. Al volver, el componente se suscribe y
@@ -539,7 +551,7 @@ export default function NuevoProyectoPage() {
     startAiSelection({
       projectId: selectionProjectId,
       folderId: selectionFolderId,
-      items,
+      items: itemsForAi,
       selectedIds,
       onProgress: (job) => {
         if (!mountedRef.current) return;
@@ -589,23 +601,33 @@ export default function NuevoProyectoPage() {
       if (selectedIds.has(it.id)) return it.status === "REVIEW" ? "SELECT" : it.status;
       return it.status === "TOP_PICK" || it.status === "REJECT" ? it.status : "REVIEW";
     };
-    const selected = items
-      .filter((it) => ["TOP_PICK", "SELECT"].includes(effStatus(it)))
-      .map((it) => ({
-        id: it.id,
-        file: it.file,
-        preview: it.preview,
-        manualRotation: 0,
-        rating: it.rating || 0,
-        colorLabel: it.aiReview ? "yellow" : "green",
-        cameraInfo: it.cameraInfo || null,
-        asShotWB: it.asShotWB || null,
-        skinStats: it.skinStats || null,
-      }));
-    if (!selected.length) {
+    const selectedBase = items.filter((it) => ["TOP_PICK", "SELECT"].includes(effStatus(it)));
+    if (!selectedBase.length) {
       toast({ title: "Sin fotos seleccionadas", description: "Marca al menos una foto para llevarla a Editar.", variant: "destructive" });
       return;
     }
+    // Carga previews bajo demanda SOLO para las fotos seleccionadas (edición).
+    let selected = selectedBase.map((it) => ({
+      id: it.id,
+      file: it.file,
+      preview: null,
+      manualRotation: 0,
+      rating: it.rating || 0,
+      colorLabel: it.aiReview ? "yellow" : "green",
+      cameraInfo: it.cameraInfo || null,
+      asShotWB: it.asShotWB || null,
+      skinStats: it.skinStats || null,
+    }));
+    try {
+      const selectedHashes = selectedBase.map((it) => it.fingerprint?.fingerprint_hash).filter(Boolean);
+      if (selectedHashes.length) {
+        const previewByHash = await getCachedPreviews(selectedHashes);
+        selected = selected.map((it, i) => ({
+          ...it,
+          preview: previewByHash.get(selectedBase[i].fingerprint?.fingerprint_hash) || null,
+        }));
+      }
+    } catch {}
     setSession({ photos: selected });
     navigate("/ajustes-ia");
   };
@@ -789,6 +811,7 @@ export default function NuevoProyectoPage() {
             aiReview: !!it.aiReview,
             previewUrl: it.preview?.dataUrl,
             hiResUrl: it.preview?.hiResDataUrl,
+            fingerprintHash: it.fingerprint?.fingerprint_hash,
             // Datos para ordenar: hora de captura (epoch ms) y cámara (marca + modelo).
             captureTime: it.fingerprint?.capture_time,
             camera: [it.fingerprint?.camera_make, it.fingerprint?.camera_model].filter(Boolean).join(" "),

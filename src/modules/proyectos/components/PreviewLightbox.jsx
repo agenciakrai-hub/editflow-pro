@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, ChevronLeft, ChevronRight } from "lucide-react";
+import { getCachedPreview } from "../lib/previewCache";
+import LazyThumb from "./LazyThumb";
 
 // Vista previa a pantalla completa (modo revisión): foto grande al centro, contador
 // de totales/seleccionadas arriba y tira de miniaturas abajo. ⌘/Ctrl+clic sobre la
@@ -18,16 +20,36 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
   // la ve nítida sin flash ni parpadeo. Las miniaturas de la tira inferior siguen
   // usando el de 800px (son pequeñas y no necesitan más resolución).
   const currentItem = index != null && index >= 0 && index < items.length ? items[index] : null;
-  const [displayUrl, setDisplayUrl] = useState(currentItem?.previewUrl);
+  const [displayUrl, setDisplayUrl] = useState(currentItem?.previewUrl || null);
   useEffect(() => {
     if (!currentItem) return;
-    setDisplayUrl(currentItem.previewUrl);
-    if (currentItem.hiResUrl && currentItem.hiResUrl !== currentItem.previewUrl) {
-      const img = new Image();
-      img.onload = () => setDisplayUrl(currentItem.hiResUrl);
-      img.src = currentItem.hiResUrl;
+    let cancelled = false;
+    // Si la preview ya está en memoria (p. ej. backgroundProcessor recién completado),
+    // la usa directamente. Si no, la carga bajo demanda desde IndexedDB.
+    if (currentItem.previewUrl) {
+      setDisplayUrl(currentItem.previewUrl);
+      if (currentItem.hiResUrl && currentItem.hiResUrl !== currentItem.previewUrl) {
+        const img = new Image();
+        img.onload = () => { if (!cancelled) setDisplayUrl(currentItem.hiResUrl); };
+        img.src = currentItem.hiResUrl;
+      }
+      return () => { cancelled = true; };
     }
-  }, [currentItem?.id, currentItem?.previewUrl, currentItem?.hiResUrl]);
+    // Carga bajo demanda desde IndexedDB (carpetas con 4000+ fotos).
+    setDisplayUrl(null);
+    getCachedPreview(currentItem.fingerprintHash)
+      .then((preview) => {
+        if (cancelled || !preview) return;
+        setDisplayUrl(preview.dataUrl);
+        if (preview.hiResDataUrl) {
+          const img = new Image();
+          img.onload = () => { if (!cancelled) setDisplayUrl(preview.hiResDataUrl); };
+          img.src = preview.hiResDataUrl;
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentItem?.id, currentItem?.previewUrl, currentItem?.hiResUrl, currentItem?.fingerprintHash]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -96,7 +118,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
             <ChevronLeft className="h-7 w-7" />
           </button>
         )}
-        {item.previewUrl ? (
+        {displayUrl ? (
           <>
             <img
               src={displayUrl}
@@ -119,7 +141,7 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
           </>
         ) : (
           <div className="flex h-40 w-64 items-center justify-center rounded-lg bg-white/5 text-xs text-white/50">
-            Sin preview
+            {currentItem?.fingerprintHash ? "Cargando preview…" : "Sin preview"}
           </div>
         )}
         {index < items.length - 1 && (
@@ -159,55 +181,18 @@ export default function PreviewLightbox({ items, index, onIndex, onClose, select
         className="scrollbar-hide flex shrink-0 items-end gap-2 overflow-x-auto px-4 pb-4"
         onClick={(e) => e.stopPropagation()}
       >
-        {items.map((it, i) => {
-          const marked = selectedIds.has(it.id);
-          // Punto/marco de color: amarillo = a revisar (prevalece), verde = seleccionada.
-          const review = !!it.aiReview;
-          return (
-            <div
-              key={it.id}
-              data-thumb={i}
-              onClick={(e) => handleThumbClick(e, it, i)}
-              className={
-                "relative shrink-0 cursor-pointer overflow-hidden rounded-md border transition-opacity " +
-                (i === index
-                  ? review
-                    ? "border-yellow-400 ring-2 ring-yellow-400"
-                    : marked
-                      ? "border-green-500 ring-2 ring-green-500"
-                      : "border-white ring-2 ring-white"
-                  : review
-                    ? "border-yellow-400"
-                    : marked
-                      ? "border-green-500"
-                      : "border-white/10")
-              }
-              title={it.filename}
-            >
-              {(review || marked) && (
-                <span
-                  className={
-                    "absolute right-1 top-1 z-10 h-2.5 w-2.5 rounded-full ring-1 ring-black/50 " +
-                    (review ? "bg-yellow-400" : "bg-green-500")
-                  }
-                />
-              )}
-              {it.previewUrl ? (
-                <img
-                  src={it.previewUrl}
-                  alt={it.filename}
-                  style={{ height: thumbH, width: Math.round(thumbH * 1.4) }}
-                  className="object-cover"
-                />
-              ) : (
-                <div style={{ height: thumbH, width: Math.round(thumbH * 1.4) }} className="bg-white/10" />
-              )}
-              <span className="absolute bottom-0.5 left-1 max-w-[calc(100%-0.5rem)] truncate rounded bg-black/60 px-1 text-[10px] text-white">
-                {it.filename}
-              </span>
-            </div>
-          );
-        })}
+        {items.map((it, i) => (
+          <LazyThumb
+            key={it.id}
+            item={it}
+            index={i}
+            isActive={i === index}
+            isMarked={selectedIds.has(it.id)}
+            isReview={!!it.aiReview}
+            thumbH={thumbH}
+            onClick={(e) => handleThumbClick(e, it, i)}
+          />
+        ))}
       </div>
     </div>
   );

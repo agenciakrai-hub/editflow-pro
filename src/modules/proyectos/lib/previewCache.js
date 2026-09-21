@@ -63,3 +63,21 @@ export async function getCachedPreviews(hashes) {
   });
   return map;
 }
+
+// hash: string -> { dataUrl, hiResDataUrl } | null
+// Carga UNA preview bajo demanda (para LazyPhotoCard y PreviewLightbox). Evita
+// cargar las 4000+ previews de una carpeta al abrirla, que agota la memoria.
+export async function getCachedPreview(hash) {
+  if (!hash) return null;
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, "readonly");
+    const r = tx.objectStore(STORE).get(hash);
+    r.onsuccess = () => {
+      if (!r.result) return resolve(null);
+      if (typeof r.result === "string") resolve({ dataUrl: r.result, hiResDataUrl: null });
+      else resolve({ dataUrl: r.result.lo, hiResDataUrl: r.result.hi || null });
+    };
+    tx.onerror = () => reject(tx.error);
+  });
+}

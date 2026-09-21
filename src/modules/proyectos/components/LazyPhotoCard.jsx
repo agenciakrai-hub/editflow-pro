@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Star } from "lucide-react";
 import { STATUS_LABEL, STATUS_COLOR } from "./PhotoFingerprintGrid";
+import { getCachedPreview } from "../lib/previewCache";
 
 // Tarjeta de foto con renderizado diferido: solo renderiza el contenido completo
 // (imagen, estrellas, botones) cuando la tarjeta está cerca del viewport.
@@ -17,6 +18,10 @@ export default function LazyPhotoCard({
 }) {
   const ref = useRef(null);
   const [visible, setVisible] = useState(false);
+  // Preview cargada bajo demanda desde IndexedDB. No se carga al abrir el proyecto
+  // (4000+ previews en memoria agotarían el navegador); se carga cuando la tarjeta
+  // entra en el viewport.
+  const [previewUrl, setPreviewUrl] = useState(item.previewUrl || null);
 
   useEffect(() => {
     const el = ref.current;
@@ -33,6 +38,17 @@ export default function LazyPhotoCard({
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  // Carga la preview desde IndexedDB cuando la tarjeta se hace visible y aún no
+  // tiene preview en memoria.
+  useEffect(() => {
+    if (!visible || previewUrl || !item.fingerprintHash) return;
+    let cancelled = false;
+    getCachedPreview(item.fingerprintHash)
+      .then((p) => { if (!cancelled && p?.dataUrl) setPreviewUrl(p.dataUrl); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [visible, previewUrl, item.fingerprintHash]);
 
   const review = !!item.aiReview || item.rating === 3;
   const green = item.rating === 5 || checked;
@@ -53,14 +69,14 @@ export default function LazyPhotoCard({
               {checked ? <span className="text-[11px] font-bold leading-none">✓</span> : null}
             </button>
           </div>
-          {item.previewUrl ? (
+          {previewUrl ? (
             <div
               className="aspect-square w-full cursor-pointer bg-black/5"
               title="Un clic cicla: verde (5★) → amarillo (3★) → sin color · Cmd/Ctrl+clic selecciona o deselecciona un rango (dos clics) · doble clic abre la vista previa"
               onClick={(e) => onPhotoClick(e, item, index)}
               onDoubleClick={() => onPhotoDoubleClick(index)}
             >
-              <img src={item.previewUrl} alt={item.filename} className="h-full w-full object-contain" loading="lazy" decoding="async" />
+              <img src={previewUrl} alt={item.filename} className="h-full w-full object-contain" loading="lazy" decoding="async" />
             </div>
           ) : (
             <div className="aspect-square w-full bg-muted" />
