@@ -16,6 +16,10 @@ const MOTION_PRESETS = {
   pan_down:   { scaleStart: 1.12, scaleEnd: 1.12, panX: 0, panY: -0.06 },
   dolly_in:   { scaleStart: 1.0, scaleEnd: 1.2, panX: 0, panY: 0 },
   ken_burns:  { scaleStart: 1.05, scaleEnd: 1.18, panX: -0.04, panY: -0.03 },
+  // Parallax 2.5D: zoom pronunciado + pan diagonal + viñeta dinámica que simula
+  // profundidad. El efecto se completa en videoRenderer con un gradiente radial
+  // que se desplaza en dirección opuesta al pan, creando la ilusión de capas.
+  parallax:   { scaleStart: 1.08, scaleEnd: 1.22, panX: -0.05, panY: -0.04, parallax: true },
 };
 
 export function resolveMotion(motion) {
@@ -23,7 +27,7 @@ export function resolveMotion(motion) {
 }
 
 // Calcula la transformación en un instante t (0..1) de la duración de la foto.
-// Devuelve { scale, panX, panY } listos para aplicar al canvas.
+// Devuelve { scale, panX, panY, parallax } listos para aplicar al canvas.
 export function motionAt(motion, t) {
   const p = resolveMotion(motion);
   const tt = Math.max(0, Math.min(1, t));
@@ -33,6 +37,7 @@ export function motionAt(motion, t) {
     scale: p.scaleStart + (p.scaleEnd - p.scaleStart) * e,
     panX: p.panX * e,
     panY: p.panY * e,
+    parallax: !!p.parallax,
   };
 }
 

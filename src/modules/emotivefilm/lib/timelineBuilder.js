@@ -5,10 +5,11 @@
 import { transitionDuration } from "./transitionEngine";
 
 // Normaliza el film_plan en una timeline con tiempos absolutos.
-// Cada clip: { hash, filename, scene, motion, transition, intensity, start, duration, transitionIn, transitionDur }
+// Devuelve SIEMPRE { clips, totalDuration } (clips=[] si no hay timeline).
+// Cada clip: { hash, scene, motion, transition, intensity, start, duration, transitionDur }
 export function buildTimeline(filmPlan, music, settings) {
   const timeline = Array.isArray(filmPlan?.timeline) ? filmPlan.timeline : [];
-  if (!timeline.length) return [];
+  if (!timeline.length) return { clips: [], totalDuration: 0 };
 
   const clips = [];
   let cursor = 0;
@@ -30,7 +31,38 @@ export function buildTimeline(filmPlan, music, settings) {
     // El siguiente clip empieza solapado con la transición de este.
     cursor += dur - (i < timeline.length - 1 ? transDur : 0);
   }
-  return { clips, totalDuration: cursor + (timeline.length ? timeline[timeline.length - 1].duration || 3 : 0) };
+  const lastDur = timeline.length ? Math.max(1.2, Number(timeline[timeline.length - 1].duration) || 3) : 0;
+  const totalDuration = cursor + lastDur;
+
+  // Sincronización con música: alinea los inicios de clip a beats cercanos.
+  // Solo ajusta si el beat está dentro de ±0.4s del inicio planificado — no
+  // destruye la estructura, solo la "ancla" rítmicamente.
+  const beats = music?.beats;
+  if (Array.isArray(beats) && beats.length > 4) {
+    alignToBeats(clips, beats, totalDuration);
+  }
+
+  return { clips, totalDuration };
+}
+
+// Alinea los inicios de clip a beats cercanos. Mueve el cursor de cada clip
+// al beat más cercano dentro de una ventana de tolerancia. Recalcula los
+// tiempos absolutos en cascada para mantener la continuidad.
+function alignToBeats(clips, beats, totalDuration) {
+  if (!clips.length || !beats.length) return;
+  for (let i = 1; i < clips.length; i++) {
+    const target = clips[i].start;
+    let best = target;
+    let bestDist = 0.4; // tolerancia máxima
+    for (const b of beats) {
+      const d = Math.abs(b - target);
+      if (d < bestDist) { bestDist = d; best = b; }
+    }
+    const delta = best - target;
+    if (Math.abs(delta) < 0.05) continue;
+    // Desplaza este clip y todos los siguientes.
+    for (let j = i; j < clips.length; j++) clips[j].start += delta;
+  }
 }
 
 // Valida la timeline antes de renderizar. Devuelve { ok, errors[] }.
@@ -55,4 +87,41 @@ export function validateTimeline(clips, previewMap) {
     }
   }
   return { ok: errors.length === 0, errors };
+}
+
+// Construcción del clímax: asegura que las fotos más emocionales de la pareja
+// estén en el momento de mayor intensidad de la canción. Recibe la timeline
+// construida, el momento de clímax (segundos) y los hashes de pareja.
+// Si el clip en el clímax no es de pareja, lo intercambia por el clip de pareja
+// más cercano al clímax (sin reordenar la timeline, solo sustituyendo el hash).
+export function ensureClimaxCouple(clips, climaxAt, coupleHashes) {
+  if (!clips.length || !climaxAt || !coupleHashes?.length) return clips;
+  const coupleSet = new Set(coupleHashes);
+  // Encuentra el clip activo en el clímax.
+  let climaxIdx = -1;
+  for (let i = 0; i < clips.length; i++) {
+    if (clips[i].start <= climaxAt && clips[i].start + clips[i].duration >= climaxAt) {
+      climaxIdx = i;
+      break;
+    }
+  }
+  if (climaxIdx < 0) climaxIdx = Math.floor(clips.length / 2);
+  if (coupleSet.has(clips[climaxIdx].hash)) return clips; // ya es de pareja
+  // Busca el clip de pareja más cercano al clímax por intensidad.
+  let bestCoupleIdx = -1, bestDist = Infinity;
+  for (let i = 0; i < clips.length; i++) {
+    if (!coupleSet.has(clips[i].hash)) continue;
+    const dist = Math.abs(clips[i].start - climaxAt);
+    if (dist < bestDist) { bestDist = dist; bestCoupleIdx = i; }
+  }
+  if (bestCoupleIdx < 0 || bestCoupleIdx === climaxIdx) return clips;
+  // Intercambia los hashes (mantiene tiempos y movimientos).
+  const out = clips.map((c) => ({ ...c }));
+  const tmpHash = out[climaxIdx].hash;
+  const tmpScene = out[climaxIdx].scene;
+  out[climaxIdx].hash = out[bestCoupleIdx].hash;
+  out[climaxIdx].scene = out[bestCoupleIdx].scene;
+  out[bestCoupleIdx].hash = tmpHash;
+  out[bestCoupleIdx].scene = tmpScene;
+  return out;
 }

@@ -130,7 +130,7 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
 }
 
 // Construye la selección automática. Combina scores, prioriza la pareja, evita
-// repetición de escenas y aplica los pesos de los ajustes avanzados.
+// repetición de escenas, ELIMINA FOTOS DUPLICADAS (pHash hamming) y aplica los pesos.
 function buildSelection(allPhotos, analyzed, coupleHashes, settings) {
   const s = settings || {};
   const emotionW = s.emotion_intensity == null || s.emotion_intensity === "auto" ? 1 : Number(s.emotion_intensity) / 50;
@@ -165,11 +165,26 @@ function buildSelection(allPhotos, analyzed, coupleHashes, settings) {
   // Ordena por score narrativo.
   scored.sort((a, b) => b.narrative_score - a.narrative_score);
 
+  // ELIMINACIÓN DE DUPLICADOS: dos fotos con pHash hamming distance < 6 son
+  // visualmente casi idénticas (misma toma, ráfaga). Se keep la de mayor score
+  // y se descarta la otra. El fingerprint_hash ES el pHash en hexadecimal.
+  const deduped = [];
+  const acceptedHashes = [];
+  for (const p of scored) {
+    let isDup = false;
+    for (const ah of acceptedHashes) {
+      if (phashHamming(p.fingerprint_hash, ah) < 6) { isDup = true; break; }
+    }
+    if (isDup) continue;
+    deduped.push(p);
+    acceptedHashes.push(p.fingerprint_hash);
+  }
+
   // Evita repetición: máximo N fotos por escena (proporcional al total).
   const maxPerScene = Math.max(3, Math.floor(maxPhotos / 8));
   const byScene = {};
   const selected = [];
-  for (const p of scored) {
+  for (const p of deduped) {
     if (selected.length >= maxPhotos) break;
     const sc = p.scene || "otros";
     if ((byScene[sc] || 0) >= maxPerScene && sc !== "pareja" && sc !== "beso") continue;
@@ -186,6 +201,20 @@ function buildSelection(allPhotos, analyzed, coupleHashes, settings) {
   });
 
   return selected;
+}
+
+// Distancia de Hamming entre dos pHash hexadecimales. Devuelve el número de bits
+// diferentes. <6 = casi idénticas; <12 = muy similares; >16 = diferentes.
+function phashHamming(hashA, hashB) {
+  if (!hashA || !hashB || hashA.length !== hashB.length) return 64;
+  let dist = 0;
+  for (let i = 0; i < hashA.length; i++) {
+    const xa = parseInt(hashA[i], 16);
+    const xb = parseInt(hashB[i], 16);
+    let diff = xa ^ xb;
+    while (diff) { dist += diff & 1; diff >>= 1; }
+  }
+  return dist;
 }
 
 // Genera el Film Plan llamando al backend (LLM). Recibe la selección + música + estilo.

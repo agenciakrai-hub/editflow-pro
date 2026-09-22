@@ -109,7 +109,8 @@ export class FilmRenderer {
   }
 
   // Dibuja una imagen con movimiento Ken Burns aplicado. Contiene la imagen en
-  // el canvas (object-fit: contain) y aplica scale + pan.
+  // el canvas (object-fit: contain) y aplica scale + pan. Si el movimiento es
+  // parallax, añade una viñeta radial dinámica que simula profundidad 2.5D.
   _drawImage(img, clip, localT, opts = {}) {
     const ctx = this.ctx;
     const W = this.canvas.width, H = this.canvas.height;
@@ -134,6 +135,21 @@ export class FilmRenderer {
     const dy = (H - dh) / 2 + panY;
 
     ctx.drawImage(img, dx, dy, dw, dh);
+
+    // Parallax 2.5D: viñeta radial dinámica que se desplaza en dirección opuesta
+    // al pan, creando la ilusión de que el foreground y el background se mueven a
+    // distinta velocidad. Solo se aplica si el movimiento es parallax.
+    if (m.parallax && !opts.blur) {
+      ctx.filter = "none";
+      const cx = W / 2 - panX * 1.5;
+      const cy = H / 2 - panY * 1.5;
+      const grad = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.25, W / 2, H / 2, Math.max(W, H) * 0.7);
+      grad.addColorStop(0, "rgba(0,0,0,0)");
+      grad.addColorStop(1, `rgba(0,0,0,${0.35 * alpha})`);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+    }
 
     // Dip to black overlay
     if (opts.black && opts.black > 0) {
