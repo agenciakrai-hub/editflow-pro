@@ -103,24 +103,41 @@ export async function exportWithWebCodecs(renderer, onProgress) {
   const is4k = canvas.height >= 2160;
   const videoBitrate = is4k ? VIDEO_BITRATE_4K : VIDEO_BITRATE_1080;
 
-  // Configura el muxer según el formato.
+  // Determina el sample rate real del audio a usar. AAC soporta casi cualquier
+  // rate común; Opus solo soporta 8000/12000/16000/24000/48000. Si el audio
+  // original no es compatible con Opus, se remuestrea a 48000 Hz.
+  let actualAudioBuffer = audioBuffer;
+  let audioSampleRate = audioBuffer?.sampleRate || 44100;
+  const audioChannels = Math.min(2, audioBuffer?.numberOfChannels || 2);
+
+  if (audioBuffer && formatInfo.format === "webm") {
+    const opusRates = [48000, 24000, 16000, 12000, 8000];
+    if (!opusRates.includes(audioBuffer.sampleRate)) {
+      actualAudioBuffer = await resampleAudio(audioBuffer, 48000);
+      audioSampleRate = 48000;
+    }
+  }
+
+  // Configura el muxer según el formato, usando el sample rate real del audio.
   let muxer;
   if (formatInfo.format === "mp4") {
     muxer = new Mp4Muxer({
       target: new Mp4Target(),
-      video: { codec: "avc", width: canvas.width, height: canvas.height },
-      audio: audioBuffer
-        ? { codec: "aac", sampleRate: 44100, numberOfChannels: 2 }
+      video: { codec: "avc", width: canvas.width, height: canvas.height, frameRate: FPS },
+      audio: actualAudioBuffer
+        ? { codec: "aac", sampleRate: audioSampleRate, numberOfChannels: audioChannels }
         : undefined,
       fastStart: "in-memory",
+      firstTimestampBehavior: "offset",
     });
   } else {
     muxer = new WebmMuxer({
       target: new WebmTarget(),
-      video: { codec: "V_VP9", width: canvas.width, height: canvas.height },
-      audio: audioBuffer
-        ? { codec: "A_OPUS", sampleRate: 48000, numberOfChannels: 2 }
+      video: { codec: "V_VP9", width: canvas.width, height: canvas.height, frameRate: FPS },
+      audio: actualAudioBuffer
+        ? { codec: "A_OPUS", sampleRate: audioSampleRate, numberOfChannels: audioChannels }
         : undefined,
+      firstTimestampBehavior: "offset",
     });
   }
 
