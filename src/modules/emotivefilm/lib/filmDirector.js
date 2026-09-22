@@ -38,6 +38,54 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
   let done = 0;
   const total = toAnalyze.length;
   const batchErrors = []; // [{ count, error }] — lotes donde TODOS los proveedores fallaron
+
+  // Analiza un lote con reintentos automáticos. Si el lote falla (todos los proveedores
+  // cayeron), lo parte en dos sub-lotes más pequeños y los reintenta. Esto recupera
+  // lotes que fallan por payload demasiado grande o rate-limit transitorio. Cada
+  // sub-lote hereda las fotos que no se analizaron con éxito.
+  const analyzeWithRetry = async (photosWithPreview, depth = 0) => {
+    if (signal?.aborted) return [];
+    if (!photosWithPreview.length) return [];
+    try {
+      const res = await base44.functions.invoke("emotive-film", {
+        action: "analyze-batch",
+        photos: photosWithPreview,
+      });
+      const results = res?.data?.results || [];
+      if (!results.length && photosWithPreview.length) {
+        throw new Error(res?.data?.error || "Proveedores IA no disponibles");
+      }
+      // Registra qué hashes se analizaron con éxito.
+      const okHashes = new Set(results.map((r) => r.fingerprint_hash));
+      // Los que no volvieron (el modelo los omitió) se devuelven para reintento.
+      const missing = photosWithPreview.filter((p) => !okHashes.has(p.fingerprint_hash));
+      return { results, missing };
+    } catch (e) {
+      // Si el lote es pequeño (≤2 fotos) o ya se partió 2 veces, no se parte más.
+      if (depth >= 2 || photosWithPreview.length <= 2) {
+        throw e;
+      }
+      // Parte en dos sub-lotes y reintenta cada uno.
+      const mid = Math.ceil(photosWithPreview.length / 2);
+      const left = photosWithPreview.slice(0, mid);
+      const right = photosWithPreview.slice(mid);
+      const [leftRes, rightRes] = await Promise.allSettled([
+        analyzeWithRetry(left, depth + 1),
+        analyzeWithRetry(right, depth + 1),
+      ]);
+      const allResults = [];
+      const allMissing = [];
+      for (const r of [leftRes, rightRes]) {
+        if (r.status === "fulfilled" && r.value?.results) {
+          allResults.push(...r.value.results);
+          if (r.value.missing) allMissing.push(...r.value.missing);
+        }
+      }
+      if (!allResults.length) throw e; // ambos sub-lotes fallaron
+      return { results: allResults, missing: allMissing };
+    }
+  };
+
   await runParallel(batches, ANALYZE_CONCURRENCY, async (batch) => {
     if (signal?.aborted) return;
     const hashes = batch.map((p) => p.fingerprint_hash);
@@ -56,15 +104,7 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
       return;
     }
     try {
-      const res = await base44.functions.invoke("emotive-film", {
-        action: "analyze-batch",
-        photos: photosWithPreview,
-      });
-      const results = res?.data?.results || [];
-      if (!results.length && photosWithPreview.length) {
-        // El backend no devolvió resultados: todos los proveedores fallaron.
-        batchErrors.push({ count: photosWithPreview.length, error: res?.data?.error || "Proveedores IA no disponibles" });
-      }
+      const { results, missing } = await analyzeWithRetry(photosWithPreview);
       for (const r of results) {
         if (r.fingerprint_hash) {
           analyzed[r.fingerprint_hash] = {
@@ -81,10 +121,12 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
           };
         }
       }
+      // Si quedaron fotos sin analizar tras los reintentos, regístralas como error.
+      if (missing?.length) {
+        batchErrors.push({ count: missing.length, error: "Fotos omitidas por el modelo tras reintentos" });
+      }
     } catch (e) {
-      console.warn("analyze-batch error", e?.message || e);
-      // Extrae el mensaje real del backend (viene en e.response.data.error cuando la
-      // función devuelve 500). Sin esto, el usuario solo ve "Request failed with status code 500".
+      console.warn("analyze-batch error (tras reintentos)", e?.message || e);
       const realError = e?.response?.data?.error || e?.message || "Error de red";
       batchErrors.push({ count: photosWithPreview.length, error: realError });
     }

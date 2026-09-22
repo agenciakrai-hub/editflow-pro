@@ -58,6 +58,14 @@ export default function ExportPanel({ filmPlan, music, settings, exportConfig, o
       await loadBatchPreviews(hashes);
       for (const c of clips) await r._getImage(c.hash);
 
+      // Si hay música pero no audioBuffer cargado, avisa al usuario antes de exportar.
+      if (music && !audioBuffer) {
+        setError("Vuelve a añadir la canción en el panel de música para incluir el audio.");
+        setExporting(false);
+        r.destroy();
+        return;
+      }
+
       // Intenta primero el renderer profesional (WebCodecs → MP4 determinista).
       let result = null;
       if (isWebCodecsAvailable()) {
@@ -164,6 +172,13 @@ export default function ExportPanel({ filmPlan, music, settings, exportConfig, o
       {downloadFormat === "mp4" && !exporting && (
         <div className="mt-2 flex items-center gap-1.5 text-xs text-green-600">
           <CheckCircle2 className="h-3.5 w-3.5" /> MP4 real (H.264+AAC) — reproducible en cualquier dispositivo.
+        </div>
+      )}
+
+      {music && !audioBuffer && !exporting && (
+        <div className="mt-3 flex items-start gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>La canción está registrada pero el audio no está cargado en esta sesión. Vuelve a añadir la canción en el panel de música para incluir la pista de audio en el vídeo exportado.</span>
         </div>
       )}
 
