@@ -604,6 +604,11 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     ...primaryChain.map((m) => ({ model: m, auto: false })),
     ...autoChain.map((m) => ({ model: m, auto: true })),
   ];
+  // Errores a nivel de CUENTA (no de modelo): 402 (créditos insuficientes), 403 (permisos/
+  // verificación pendiente). Si un modelo falla con uno de estos, TODOS los demás modelos
+  // del MISMO proveedor fallarán igual (mismo endpoint, misma API key, misma cuenta).
+  // Abortar inmediatamente con un error claro en vez de probar 273 modelos uno a uno.
+  const ACCOUNT_LEVEL_STATUS = new Set([402, 403]);
   let lastErr: any;
   for (let mi = 0; mi < fullChain.length; mi++) {
     const { model, auto } = fullChain[mi];
@@ -666,6 +671,14 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0, auto_discovered: auto });
       console.log(`[aiProvider] modelo ${model} fallo: ${msg}${isLastModel ? " (sin mas modelos en este proveedor)" : ""}`);
       lastErr = e;
+      // ABORT early en errores a nivel de cuenta (402/403): todos los modelos del mismo
+      // proveedor fallarán igual. No tiene sentido probar los 273 modelos restantes.
+      if (ACCOUNT_LEVEL_STATUS.has(e?.httpStatus)) {
+        const accountErr: any = new Error(`[${rec.name}] ${msg}`);
+        accountErr.httpStatus = e.httpStatus;
+        accountErr.accountLevel = true;
+        throw accountErr;
+      }
     }
   }
   throw lastErr || new Error(`Todos los modelos de "${rec.name}" fallaron para ${taskLabel}`);

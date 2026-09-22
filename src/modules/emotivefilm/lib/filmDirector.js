@@ -83,7 +83,10 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
       }
     } catch (e) {
       console.warn("analyze-batch error", e?.message || e);
-      batchErrors.push({ count: photosWithPreview.length, error: e?.message || "Error de red" });
+      // Extrae el mensaje real del backend (viene en e.response.data.error cuando la
+      // función devuelve 500). Sin esto, el usuario solo ve "Request failed with status code 500".
+      const realError = e?.response?.data?.error || e?.message || "Error de red";
+      batchErrors.push({ count: photosWithPreview.length, error: realError });
     }
     done += batch.length;
     onProgress?.("analyze", done, total);
