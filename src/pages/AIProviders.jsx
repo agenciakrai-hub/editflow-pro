@@ -177,7 +177,11 @@ export default function AIProviders() {
       if (!String(val || "").startsWith("custom:")) return false;
       const p = providers.find((c) => `custom:${c.id}` === val);
       if (!p || !p.enabled || p.last_ok === false) return false;
-      return (p.video_models?.length > 0) || !!p.model;
+      if (p.video_models?.length > 0) return true;
+      // EMOTIVE FILM usa VLM (visión): cualquier proveedor con modelos vision-capable
+      // es utilizable para Vídeo, aunque no estén marcados en la pestaña "Vídeo".
+      const meta = p.available_models_meta || [];
+      return meta.some((e) => e?.caps?.vision === true) || !!p.model;
     }
     if (task === "album") {
       // Álbum: proveedores de la cadena propia (siempre utilizables) o propios con
@@ -223,11 +227,12 @@ export default function AIProviders() {
   const videoModelOptions = markedModelsOf("video");
   // Proveedores utilizables para Vídeo (encendidos, conectados, con modelos de vídeo).
   const videoProviderOptions = providerOptions.filter((o) => usable(o.value, "video"));
-  // Cadena de vídeo: respeta la guardada; si está vacía, auto-selecciona los 3 primeros.
+  // Cadena de vídeo: respeta la guardada; si está vacía, auto-selecciona TODOS los
+  // proveedores utilizables para Vídeo (failover entre todos ellos).
   const effectiveVideoChain = (active.active_video_chain || []).filter((v) => usable(v, "video"));
   const videoChainResolved = effectiveVideoChain.length > 0
     ? effectiveVideoChain
-    : videoProviderOptions.slice(0, 3).map((o) => o.value);
+    : videoProviderOptions.map((o) => o.value);
   const toggleVideoProvider = (val) => {
     setActive((a) => {
       const current = a.active_video_chain || [];
@@ -399,7 +404,7 @@ export default function AIProviders() {
           <label className="text-sm font-medium">Vídeo — EMOTIVE FILM IA</label>
           <p className="text-xs text-muted-foreground">
             Cadena ordenada de proveedores para Vídeo. El motor intenta el primero; si falla (todos sus modelos), salta al siguiente.
-            Marca los proveedores en orden de prioridad. Si no seleccionas ninguno, se usan por defecto los 3 primeros disponibles.
+            Si no seleccionas ninguno, se usan automáticamente TODOS los proveedores con capacidad de visión en orden de failover.
           </p>
           {videoProviderOptions.length === 0 ? (
             <p className="text-xs text-muted-foreground italic">

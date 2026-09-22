@@ -403,6 +403,34 @@ async function buildFailoverChain(base44: any, active: string, task?: AiTask): P
   return chain;
 }
 
+// Construye la cadena de Vídeo dinámicamente: TODOS los proveedores personalizados
+// habilitados con modelos vision-capable (o marcados para vídeo/selección, o modelo
+// legado) + proveedores integrados habilitados + Base44 como último recurso. EMOTIVE
+// FILM IA usa VLM (visión) para analizar fotos, así que cualquier proveedor con
+// capacidad de visión es válido. Se usa cuando active_video_chain está vacío.
+async function buildVideoChain(base44: any): Promise<string[]> {
+  const chain: string[] = [];
+  const push = (p: string) => { if (p && p !== "none" && !chain.includes(p)) chain.push(p); };
+  try {
+    const customs = await base44.asServiceRole.entities.CustomAiProvider.list();
+    for (const c of (Array.isArray(customs) ? customs : [])) {
+      if (c.enabled === false) continue;
+      const metaList = Array.isArray(c.available_models_meta) ? c.available_models_meta : [];
+      const hasVision = metaList.some((e: any) => e?.caps?.vision === true);
+      const hasMarked = (c.video_models?.length > 0) || (c.seleccion_models?.length > 0);
+      if (hasVision || hasMarked || c.model) push(`custom:${c.id}`);
+    }
+  } catch {}
+  const cfg = await getConfig(base44);
+  if (cfg) {
+    if (cfg.qwen_enabled) push("qwen");
+    if (cfg.gemini_enabled) push("gemini");
+    if (cfg.nvidia_enabled) push("nvidia");
+  }
+  push("base44");
+  return chain;
+}
+
 // Punto unico de ruteo. FAILOVER SOLO ENTRE MODELOS DEL MISMO PROVEEDOR: el proveedor
 // activo es el ÚNICO que se intenta. Si el modelo elegido falla (429/500/timeout),
 // callCustom reintenta con el siguiente modelo marcado y verificado vision-capable del
@@ -441,14 +469,19 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
   const { active, exact, chain } = await getTaskConfig(base44, opts.task);
   if (opts._trace) { opts._trace.active_provider = active; opts._trace.configured_model = exact || "(auto)"; }
 
-  // VÍDEO: cadena multi-proveedor (failover entre proveedores). Si el proveedor
-  // primario falla (todos sus modelos), se salta al siguiente proveedor de la
-  // cadena. Cada proveedor hace su propio failover a nivel de modelo (callCustom).
-  // Si todos los proveedores de la cadena fallan, la tarea falla con el último error.
-  if (opts.task === "video" && Array.isArray(chain) && chain.length > 1) {
+  // VÍDEO: cadena multi-proveedor (failover entre proveedores). Si la cadena
+  // guardada está vacía, se construye automáticamente con TODOS los proveedores
+  // habilitados con capacidad de visión (EMOTIVE FILM usa VLM). Si el proveedor
+  // primario falla (todos sus modelos), se salta al siguiente. Cada proveedor hace
+  // su propio failover a nivel de modelo (callCustom). Si todos fallan, la tarea
+  // falla con el último error. NUNCA se rinde sin probar todos los proveedores.
+  if (opts.task === "video") {
+    let videoChain = Array.isArray(chain) && chain.length > 0 ? chain : await buildVideoChain(base44);
+    if (videoChain.length === 0) videoChain = ["base44"];
+    if (opts._trace) { opts._trace.video_chain = videoChain; }
     let lastErr: any;
-    for (let pi = 0; pi < chain.length; pi++) {
-      const provider = chain[pi];
+    for (let pi = 0; pi < videoChain.length; pi++) {
+      const provider = videoChain[pi];
       if (opts._trace) { opts._trace.active_provider = provider; opts._trace.chain_index = pi; }
       const isCustomV = typeof provider === "string" && provider.startsWith("custom:");
       const tV0 = Date.now();
@@ -470,10 +503,10 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
           if (!isCustomV) {
             opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - tV0 });
           }
-          opts._trace.failover_reason = `Proveedor ${pi + 1}/${chain.length} (${provider}) falló: ${msg}`;
+          opts._trace.failover_reason = `Proveedor ${pi + 1}/${videoChain.length} (${provider}) falló: ${msg}`;
         }
         lastErr = e;
-        console.log(`[aiProvider] video chain: proveedor ${provider} (${pi + 1}/${chain.length}) falló, saltando al siguiente`);
+        console.log(`[aiProvider] video chain: proveedor ${provider} (${pi + 1}/${videoChain.length}) falló, saltando al siguiente`);
       }
     }
     if (opts._trace) { opts._trace.final_provider = null; opts._trace.final_model = null; }
