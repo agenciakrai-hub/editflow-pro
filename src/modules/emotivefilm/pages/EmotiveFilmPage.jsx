@@ -8,7 +8,7 @@ import { base44 } from "@/api/base44Client";
 import { getFilm, upsertFilm } from "../lib/filmStore";
 import { runAnalysis, runPlanFilm } from "../lib/filmDirector";
 import { gatherProjectPhotos } from "../lib/photoGatherer";
-import { buildTimeline, validateTimeline } from "../lib/timelineBuilder";
+import { buildTimeline, validateTimeline, ensureClimaxCouple } from "../lib/timelineBuilder";
 import { decodeAudioFile } from "../lib/musicAnalyzer";
 import { loadBatchPreviews } from "../lib/photoGatherer";
 import SelectionReview from "../components/SelectionReview";
@@ -141,15 +141,16 @@ export default function EmotiveFilmPage() {
         onProgress: (st, done, total) => setStage(st),
       });
       setStage(null);
-      // Valida la timeline.
-      const { clips } = buildTimeline(filmPlan, music, settings);
+      // Construye la timeline y asegura que el clímax tenga fotos de pareja.
+      let { clips, totalDuration } = buildTimeline(filmPlan, music, settings);
+      clips = ensureClimaxCouple(clips, filmPlan.climax_at, film?.couple_ids || []);
       const previewMap = await loadBatchPreviews(clips.map((c) => c.hash));
       const { ok, errors } = validateTimeline(clips, previewMap);
       setValidationErrors(errors);
       if (!ok) {
         toast({ title: "Timeline con problemas", description: errors[0], variant: "destructive" });
       } else {
-        toast({ title: "Film Plan generado", description: `${clips.length} clips · ${Math.round(filmPlan.total_duration)}s` });
+        toast({ title: "Film Plan generado", description: `${clips.length} clips · ${Math.round(totalDuration)}s` });
         setShowPreview(true);
       }
       // Refresca el film desde la BD.

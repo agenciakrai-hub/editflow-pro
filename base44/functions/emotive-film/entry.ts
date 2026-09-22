@@ -180,7 +180,7 @@ REGLAS:
 2. Construye una ESTRUCTURA NARRATIVA: introducción → preparativos → ceremonia → pareja → celebración → fiesta → final. Usa solo las escenas que existan.
 3. ASIGNA duración a cada foto según la intensidad de la música: partes suaves = fotos más largas (4-6s), partes dinámicas = fotos más cortas (1.5-3s).
 4. El CLÍMAX (momento de mayor intensidad de la canción) debe tener las fotos más potentes de la pareja (beso, abrazo, mirada).
-5. ASIGNA un MOVIMIENTO cinematográfico a cada foto: "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "dolly_in", "ken_burns". El movimiento debe respetar el contenido (persona mirando a la derecha → pan compatible; pareja → movimiento suave hacia ellos; fiesta → más dinámico; emoción → lento y elegante).
+5. ASIGNA un MOVIMIENTO cinematográfico a cada foto: "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "dolly_in", "ken_burns", "parallax". El movimiento debe respetar el contenido (persona mirando a la derecha → pan compatible; pareja → movimiento suave hacia ellos; fiesta → más dinámico; emoción → lento y elegante). Usa "parallax" en fotos con profundidad clara (primer plano + fondo, paisajes, retratos con fondo bokeh) para un efecto 2.5D. No uses parallax en más del 15% de las fotos.
 6. ASIGNA una TRANSICIÓN a cada foto (la transición ENTRANTE desde la anterior): "cut", "cross_dissolve", "dip_to_black", "soft_blur", "zoom_transition", "fade". NO uses una transición distinta por obligación: usa "cut" o "cross_dissolve" la mayoría; reservar transiciones especiales para cambios de escena o clímax.
 7. ASIGNA una intensidad (0-100) a cada foto según la música en ese momento.
 

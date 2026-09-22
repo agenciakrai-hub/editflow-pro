@@ -218,6 +218,8 @@ function phashHamming(hashA, hashB) {
 }
 
 // Genera el Film Plan llamando al backend (LLM). Recibe la selección + música + estilo.
+// Tras recibir el plan, aplica ensureClimaxCouple para garantizar que el clímax
+// tenga fotos de pareja antes de persistir.
 export async function runPlanFilm({ projectId, selection, music, style, settings, coupleHashes, onProgress, signal }) {
   onProgress?.("planning", 0, 1);
   const res = await base44.functions.invoke("emotive-film", {
@@ -238,6 +240,26 @@ export async function runPlanFilm({ projectId, selection, music, style, settings
   });
   const film_plan = res?.data?.film_plan;
   if (!film_plan) throw new Error("El AI Film Director no pudo generar el plan.");
+
+  // Construye la timeline normalizada y asegura que el clímax tenga fotos de pareja.
+  // Modifica el film_plan.timeline in-place para que el plan persistido sea correcto.
+  const { buildTimeline, ensureClimaxCouple } = await import("./timelineBuilder");
+  const { clips } = buildTimeline(film_plan, music, settings);
+  const fixedClips = ensureClimaxCouple(clips, film_plan.climax_at, coupleHashes || []);
+  // Si ensureClimaxCouple cambió algo, actualiza el timeline del film_plan.
+  if (fixedClips !== clips) {
+    const hashToEntry = new Map((film_plan.timeline || []).map((t) => [t.hash, t]));
+    film_plan.timeline = fixedClips.map((c) => ({
+      ...(hashToEntry.get(c.hash) || {}),
+      hash: c.hash,
+      scene: c.scene,
+      duration: c.duration,
+      motion: c.motion,
+      transition: c.transition,
+      intensity: c.intensity,
+    }));
+  }
+
   onProgress?.("planning", 1, 1);
   await upsertFilm(projectId, { status: "planned", film_plan });
   return film_plan;
