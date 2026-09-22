@@ -20,6 +20,8 @@ export class FilmRenderer {
     this.aspectRatio = aspectRatio;
     this.imgCache = new Map(); // hash -> HTMLImageElement
     this.imgOrder = []; // LRU order
+    this.videoCache = new Map(); // hash -> HTMLVideoElement (I2V clips)
+    this.heroVideos = {}; // { hash: { status, video_url, ... } }
     this.clips = [];
     this.totalDuration = 0;
     this.audioBuffer = null;
@@ -52,6 +54,10 @@ export class FilmRenderer {
     this.bgColor = bgColor || "#000000";
   }
 
+  setHeroVideos(map) {
+    this.heroVideos = map || {};
+  }
+
   setAudio(audioBuffer) {
     this.audioBuffer = audioBuffer;
   }
@@ -80,6 +86,19 @@ export class FilmRenderer {
     return img;
   }
 
+  // Carga y cachea un HTMLVideoElement para un clip I2V (Image-to-Video).
+  async _getVideo(hash) {
+    if (!hash) return null;
+    if (this.videoCache.has(hash)) return this.videoCache.get(hash);
+    const clip = this.clips.find((c) => c.hash === hash);
+    if (!clip?.videoUrl) return null;
+    const video = await loadVideo(clip.videoUrl);
+    video.muted = true;
+    video.playsInline = true;
+    this.videoCache.set(hash, video);
+    return video;
+  }
+
   // Dibuja un frame en el instante `time` (segundos). Síncrono tras precargar imgs.
   _drawFrame(time) {
     const ctx = this.ctx;
@@ -87,29 +106,67 @@ export class FilmRenderer {
     ctx.fillStyle = this.bgColor;
     ctx.fillRect(0, 0, W, H);
 
-    // Encuentra el clip activo en `time`.
     const idx = this._clipIndexAt(time);
     if (idx < 0) return;
     const clip = this.clips[idx];
     const localT = (time - clip.start) / clip.duration;
-    const img = this.imgCache.get(clip.hash);
-    if (!img) return;
 
-    // Transición entrante: si estamos en la ventana de transición, dibuja también
-    // el clip anterior.
     const transDur = clip.transitionDur || 0;
     if (idx > 0 && time < clip.start + transDur && transDur > 0) {
       const prevClip = this.clips[idx - 1];
-      const prevImg = this.imgCache.get(prevClip.hash);
       const tt = (time - clip.start) / transDur;
       const ts = transitionState(clip.transition, tt);
-      if (prevImg) {
-        this._drawImage(prevImg, prevClip, 1, { alpha: ts.outAlpha, blur: ts.blurOut });
-      }
-      this._drawImage(img, clip, localT, { alpha: ts.inAlpha, blur: ts.blurIn, zoom: ts.zoomIn, black: ts.black });
+      this._drawClipContent(prevClip, 1, { alpha: ts.outAlpha, blur: ts.blurOut });
+      this._drawClipContent(clip, localT, { alpha: ts.inAlpha, blur: ts.blurIn, zoom: ts.zoomIn, black: ts.black });
     } else {
-      this._drawImage(img, clip, localT, { alpha: 1 });
+      this._drawClipContent(clip, localT, { alpha: 1 });
     }
+  }
+
+  // Dibuja el contenido de un clip: vídeo I2V (si tiene videoUrl) o imagen con
+  // motor cinematográfico 2D (Ken Burns + parallax). El renderer híbrido mezcla
+  // ambos de forma invisible para el espectador.
+  _drawClipContent(clip, localT, opts = {}) {
+    if (clip.videoUrl) {
+      const video = this.videoCache.get(clip.hash);
+      if (video && video.readyState >= 2) {
+        this._drawVideoFrame(video, clip, localT, opts);
+      }
+    } else {
+      const img = this.imgCache.get(clip.hash);
+      if (img) this._drawImage(img, clip, localT, opts);
+    }
+  }
+
+  // Dibuja un frame de un vídeo I2V (Kling 3.0 Pro). El vídeo YA tiene su propio
+  // movimiento cinematográfico generado por IA, así que NO se aplica Ken Burns
+  // adicional: solo object-fit: contain + transiciones (fade/blur/dip_to_black).
+  _drawVideoFrame(video, clip, localT, opts = {}) {
+    const ctx = this.ctx;
+    const W = this.canvas.width, H = this.canvas.height;
+    const alpha = opts.alpha ?? 1;
+    if (alpha <= 0) return;
+    ctx.globalAlpha = alpha;
+    if (opts.blur) ctx.filter = `blur(${opts.blur}px)`;
+    else ctx.filter = "none";
+
+    const vr = video.videoWidth / video.videoHeight;
+    const cr = W / H;
+    let dw, dh;
+    if (vr > cr) { dw = W; dh = W / vr; }
+    else { dh = H; dw = H * vr; }
+    const dx = (W - dw) / 2;
+    const dy = (H - dh) / 2;
+    ctx.drawImage(video, dx, dy, dw, dh);
+
+    if (opts.black && opts.black > 0) {
+      ctx.filter = "none";
+      ctx.globalAlpha = opts.black * alpha;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.globalAlpha = 1;
+    ctx.filter = "none";
   }
 
   // Dibuja una imagen con movimiento Ken Burns aplicado. Contiene la imagen en
@@ -202,9 +259,39 @@ export class FilmRenderer {
     const lookAhead = 5; // segundos
     for (const c of this.clips) {
       if (c.start <= time + lookAhead && c.start + c.duration >= time - 1) {
-        if (!this.imgCache.has(c.hash)) await this._getImage(c.hash);
+        if (c.videoUrl) {
+          if (!this.videoCache.has(c.hash)) await this._getVideo(c.hash);
+        } else {
+          if (!this.imgCache.has(c.hash)) await this._getImage(c.hash);
+        }
       }
     }
+  }
+
+  // Seek asíncrono para export determinista (WebCodecs). Busca el vídeo I2V
+  // activo al frame exacto antes de dibujar. No hace nada para clips de imagen.
+  async _seekTo(time) {
+    const idx = this._clipIndexAt(time);
+    if (idx < 0) return;
+    const clip = this.clips[idx];
+    if (!clip.videoUrl) return;
+    const video = this.videoCache.get(clip.hash) || await this._getVideo(clip.hash);
+    if (!video) return;
+    const targetTime = time - clip.start;
+    if (Math.abs(video.currentTime - targetTime) > 0.05) {
+      await this._seekVideo(video, Math.min(Math.max(0, targetTime), Math.max(0, (video.duration || 5) - 0.05)));
+    }
+  }
+
+  _seekVideo(video, time) {
+    return new Promise((resolve) => {
+      const onseeked = () => {
+        video.removeEventListener("seeked", onseeked);
+        resolve();
+      };
+      video.addEventListener("seeked", onseeked);
+      video.currentTime = time;
+    });
   }
 
   async play(fromTime = 0) {
@@ -228,6 +315,26 @@ export class FilmRenderer {
     this._loop();
   }
 
+  // Sincroniza los vídeos I2V con la timeline en tiempo real (preview + MediaRecorder).
+  // Cuando la timeline entra en un clip I2V, reproduce el vídeo desde la posición
+  // correcta. Cuando sale, pausa todos los vídeos.
+  _syncVideo(time) {
+    const idx = this._clipIndexAt(time);
+    if (idx < 0) return;
+    const clip = this.clips[idx];
+    if (!clip.videoUrl) {
+      for (const v of this.videoCache.values()) { try { v.pause(); } catch {} }
+      return;
+    }
+    const video = this.videoCache.get(clip.hash);
+    if (!video) return;
+    const targetTime = time - clip.start;
+    if (video.paused || Math.abs(video.currentTime - targetTime) > 0.3) {
+      video.currentTime = Math.min(Math.max(0, targetTime), Math.max(0, (video.duration || 5) - 0.05));
+      video.play().catch(() => {});
+    }
+  }
+
   _loop = () => {
     if (!this.playing) return;
     const now = performance.now() / 1000;
@@ -237,9 +344,9 @@ export class FilmRenderer {
       this.onEnd?.();
       return;
     }
+    this._syncVideo(time);
     this._drawFrame(time);
     this.onTime?.(time, this.totalDuration);
-    // Precarga asíncrona sin bloquear el frame.
     this._preloadAround(time);
     this.rafId = requestAnimationFrame(this._loop);
   };
@@ -267,6 +374,8 @@ export class FilmRenderer {
     this.pause();
     if (this.audioCtx) { try { this.audioCtx.close(); } catch {} this.audioCtx = null; }
     this.imgCache.clear();
+    for (const v of this.videoCache.values()) { try { v.pause(); v.src = ""; } catch {} }
+    this.videoCache.clear();
   }
 
   // EXPORTACIÓN: graba el canvas + audio a un Blob de vídeo. Usa MediaRecorder.
@@ -315,6 +424,7 @@ export class FilmRenderer {
           resolve();
           return;
         }
+        this._syncVideo(time);
         this._drawFrame(time);
         onProgress?.(time, this.totalDuration);
         requestAnimationFrame(loop);
@@ -336,6 +446,10 @@ export class FilmRenderer {
     for (const h of hashes) {
       if (!this.imgCache.has(h)) await this._getImage(h);
     }
+    // Preload I2V videos.
+    for (const c of this.clips) {
+      if (c.videoUrl && !this.videoCache.has(c.hash)) await this._getVideo(c.hash);
+    }
   }
 }
 
@@ -345,6 +459,19 @@ function loadImage(src) {
     img.onload = () => resolve(img);
     img.onerror = reject;
     img.src = src;
+  });
+}
+
+function loadVideo(src) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+    video.onloadedmetadata = () => resolve(video);
+    video.onerror = () => reject(new Error("Error cargando vídeo I2V"));
+    video.src = src;
   });
 }
 

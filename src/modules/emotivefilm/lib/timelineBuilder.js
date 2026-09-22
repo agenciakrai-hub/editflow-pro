@@ -8,7 +8,7 @@ import { markHeroShots, assignContextualTransitions } from "./heroShots";
 // Normaliza el film_plan en una timeline con tiempos absolutos.
 // Devuelve SIEMPRE { clips, totalDuration } (clips=[] si no hay timeline).
 // Cada clip: { hash, scene, motion, transition, intensity, start, duration, transitionDur }
-export function buildTimeline(filmPlan, music, settings) {
+export function buildTimeline(filmPlan, music, settings, heroVideos = {}) {
   const timeline = Array.isArray(filmPlan?.timeline) ? filmPlan.timeline : [];
   if (!timeline.length) return { clips: [], totalDuration: 0 };
 
@@ -31,6 +31,8 @@ export function buildTimeline(filmPlan, music, settings) {
       subjectPosition: t.subject_position || "center",
       orientation: t.orientation || "landscape",
       musicIntensity: 0.5, // se rellena tras alinear a beats (si hay música)
+      is_hero: !!t.is_hero,
+      i2v_prompt: t.i2v_prompt || "",
     });
     // El siguiente clip empieza solapado con la transición de este.
     cursor += dur - (i < timeline.length - 1 ? transDur : 0);
@@ -72,6 +74,16 @@ export function buildTimeline(filmPlan, music, settings) {
   // (las nuevas transiciones pueden tener duraciones distintas).
   for (let i = 1; i < clips.length; i++) {
     clips[i].transitionDur = transitionDuration(clips[i].transition, settings?.transition_intensity);
+  }
+
+  // Asigna videoUrl a los clips hero que tienen un HERO VIDEO completado.
+  // Si el hero video está completado, el clip usa el vídeo I2V real; si no
+  // (pending/failed/fallback), usa el motor cinematográfico 2D (imagen + Ken Burns).
+  for (const c of clips) {
+    const hv = heroVideos[c.hash];
+    if (c.is_hero && hv?.status === "completed" && hv?.video_url) {
+      c.videoUrl = hv.video_url;
+    }
   }
 
   return { clips, totalDuration };

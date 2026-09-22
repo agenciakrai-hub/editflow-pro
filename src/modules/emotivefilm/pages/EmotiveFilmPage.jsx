@@ -12,6 +12,7 @@ import { buildTimeline, validateTimeline, ensureClimaxCouple } from "../lib/time
 import { decodeAudioFile } from "../lib/musicAnalyzer";
 import { loadBatchPreviews } from "../lib/photoGatherer";
 import { regeneratePartial } from "../lib/smartRegen";
+import { generateHeroVideos } from "../lib/heroVideoPipeline";
 import SelectionReview from "../components/SelectionReview";
 import MusicPanel from "../components/MusicPanel";
 import StyleSelector from "../components/StyleSelector";
@@ -38,6 +39,8 @@ export default function EmotiveFilmPage() {
   const [showPreview, setShowPreview] = useState(false);
   const [audioBuffer, setAudioBuffer] = useState(null);
   const [validationErrors, setValidationErrors] = useState([]);
+  const [generatingHeroes, setGeneratingHeroes] = useState(false);
+  const [heroProgress, setHeroProgress] = useState({});
 
   // Estado editable de la selección (se sincroniza con `film.selection`).
   const [selection, setSelection] = useState([]);
@@ -147,7 +150,7 @@ export default function EmotiveFilmPage() {
       });
       setStage(null);
       // Construye la timeline y asegura que el clímax tenga fotos de pareja.
-      let { clips, totalDuration } = buildTimeline(filmPlan, music, settings);
+      let { clips, totalDuration } = buildTimeline(filmPlan, music, settings, film?.hero_videos || {});
       clips = ensureClimaxCouple(clips, filmPlan.climax_at, film?.couple_ids || []);
       const previewMap = await loadBatchPreviews(clips.map((c) => c.hash));
       const { ok, errors } = validateTimeline(clips, previewMap);
@@ -187,7 +190,7 @@ export default function EmotiveFilmPage() {
 
       if (partialPlan) {
         // Regeneración parcial: reconstruye la timeline y asegura clímax sin LLM.
-        let { clips } = buildTimeline(partialPlan, music, settings);
+        let { clips } = buildTimeline(partialPlan, music, settings, film?.hero_videos || {});
         clips = ensureClimaxCouple(clips, partialPlan.climax_at, film?.couple_ids || []);
         const hashToEntry = new Map((partialPlan.timeline || []).map((t) => [t.hash, t]));
         partialPlan.timeline = clips.map((c) => ({
@@ -254,6 +257,38 @@ export default function EmotiveFilmPage() {
       toast({ title: "Error al optimizar", description: e?.message, variant: "destructive" });
     } finally {
       setAnalyzing(false);
+    }
+  };
+
+  // === FLUJO: Generar HERO VIDEOS IA (Kling 3.0 Pro Image-to-Video) ===
+  const handleGenerateHeroVideos = async () => {
+    if (!film?.film_plan) return;
+    setGeneratingHeroes(true);
+    setHeroProgress({});
+    try {
+      const signal = { aborted: false };
+      const updated = await generateHeroVideos({
+        projectId,
+        filmPlan: film.film_plan,
+        heroVideos: film.hero_videos || {},
+        settings,
+        onProgress: (hash, status, info) => {
+          setHeroProgress((p) => ({ ...p, [hash]: { status, info } }));
+        },
+        signal,
+      });
+      const f = await getFilm(projectId);
+      setFilm(f);
+      const completed = Object.values(updated).filter((v) => v.status === "completed").length;
+      const fallback = Object.values(updated).filter((v) => v.status === "fallback").length;
+      toast({
+        title: "HERO VIDEOS generados",
+        description: `${completed} vídeos IA completados · ${fallback} fallback al motor 2D`,
+      });
+    } catch (e) {
+      toast({ title: "Error generando HERO VIDEOS", description: e?.message, variant: "destructive" });
+    } finally {
+      setGeneratingHeroes(false);
     }
   };
 
@@ -434,6 +469,42 @@ export default function EmotiveFilmPage() {
             </button>
           )}
 
+          {film?.film_plan && (
+            <div className="rounded-xl border border-accent/30 bg-accent/5 p-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-accent" />
+                <h4 className="text-xs font-semibold">HERO VIDEOS IA</h4>
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Kling 3.0 Pro genera vídeos IA reales para los momentos más potentes. El resto usa el motor cinematográfico 2D.
+              </p>
+              <button
+                onClick={handleGenerateHeroVideos}
+                disabled={generatingHeroes}
+                className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-accent-foreground disabled:opacity-40"
+              >
+                {generatingHeroes ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {generatingHeroes ? "Generando…" : "Generar HERO VIDEOS IA"}
+              </button>
+              {Object.keys(film?.hero_videos || {}).length > 0 && (
+                <div className="mt-2 text-[11px] text-muted-foreground">
+                  {Object.values(film.hero_videos).filter((v) => v.status === "completed").length} completados ·{" "}
+                  {Object.values(film.hero_videos).filter((v) => v.status === "fallback").length} fallback
+                </div>
+              )}
+              {generatingHeroes && Object.keys(heroProgress).length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {Object.entries(heroProgress).slice(-3).map(([hash, p]) => (
+                    <div key={hash} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                      <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                      <span className="truncate">{p.status}…</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <AdvancedSettings settings={settings} onChange={handleSettingsChange} />
 
           {validationErrors.length > 0 && (
@@ -458,6 +529,7 @@ export default function EmotiveFilmPage() {
             settings={settings}
             exportConfig={exportConfig}
             audioBuffer={audioBuffer}
+            heroVideos={film?.hero_videos || {}}
           />
           <ExportPanel
             filmPlan={film.film_plan}
@@ -466,6 +538,7 @@ export default function EmotiveFilmPage() {
             exportConfig={exportConfig}
             onChange={handleExportConfigChange}
             audioBuffer={audioBuffer}
+            heroVideos={film?.hero_videos || {}}
           />
         </div>
       )}

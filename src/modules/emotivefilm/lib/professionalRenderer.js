@@ -160,6 +160,7 @@ export async function exportWithWebCodecs(renderer, onProgress) {
   for (let frameNum = 0; frameNum < totalFrames; frameNum++) {
     if (videoEncoderError) throw videoEncoderError;
     const time = frameNum / FPS;
+    await renderer._seekTo(time);
     renderer._drawFrame(time);
 
     const frame = new VideoFrame(canvas, {

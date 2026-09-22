@@ -14,12 +14,13 @@
         "selected",
         "planning",
         "planned",
+        "generating_heroes",
         "rendering",
         "completed",
         "failed"
       ],
       "default": "draft",
-      "description": "Estado del flujo: draft\u2192analyzing (IA analizando fotos)\u2192selected (selecci\u00f3n lista para revisi\u00f3n)\u2192planning (generando Film Plan)\u2192planned (plan listo)\u2192rendering (exportando)\u2192completed."
+      "description": "Estado del flujo: draft\u2192analyzing (IA analizando fotos)\u2192selected (selecci\u00f3n lista)\u2192planning (generando Film Plan)\u2192planned (plan listo)\u2192generating_heroes (I2V en curso)\u2192rendering (exportando)\u2192completed."
     },
     "selection": {
       "type": "array",
@@ -47,8 +48,7 @@
             "description": "Excluida por el usuario: nunca aparece autom\u00e1ticamente."
           },
           "scene": {
-            "type": "string",
-            "description": "Escena narrativa asignada (preparativos, ceremonia, pareja, fiesta...)."
+            "type": "string"
           },
           "emotion_score": {
             "type": "number"
@@ -66,8 +66,7 @@
             "type": "boolean"
           },
           "description": {
-            "type": "string",
-            "description": "Descripci\u00f3n breve del contenido (la IA la genera al analizar)."
+            "type": "string"
           }
         }
       }
@@ -100,12 +99,17 @@
     "film_plan": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Film Plan generado por el AI Film Director: { scenes:[], timeline:[{hash,duration,motion,transition,intensity,beat_align}], total_duration, climax_at }."
+      "description": "Film Plan generado por el AI Film Director: { scenes:[], timeline:[{hash,duration,motion,transition,intensity,beat_align,is_hero,i2v_prompt}], total_duration, climax_at, hero_shots:[hash] }."
+    },
+    "hero_videos": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "HERO VIDEOS generados mediante Image-to-Video (Kling 3.0 Pro v\u00eda fal.ai). Clave: fingerprint_hash. Valor: { status (pending|submitting|processing|completed|failed|fallback), video_url, prompt, request_id, image_url, attempts, fallback_used, validated, validation_errors, generated_at }. fallback_used=true \u2192 el clip usa el motor cinematogr\u00e1fico 2D en lugar de I2V."
     },
     "advanced_settings": {
       "type": "object",
       "additionalProperties": true,
-      "description": "Ajustes avanzados (todos AUTO por defecto): emotion_intensity, couple_priority, rhythm, max_photos, target_duration, motion_intensity, transition_intensity, family_weight, friends_weight, party_weight, narrative."
+      "description": "Ajustes avanzados (todos AUTO por defecto): emotion_intensity, couple_priority, rhythm, max_photos, target_duration, motion_intensity, transition_intensity, family_weight, friends_weight, party_weight, narrative, i2v_enabled, i2v_duration, i2v_max_shots."
     },
     "export_config": {
       "type": "object",

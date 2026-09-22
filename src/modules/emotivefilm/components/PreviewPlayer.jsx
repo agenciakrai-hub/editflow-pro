@@ -6,7 +6,7 @@ import { FilmRenderer } from "../lib/videoRenderer";
 import { buildTimeline, validateTimeline } from "../lib/timelineBuilder";
 import { loadBatchPreviews } from "../lib/photoGatherer";
 
-export default function PreviewPlayer({ filmPlan, music, settings, exportConfig, audioBuffer }) {
+export default function PreviewPlayer({ filmPlan, music, settings, exportConfig, audioBuffer, heroVideos }) {
   const canvasRef = useRef(null);
   const rendererRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -15,13 +15,14 @@ export default function PreviewPlayer({ filmPlan, music, settings, exportConfig,
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const { clips, totalDuration } = buildTimeline(filmPlan, music, settings);
+  const { clips, totalDuration } = buildTimeline(filmPlan, music, settings, heroVideos);
 
   useEffect(() => {
     if (!canvasRef.current || !clips.length) return;
     const r = new FilmRenderer(canvasRef.current, exportConfig?.aspect_ratio || "16:9");
     r.setResolution(exportConfig?.aspect_ratio || "16:9", "1080p");
     r.setTimeline(clips, totalDuration, "#000000");
+    r.setHeroVideos(heroVideos);
     if (audioBuffer) r.setAudio(audioBuffer);
     r.onTime = (t, tot) => { setTime(t); setTotal(tot); };
     r.onEnd = () => setPlaying(false);
@@ -32,7 +33,10 @@ export default function PreviewPlayer({ filmPlan, music, settings, exportConfig,
       try {
         const hashes = clips.map((c) => c.hash).filter(Boolean);
         await loadBatchPreviews(hashes);
-        for (const c of clips) await r._getImage(c.hash);
+        for (const c of clips) {
+          if (c.videoUrl) await r._getVideo(c.hash);
+          else await r._getImage(c.hash);
+        }
         r._drawFrame(0);
         setTotal(totalDuration);
       } catch (e) {
@@ -42,7 +46,7 @@ export default function PreviewPlayer({ filmPlan, music, settings, exportConfig,
       }
     })();
     return () => { r.destroy(); rendererRef.current = null; };
-  }, [filmPlan, exportConfig?.aspect_ratio, audioBuffer]);
+  }, [filmPlan, exportConfig?.aspect_ratio, audioBuffer, heroVideos]);
 
   const togglePlay = async () => {
     const r = rendererRef.current;

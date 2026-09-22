@@ -208,6 +208,8 @@ REGLAS:
    - "soft_blur" para transiciones oníricas (recuerdos, preparativos).
    - NO uses una transición distinta por obligación: la mayoría deben ser "cut" o "cross_dissolve".
 7. ASIGNA una intensidad (0-100) a cada foto según la sección musical en ese momento.
+8. MARCA los HERO SHOTS: selecciona entre 10 y 25 fotos que serán convertidas a vídeo IA (Image-to-Video). Los HERO SHOTS son los momentos cinematográficamente más potentes: pareja mirando a cámara, pareja caminando, abrazo, beso, baile, salida de ceremonia, retrato potente, entrada, imagen final. Marca "is_hero": true en esas entradas del timeline. NO marques más de 25 ni menos de 10 (ajusta según la cantidad de fotos y la duración). Los hero shots deben concentrarse alrededor del CLÍMAX.
+9. Para CADA hero shot, genera un "i2v_prompt" en inglés: describe el movimiento de cámara apropiado (push-in, pull-out, tracking, orbit), profundidad de campo, atmósfera. PRIORIDAD ABSOLUTA: movimiento de cámara (no movimiento corporal) para preservar identidad. Incluye SIEMPRE "preserve facial identity, no deformed faces, no extra people, camera movement only".
 
 Devuelve un JSON:
 {
@@ -247,20 +249,27 @@ El timeline debe sumar aproximadamente la duración objetivo. Ordena las fotos c
               transition: { type: "string" },
               intensity: { type: "number" },
               scene: { type: "string" },
+              is_hero: { type: "boolean" },
+              i2v_prompt: { type: "string" },
             },
           },
         },
         total_duration: { type: "number" },
         climax_at: { type: "number" },
+        hero_shots: { type: "array", items: { type: "string" } },
       },
     },
   });
 
+  const timeline = Array.isArray(res?.timeline) ? res.timeline : [];
   const film_plan = {
     scenes: Array.isArray(res?.scenes) ? res.scenes : [],
-    timeline: Array.isArray(res?.timeline) ? res.timeline : [],
+    timeline,
     total_duration: Number(res?.total_duration) || targetDuration,
     climax_at: Number(res?.climax_at) || 0,
+    hero_shots: Array.isArray(res?.hero_shots)
+      ? res.hero_shots
+      : timeline.filter((t) => t.is_hero).map((t) => t.hash),
   };
   return Response.json({ film_plan });
 }

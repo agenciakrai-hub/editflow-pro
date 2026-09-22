@@ -7,7 +7,7 @@ import { buildTimeline, validateTimeline } from "../lib/timelineBuilder";
 import { loadBatchPreviews } from "../lib/photoGatherer";
 import { isWebCodecsAvailable, detectBestFormat, exportWithWebCodecs } from "../lib/professionalRenderer";
 
-export default function ExportPanel({ filmPlan, music, settings, exportConfig, onChange, audioBuffer }) {
+export default function ExportPanel({ filmPlan, music, settings, exportConfig, onChange, audioBuffer, heroVideos }) {
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState(null);
@@ -16,7 +16,7 @@ export default function ExportPanel({ filmPlan, music, settings, exportConfig, o
   const [availableFormat, setAvailableFormat] = useState(null); // "mp4" | "webm" | null
   const canvasRef = useRef(null);
 
-  const { clips, totalDuration } = buildTimeline(filmPlan, music, settings);
+  const { clips, totalDuration } = buildTimeline(filmPlan, music, settings, heroVideos);
 
   // Detecta el formato disponible al montar o cambiar resolución/aspecto.
   useEffect(() => {
@@ -50,6 +50,7 @@ export default function ExportPanel({ filmPlan, music, settings, exportConfig, o
     const r = new FilmRenderer(canvas, exportConfig.aspect_ratio);
     r.setResolution(exportConfig.aspect_ratio, exportConfig.resolution);
     r.setTimeline(clips, totalDuration, "#000000");
+    r.setHeroVideos(heroVideos);
     if (audioBuffer) r.setAudio(audioBuffer);
 
     try {

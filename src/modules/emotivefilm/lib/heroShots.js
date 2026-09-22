@@ -17,44 +17,47 @@
 //   - Primer clip del acto → fade (abrir escena)
 //   - Último clip → fade (cerrar)
 
-// Marca los hero shots en la timeline. Modifica los clips in-place añadiendo
-// `is_hero: true` a los seleccionados. Devuelve el número de hero shots marcados.
+// Marca los hero shots en la timeline (10-25 shots). Respeta los marcados por
+// el AI Film Director (backend) y completa hasta el objetivo si faltan.
+// Modifica los clips in-place. Devuelve el número total de hero shots.
 export function markHeroShots(clips, climaxAt, coupleHashes) {
   if (!clips?.length) return 0;
   const coupleSet = new Set(coupleHashes || []);
-  const candidates = [];
 
+  // 1. Respeta los hero shots ya marcados por el AI Film Director (backend).
+  const existingHeroes = new Set();
   for (let i = 0; i < clips.length; i++) {
+    if (clips[i].is_hero) existingHeroes.add(i);
+  }
+
+  // Si ya hay suficientes (≥10), no añade más.
+  if (existingHeroes.size >= 10) return existingHeroes.size;
+
+  // 2. Si no hay suficientes, marca adicionales basándose en score.
+  const candidates = [];
+  for (let i = 0; i < clips.length; i++) {
+    if (existingHeroes.has(i)) continue;
     const c = clips[i];
     let score = 0;
-    // Cerca del clímax: +puntos según cercanía.
-    if (climaxAt && c.start <= climaxAt + 3 && c.start + c.duration >= climaxAt - 3) {
-      score += 30;
-    }
-    // Alta intensidad.
+    if (climaxAt && c.start <= climaxAt + 3 && c.start + c.duration >= climaxAt - 3) score += 30;
     if (c.intensity >= 70) score += 25;
     else if (c.intensity >= 60) score += 15;
-    // Foto de pareja.
     if (coupleSet.has(c.hash)) score += 20;
-    // Escena emocional.
     const scene = String(c.scene || "").toLowerCase();
     if (["beso", "pareja", "novia", "novio"].includes(scene)) score += 15;
-
     if (score > 0) candidates.push({ idx: i, score });
   }
-
-  // Ordena por score descendente. Marca como hero los top 2-3 (no más de 3).
   candidates.sort((a, b) => b.score - a.score);
-  const maxHeroes = Math.min(3, Math.max(1, Math.floor(clips.length / 20)));
-  const heroIndices = new Set();
-  for (let i = 0; i < Math.min(maxHeroes, candidates.length); i++) {
-    heroIndices.add(candidates[i].idx);
+
+  // 3. Marca hasta llegar a 10-25 hero shots (según cantidad de clips).
+  const targetHeroes = Math.min(25, Math.max(10, Math.floor(clips.length / 5)));
+  const toAdd = Math.min(targetHeroes - existingHeroes.size, candidates.length);
+  for (let i = 0; i < toAdd; i++) {
+    clips[candidates[i].idx].is_hero = true;
+    existingHeroes.add(candidates[i].idx);
   }
 
-  for (const idx of heroIndices) {
-    clips[idx].is_hero = true;
-  }
-  return heroIndices.size;
+  return existingHeroes.size;
 }
 
 // Asigna transiciones contextuales a los clips. Si el Film Plan ya asignó una

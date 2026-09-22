@@ -341,7 +341,8 @@ export async function runPlanFilm({ projectId, selection, music, style, settings
   }
 
   onProgress?.("planning", 1, 1);
-  await upsertFilm(projectId, { status: "planned", film_plan });
+  // Limpia los hero videos previos: un plan nuevo puede tener hero shots distintos.
+  await upsertFilm(projectId, { status: "planned", film_plan, hero_videos: {} });
   return film_plan;
 }
 
