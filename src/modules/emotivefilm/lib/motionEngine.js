@@ -42,6 +42,29 @@ export function motionAt(motion, t) {
   };
 }
 
+// Versión CONTENT-AWARE de motionAt: ajusta la dirección del pan para que
+// NUNCA saque al sujeto principal del encuadre. Si el sujeto está a la izquierda,
+// invierte un pan que lo empujaría fuera por la izquierda (y viceversa).
+// subjectPosition: "left" | "center" | "right" (de la análisis VLM).
+// Si no hay subjectPosition (análisis legacy), usa motionAt sin corrección.
+export function motionAtSafe(motion, t, subjectPosition) {
+  const m = motionAt(motion, t);
+  if (!subjectPosition || subjectPosition === "center") return m;
+  // Si el sujeto está a la IZQUIERDA: panX > 0 (imagen a la derecha) lo mueve
+  // hacia el centro (bien). panX < 0 (imagen a la izquierda) lo sacaría por
+  // la izquierda → invertir.
+  if (subjectPosition === "left" && m.panX < 0) {
+    return { ...m, panX: -m.panX };
+  }
+  // Si el sujeto está a la DERECHA: panX < 0 (imagen a la izquierda) lo mueve
+  // hacia el centro (bien). panX > 0 (imagen a la derecha) lo sacaría por
+  // la derecha → invertir.
+  if (subjectPosition === "right" && m.panX > 0) {
+    return { ...m, panX: -m.panX };
+  }
+  return m;
+}
+
 // Intensidad de movimiento según el estilo y la configuración. Escala la amplitud
 // del pan/zoom. motionIntensity 0-100 (AUTO = 50).
 export function motionAmplitude(style, motionIntensity) {

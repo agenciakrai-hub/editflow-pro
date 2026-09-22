@@ -27,6 +27,7 @@ export function buildTimeline(filmPlan, music, settings) {
       start: cursor,
       duration: dur,
       transitionDur: transDur,
+      subjectPosition: t.subject_position || "center",
     });
     // El siguiente clip empieza solapado con la transición de este.
     cursor += dur - (i < timeline.length - 1 ? transDur : 0);

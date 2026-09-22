@@ -74,6 +74,8 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
             people_score: r.people_score,
             has_couple: r.has_couple,
             scene: r.scene,
+            subject_position: r.subject_position || "center",
+            orientation: r.orientation || "landscape",
             description: r.description,
             at: Date.now(),
           };
@@ -174,6 +176,8 @@ function buildSelection(allPhotos, analyzed, coupleHashes, settings) {
       quality_score: quality,
       people_score: people,
       has_couple: isCouple,
+      subject_position: a.subject_position || "center",
+      orientation: a.orientation || "landscape",
       narrative_score: Math.round(narrative),
       description: a.description || "",
       pin: false,
@@ -250,6 +254,8 @@ export async function runPlanFilm({ projectId, selection, music, style, settings
       quality_score: s.quality_score,
       people_score: s.people_score,
       has_couple: s.has_couple,
+      subject_position: s.subject_position || "center",
+      orientation: s.orientation || "landscape",
       description: s.description,
     })),
     music,
@@ -259,6 +265,13 @@ export async function runPlanFilm({ projectId, selection, music, style, settings
   });
   const film_plan = res?.data?.film_plan;
   if (!film_plan) throw new Error("El AI Film Director no pudo generar el plan.");
+
+  // Enriquece cada entrada de la timeline con subject_position desde la selección,
+  // para que el renderer aplique motionAtSafe y no corte al sujeto.
+  const hashToSubject = new Map(selection.map((s) => [s.fingerprint_hash, s.subject_position || "center"]));
+  for (const t of film_plan.timeline || []) {
+    t.subject_position = hashToSubject.get(t.hash) || "center";
+  }
 
   // Construye la timeline normalizada y asegura que el clímax tenga fotos de pareja.
   // Modifica el film_plan.timeline in-place para que el plan persistido sea correcto.

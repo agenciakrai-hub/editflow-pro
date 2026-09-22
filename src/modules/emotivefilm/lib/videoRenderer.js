@@ -6,7 +6,7 @@
 // transición con el clip anterior. Las imágenes se cargan bajo demanda desde
 // IndexedDB (getCachedPreview) y se cachean en un Map en memoria (LRU simple)
 // para no recargarlas en cada frame.
-import { motionAt } from "./motionEngine";
+import { motionAt, motionAtSafe } from "./motionEngine";
 import { transitionState, transitionDuration } from "./transitionEngine";
 import { getCachedPreview } from "@/modules/proyectos/lib/previewCache";
 
@@ -123,7 +123,7 @@ export class FilmRenderer {
     if (opts.blur) ctx.filter = `blur(${opts.blur}px)`;
     else ctx.filter = "none";
 
-    const m = motionAt(clip.motion, localT);
+    const m = motionAtSafe(clip.motion, localT, clip.subjectPosition);
     const zoom = (opts.zoom || 1) * m.scale;
 
     // Contener la imagen en el canvas (object-fit: contain).

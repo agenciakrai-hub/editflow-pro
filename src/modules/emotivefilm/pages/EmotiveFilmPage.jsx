@@ -11,6 +11,7 @@ import { gatherProjectPhotos } from "../lib/photoGatherer";
 import { buildTimeline, validateTimeline, ensureClimaxCouple } from "../lib/timelineBuilder";
 import { decodeAudioFile } from "../lib/musicAnalyzer";
 import { loadBatchPreviews } from "../lib/photoGatherer";
+import { regeneratePartial } from "../lib/smartRegen";
 import SelectionReview from "../components/SelectionReview";
 import MusicPanel from "../components/MusicPanel";
 import StyleSelector from "../components/StyleSelector";
@@ -168,24 +169,52 @@ export default function EmotiveFilmPage() {
     }
   };
 
-  // === Regenerar: re-planifica conservando selección/estilo/música ===
+  // === Regenerar: intenta primero regeneración parcial (sin LLM) ===
   const handleRegenerate = async () => {
     if (!film?.film_plan) { return handleCreateVideo(); }
     setPlanning(true);
     try {
-      const activeSelection = selection.filter((s) => !s.exclude);
-      const filmPlan = await runPlanFilm({
-        projectId,
-        selection: activeSelection,
-        music,
-        style,
-        settings,
-        coupleHashes: film?.couple_ids || [],
-        onProgress: () => {},
-      });
-      const f = await getFilm(projectId);
-      setFilm(f);
-      toast({ title: "Vídeo regenerado", description: "Plan reajustado conservando tu selección y estilo" });
+      // Calcula qué fotos han sido excluidas desde la última generación.
+      const excludedHashes = selection.filter((s) => s.exclude).map((s) => s.fingerprint_hash);
+      const removedHashes = film.film_plan.timeline
+        ?.map((t) => t.hash)
+        .filter((h) => !selection.find((s) => s.fingerprint_hash === h && !s.exclude)) || [];
+
+      const allRemoved = [...new Set([...excludedHashes, ...removedHashes])];
+
+      // Intenta regeneración parcial (sin LLM) si el cambio es pequeño.
+      const partialPlan = regeneratePartial(film.film_plan, allRemoved);
+
+      if (partialPlan) {
+        // Regeneración parcial: reconstruye la timeline y asegura clímax sin LLM.
+        let { clips } = buildTimeline(partialPlan, music, settings);
+        clips = ensureClimaxCouple(clips, partialPlan.climax_at, film?.couple_ids || []);
+        const hashToEntry = new Map((partialPlan.timeline || []).map((t) => [t.hash, t]));
+        partialPlan.timeline = clips.map((c) => ({
+          ...(hashToEntry.get(c.hash) || {}),
+          hash: c.hash, scene: c.scene, duration: c.duration,
+          motion: c.motion, transition: c.transition, intensity: c.intensity,
+          subject_position: c.subjectPosition || "center",
+        }));
+        await persist({ film_plan: partialPlan, status: "planned" });
+        setFilm((f) => ({ ...f, film_plan: partialPlan }));
+        toast({ title: "Vídeo actualizado", description: "Timeline ajustada sin reconstruir el plan completo" });
+      } else {
+        // Regeneración completa: el cambio es grande, llama al LLM.
+        const activeSelection = selection.filter((s) => !s.exclude);
+        const filmPlan = await runPlanFilm({
+          projectId,
+          selection: activeSelection,
+          music,
+          style,
+          settings,
+          coupleHashes: film?.couple_ids || [],
+          onProgress: () => {},
+        });
+        const f = await getFilm(projectId);
+        setFilm(f);
+        toast({ title: "Vídeo regenerado", description: "Plan reconstruido (cambio estructural detectado)" });
+      }
     } catch (e) {
       toast({ title: "Error al regenerar", description: e?.message, variant: "destructive" });
     } finally {

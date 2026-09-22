@@ -45,7 +45,11 @@ async function doAnalyzeBatch(base44, body) {
 - people_score (0-100): protagonismo de personas y conexión entre ellas.
 - has_couple (boolean): ¿parece ser la pareja protagonista (novios)?
 - scene (string): una de: "preparativos", "novia", "novio", "familia", "ceremonia", "anillos", "beso", "pareja", "retratos", "amigos", "celebracion", "banquete", "baile", "fiesta", "detalle", "otros".
+- subject_position (string): posición horizontal del sujeto/persona principal en la foto. Uno de: "left" (izquierda), "center" (centro), "right" (derecha). Si no hay personas, usa "center".
+- orientation (string): orientación de la foto: "landscape" (horizontal), "portrait" (vertical), "square" (cuadrada).
 - description (string): descripción breve en español del contenido (máx 120 caracteres).
+
+El campo subject_position es CRÍTICO: se usa para que el movimiento de cámara (pan) nunca saque al sujeto del encuadre. Si la persona principal está en el tercio izquierdo de la foto, responde "left". Si está en el tercio derecho, "right". Si está centrada o no hay personas, "center".
 
 Devuelve un JSON con un array "results" con una entrada por foto en el mismo orden. Una foto emocionalmente potente puede tener emotion_score alto aunque quality_score sea medio.`;
 
@@ -69,6 +73,8 @@ Devuelve un JSON con un array "results" con una entrada por foto en el mismo ord
               people_score: { type: "number" },
               has_couple: { type: "boolean" },
               scene: { type: "string" },
+              subject_position: { type: "string" },
+              orientation: { type: "string" },
               description: { type: "string" },
             },
           },
@@ -88,6 +94,8 @@ Devuelve un JSON con un array "results" con una entrada por foto en el mismo ord
     people_score: Number(r?.people_score) || 0,
     has_couple: !!r?.has_couple,
     scene: String(r?.scene || "otros").toLowerCase(),
+    subject_position: String(r?.subject_position || "center").toLowerCase(),
+    orientation: String(r?.orientation || "landscape").toLowerCase(),
     description: String(r?.description || "").slice(0, 200),
   }));
   return Response.json({ results: out, trace });
@@ -167,10 +175,10 @@ async function doPlanFilm(base44, body) {
   const prompt = `Eres el AI FILM DIRECTOR de EditFlow. Tu misión es crear un Film Plan para un vídeo de boda cinematográfico y emocional. El usuario NO editará la timeline: tú decides todo.
 
 DATOS DE ENTRADA:
-- Base de datos de fotos (h=hash, s=escena, e=emoción 0-100, q=calidad 0-100, p=personas 0-100, c=pareja 1/0, d=descripción):
+- Base de datos de fotos (h=hash, s=escena, e=emoción 0-100, q=calidad 0-100, p=personas 0-100, c=pareja 1/0, sp=sujeto_posición left|center|right, d=descripción):
 ${JSON.stringify(photoDb)}
 
-- Música: ${JSON.stringify(musicInfo)}
+- Música (secciones detectadas por energía): ${JSON.stringify(musicInfo)}
 - Estilo: ${style}
 - Duración objetivo: ${targetDuration}s
 - Fotos de pareja identificadas: ${coupleHashes.length}
@@ -178,11 +186,28 @@ ${JSON.stringify(photoDb)}
 REGLAS:
 1. Selecciona las mejores fotos para el vídeo (no uses todas). Prioriza emoción > pareja > calidad. Evita repetición (misma escena/instante).
 2. Construye una ESTRUCTURA NARRATIVA: introducción → preparativos → ceremonia → pareja → celebración → fiesta → final. Usa solo las escenas que existan.
-3. ASIGNA duración a cada foto según la intensidad de la música: partes suaves = fotos más largas (4-6s), partes dinámicas = fotos más cortas (1.5-3s).
-4. El CLÍMAX (momento de mayor intensidad de la canción) debe tener las fotos más potentes de la pareja (beso, abrazo, mirada).
-5. ASIGNA un MOVIMIENTO cinematográfico a cada foto: "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "dolly_in", "ken_burns", "parallax". El movimiento debe respetar el contenido (persona mirando a la derecha → pan compatible; pareja → movimiento suave hacia ellos; fiesta → más dinámico; emoción → lento y elegante). Usa "parallax" en fotos con profundidad clara (primer plano + fondo, paisajes, retratos con fondo bokeh) para un efecto 2.5D. No uses parallax en más del 15% de las fotos.
-6. ASIGNA una TRANSICIÓN a cada foto (la transición ENTRANTE desde la anterior): "cut", "cross_dissolve", "dip_to_black", "soft_blur", "zoom_transition", "fade". NO uses una transición distinta por obligación: usa "cut" o "cross_dissolve" la mayoría; reservar transiciones especiales para cambios de escena o clímax.
-7. ASIGNA una intensidad (0-100) a cada foto según la música en ese momento.
+3. ADAPTA la duración y el ritmo a las SECCIONES de la canción:
+   - intro: fotos largas (4-6s), movimientos lentos, transiciones suaves (fade/cross_dissolve).
+   - verso: duración media (3-4s), movimiento moderado.
+   - estribillo: fotos más cortas (2-3s), ritmo más rápido, cortes limpios (cut) entre fotos.
+   - subida: aceleración progresiva, duraciones decrecientes.
+   - climax: las fotos MÁS POTENTES de la pareja (beso, abrazo, mirada), duración media (3-4s), movimientos elegantes (dolly_in, ken_burns).
+   - puente: pausa narrativa, fotos largas (4-5s), movimiento mínimo.
+   - outro: fotos largas (5-6s), disolución final (fade).
+4. El CLÍMAX (momento de mayor intensidad de la canción) debe tener las fotos MÁS POTENTES de la pareja (beso, abrazo, mirada), no simplemente cualquier foto de pareja.
+5. ASIGNA un MOVIMIENTO cinematográfico a cada foto: "zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down", "dolly_in", "ken_burns", "parallax". El movimiento debe respetar el CAMPO sp (subject_position):
+   - sp="left" (sujeto a la izquierda): usa pan_left (no pan_right, que lo sacaría del encuadre).
+   - sp="right" (sujeto a la derecha): usa pan_right (no pan_left, que lo sacaría del encuadre).
+   - sp="center": cualquier dirección es segura.
+   - pareja → movimiento suave hacia ellos; fiesta → más dinámico; emoción → lento y elegante.
+   - Usa "parallax" (efecto de profundidad simulado) en fotos con primer plano + fondo claro. No uses parallax en más del 15% de las fotos.
+6. ASIGNA una TRANSICIÓN a cada foto (la transición ENTRANTE desde la anterior): "cut", "cross_dissolve", "dip_to_black", "soft_blur", "zoom_transition", "fade". Usa transiciones con CRITERIO:
+   - "cut" para cambios dentro de la misma escena o en estribillos (ritmo rápido).
+   - "cross_dissolve" para cambios suaves entre escenas relacionadas.
+   - "dip_to_black" o "fade" para cambios grandes de escena o en el clímax.
+   - "soft_blur" para transiciones oníricas (recuerdos, preparativos).
+   - NO uses una transición distinta por obligación: la mayoría deben ser "cut" o "cross_dissolve".
+7. ASIGNA una intensidad (0-100) a cada foto según la sección musical en ese momento.
 
 Devuelve un JSON:
 {

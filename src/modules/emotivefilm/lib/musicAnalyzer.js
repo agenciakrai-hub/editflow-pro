@@ -99,30 +99,104 @@ export function extractBeats(audioBuffer) {
   return beats;
 }
 
-// Divide la canción en secciones según la curva de intensidad. Etiqueta las
-// secciones por su posición relativa y nivel de energía.
+// Divide la canción en secciones detectando cambios de energía reales (change-point
+// detection) en lugar de dividir por tercios fijos. Suaviza la curva, busca
+// transiciones significativas y etiqueta cada sección por su posición y energía.
+// Detecta: intro, verso, estribillo, puente, subida, clímax, outro.
 export function buildSections(intensityCurve, durationSec, segmentSec = 1) {
-  if (!intensityCurve.length) return [];
-  const sections = [];
+  if (!intensityCurve.length) return { sections: [], climax_at: 0 };
   const n = intensityCurve.length;
-  // Promedios por tercios para detectar subidas/bajadas bruscas
-  const third = Math.floor(n / 3);
-  const avg1 = avg(intensityCurve.slice(0, third));
-  const avg2 = avg(intensityCurve.slice(third, third * 2));
-  const avg3 = avg(intensityCurve.slice(third * 2));
-  // Clímax: el momento de mayor intensidad sostenida
+
+  // 1. Suaviza la curva con media móvil (ventana 3).
+  const smoothed = smoothCurve(intensityCurve, 3);
+
+  // 2. Clímax: ventana de mayor intensidad sostenida.
   let climaxAt = 0, climaxVal = 0;
   const windowSize = Math.max(3, Math.floor(n / 10));
   for (let i = 0; i + windowSize < n; i++) {
-    const w = avg(intensityCurve.slice(i, i + windowSize));
+    const w = avg(smoothed.slice(i, i + windowSize));
     if (w > climaxVal) { climaxVal = w; climaxAt = (i + windowSize / 2) * segmentSec; }
   }
-  // Secciones simplificadas por energía
-  sections.push({ name: "intro", start: 0, end: durationSec * 0.15, intensity: Math.round(avg1 * 100) });
-  sections.push({ name: "desarrollo", start: durationSec * 0.15, end: durationSec * 0.5, intensity: Math.round(avg2 * 100) });
-  sections.push({ name: "climax", start: durationSec * 0.5, end: durationSec * 0.8, intensity: Math.round(avg3 * 100) });
-  sections.push({ name: "final", start: durationSec * 0.8, end: durationSec, intensity: Math.round(avg(intensityCurve.slice(Math.floor(n * 0.8))) * 100) });
+
+  // 3. Detecta puntos de cambio: donde la derivada de la energía supera un umbral.
+  const changePoints = findChangePoints(smoothed, n);
+
+  // 4. Crea secciones entre puntos de cambio y etiqueta cada una.
+  const sections = [];
+  const allPoints = [0, ...changePoints, n];
+  for (let i = 0; i < allPoints.length - 1; i++) {
+    const start = allPoints[i];
+    const end = allPoints[i + 1];
+    const energy = avg(smoothed.slice(start, end));
+    const position = start / n; // 0..1
+    const name = labelSection(position, energy, i, allPoints.length - 2, climaxAt / segmentSec, start, end);
+    sections.push({
+      name,
+      start: start * segmentSec,
+      end: end * segmentSec,
+      intensity: Math.round(energy * 100),
+    });
+  }
+
   return { sections, climax_at: climaxAt };
+}
+
+// Suaviza una curva con media móvil de ventana `radius`.
+function smoothCurve(curve, radius) {
+  const out = new Array(curve.length);
+  for (let i = 0; i < curve.length; i++) {
+    let sum = 0, count = 0;
+    for (let j = Math.max(0, i - radius); j <= Math.min(curve.length - 1, i + radius); j++) {
+      sum += curve[j];
+      count++;
+    }
+    out[i] = sum / count;
+  }
+  return out;
+}
+
+// Encuentra puntos donde la energía cambia significativamente (transiciones
+// entre verso/estribillo, subidas/bajadas bruscas). Devuelve índices en la curva.
+function findChangePoints(curve, n) {
+  if (n < 8) return [];
+  const points = [];
+  const minSectionLen = Math.max(3, Math.floor(n / 15)); // sección mínima ~6% de la canción
+  // Calcula la derivada comparando ventanas antes/después de cada punto.
+  const deriv = [];
+  const halfWin = 3;
+  for (let i = halfWin; i < n - halfWin; i++) {
+    const before = avg(curve.slice(i - halfWin, i));
+    const after = avg(curve.slice(i, i + halfWin));
+    deriv.push(Math.abs(after - before));
+  }
+  // Umbral adaptativo: percentil 70 de las derivadas (los cambios más fuertes).
+  const sorted = [...deriv].sort((a, b) => a - b);
+  const p70 = sorted[Math.floor(sorted.length * 0.7)] || 0;
+  const threshold = Math.max(p70, 0.08); // mínimo 0.08 de cambio para contar
+  let lastPoint = 0;
+  for (let i = 0; i < deriv.length; i++) {
+    if (deriv[i] > threshold && i + halfWin - lastPoint >= minSectionLen) {
+      points.push(i + halfWin);
+      lastPoint = i + halfWin;
+    }
+  }
+  return points;
+}
+
+// Etiqueta una sección según su posición en la canción, su energía y el clímax.
+function labelSection(position, energy, idx, totalSections, climaxIdx, start, end) {
+  const isNearClimax = Math.abs((start + end) / 2 - climaxIdx) < (end - start) * 1.5;
+  // Si la sección contiene el clímax y tiene alta energía → "climax"
+  if (isNearClimax && energy > 0.6) return "climax";
+  // Por posición relativa
+  if (position < 0.08) return "intro";
+  if (position > 0.92) return "outro";
+  // Por energía
+  if (energy > 0.75) return "estribillo";
+  if (energy > 0.5) return "subida";
+  if (energy < 0.25) return "puente";
+  // Si es una sección intermedia de energía media → verso
+  return "verso";
 }
 
 function avg(arr) {
