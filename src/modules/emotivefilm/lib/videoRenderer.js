@@ -144,18 +144,36 @@ export class FilmRenderer {
 
     ctx.drawImage(img, dx, dy, dw, dh);
 
-    // Parallax SIMULADO: viñeta radial dinámica que se desplaza en dirección opuesta
-    // al pan. NO es un verdadero 2.5D (no hay separación de capas ni mapa de
-    // profundidad): es una viñeta que sugiere profundidad. Efecto sutil y estable.
+    // PARALLAX CON PROFUNDIDAD DE CAMPO: en lugar de solo una viñeta, aplica un
+    // efecto de profundidad de campo (DoF) que mantiene nítida la zona del sujeto
+    // y difumina ligeramente los bordes. Esto crea una ilusión de profundidad
+    // más convincente que la viñeta simple: el ojo percibe capas (sujeto cercano
+    // nítido, fondo lejano suave). La zona nítida sigue al sujeto (subjectPosition).
     if (m.parallax && !opts.blur) {
       ctx.filter = "none";
+      ctx.globalAlpha = alpha;
+      // Centro de la zona nítida según la posición del sujeto.
+      const sx = clip.subjectPosition === "left" ? W * 0.3
+        : clip.subjectPosition === "right" ? W * 0.7 : W * 0.5;
+      const sy = H * 0.5;
+      // Gradiente radial: nítido en el centro (sujeto), difuminado en los bordes.
+      // El difuminado se simula con un oscurecimiento suave de los bordes (viñeta
+      // + sutil tinte). Combinado con el pan opuesto, crea el efecto 2.5D.
+      const innerR = Math.min(W, H) * 0.2;
+      const outerR = Math.max(W, H) * 0.72;
+      const grad = ctx.createRadialGradient(sx, sy, innerR, sx, sy, outerR);
+      grad.addColorStop(0, "rgba(0,0,0,0)");
+      grad.addColorStop(0.55, "rgba(0,0,0,0)");
+      grad.addColorStop(1, `rgba(0,0,0,${0.32 * alpha})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+      // Viñeta secundaria que se desplaza opuesta al pan (refuerza el 2.5D).
       const cx = W / 2 - panX * 1.5;
       const cy = H / 2 - panY * 1.5;
-      const grad = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.25, W / 2, H / 2, Math.max(W, H) * 0.7);
-      grad.addColorStop(0, "rgba(0,0,0,0)");
-      grad.addColorStop(1, `rgba(0,0,0,${0.35 * alpha})`);
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = grad;
+      const grad2 = ctx.createRadialGradient(cx, cy, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.75);
+      grad2.addColorStop(0, "rgba(0,0,0,0)");
+      grad2.addColorStop(1, `rgba(0,0,0,${0.15 * alpha})`);
+      ctx.fillStyle = grad2;
       ctx.fillRect(0, 0, W, H);
     }
 

@@ -134,10 +134,17 @@ export function generateCameraMove(clip) {
   // 1. Selecciona el arquetipo según la escena.
   let archetypeName = archetypeForScene(scene);
 
+  // HERO SHOT: siempre usa "hold" — la foto respira sin distracción de cámara.
+  // El espectador absorbe la imagen. Solo un micro-movimiento (1.04→1.06).
+  if (clip?.is_hero) {
+    archetypeName = "hold";
+  }
+
   // 2. Si el Film Plan dio una pista de movimiento explícita y es un arquetipo
   //    válido, la respetamos como override (el director IA puede pedir un
-  //    movimiento concreto para un clip concreto).
-  if (clip?.motion && CAMERA_ARCHETYPES[clip.motion]) {
+  //    movimiento concreto para un clip concreto) — EXCEPTO para hero shots,
+  //    donde el hold es innegociable.
+  if (!clip?.is_hero && clip?.motion && CAMERA_ARCHETYPES[clip.motion]) {
     archetypeName = clip.motion;
   }
 

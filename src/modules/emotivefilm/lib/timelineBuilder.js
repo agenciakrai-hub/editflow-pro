@@ -3,6 +3,7 @@
 // de transición y alineación a beats. El reproductor y el exportador consumen
 // esta timeline normalizada.
 import { transitionDuration } from "./transitionEngine";
+import { markHeroShots, assignContextualTransitions } from "./heroShots";
 
 // Normaliza el film_plan en una timeline con tiempos absolutos.
 // Devuelve SIEMPRE { clips, totalDuration } (clips=[] si no hay timeline).
@@ -50,6 +51,27 @@ export function buildTimeline(filmPlan, music, settings) {
   // para modular la amplitud del movimiento (más energía → más zoom/pan).
   if (music?.intensity_curve?.length) {
     assignMusicIntensity(clips, music.intensity_curve, music.duration_sec || totalDuration);
+  }
+
+  // Hero Shots: marca los clips más potentes (cerca del clímax, alta intensidad,
+  // escena de pareja) como hero shots. Usan el arquetipo "hold" (movimiento
+  // mínimo, la foto respira) y transición dip_to_black. Como coupleHashes no está
+  // disponible aquí, usamos la escena como proxy (pareja/beso/novia/novio).
+  const climaxAt = filmPlan?.climax_at || 0;
+  const coupleProxyHashes = clips
+    .filter((c) => ["pareja", "beso", "novia", "novio"].includes(String(c.scene).toLowerCase()))
+    .map((c) => c.hash);
+  markHeroShots(clips, climaxAt, coupleProxyHashes);
+
+  // Transiciones contextuales: asigna transiciones según la relación entre clips
+  // consecutivos (misma escena → cut, escena diferente → cross_dissolve, hero →
+  // dip_to_black). Solo sobrescribe transiciones genéricas del plan.
+  assignContextualTransitions(clips);
+
+  // Recalcula las duraciones de transición tras la asignación contextual
+  // (las nuevas transiciones pueden tener duraciones distintas).
+  for (let i = 1; i < clips.length; i++) {
+    clips[i].transitionDur = transitionDuration(clips[i].transition, settings?.transition_intensity);
   }
 
   return { clips, totalDuration };
