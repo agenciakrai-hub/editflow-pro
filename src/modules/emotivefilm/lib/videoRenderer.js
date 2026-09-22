@@ -65,8 +65,11 @@ export class FilmRenderer {
       return img;
     }
     const preview = await getCachedPreview(hash);
-    if (!preview?.dataUrl) return null;
-    const img = await loadImage(preview.dataUrl);
+    // USA LA MEJOR RESOLUCIÓN DISPONIBLE: hiResDataUrl (2400px) para exportación
+    // 1080p/4K, dataUrl (800px) como fallback. Esto evita upscaling borroso.
+    const bestUrl = preview?.hiResDataUrl || preview?.dataUrl;
+    if (!bestUrl) return null;
+    const img = await loadImage(bestUrl);
     this.imgCache.set(hash, img);
     this.imgOrder.push(hash);
     if (this.imgOrder.length > IMG_CACHE_MAX) {
@@ -136,9 +139,9 @@ export class FilmRenderer {
 
     ctx.drawImage(img, dx, dy, dw, dh);
 
-    // Parallax 2.5D: viñeta radial dinámica que se desplaza en dirección opuesta
-    // al pan, creando la ilusión de que el foreground y el background se mueven a
-    // distinta velocidad. Solo se aplica si el movimiento es parallax.
+    // Parallax SIMULADO: viñeta radial dinámica que se desplaza en dirección opuesta
+    // al pan. NO es un verdadero 2.5D (no hay separación de capas ni mapa de
+    // profundidad): es una viñeta que sugiere profundidad. Efecto sutil y estable.
     if (m.parallax && !opts.blur) {
       ctx.filter = "none";
       const cx = W / 2 - panX * 1.5;
@@ -247,6 +250,13 @@ export class FilmRenderer {
   // Si el navegador soporta video/mp4 lo usa; si no, cae a webm.
   async export(onProgress) {
     const fps = 30;
+    // PRECARGA TODAS las imágenes ANTES de empezar a grabar. Esto evita frames
+    // negros/congelados: si una imagen no está cacheada cuando _drawFrame corre,
+    // el frame queda en negro. Con la precarga completa, todos los frames tienen imagen.
+    await this._preloadAll();
+    // Dibuja el primer frame para confirmar que las imágenes están listas.
+    this._drawFrame(0);
+
     const stream = this.canvas.captureStream(fps);
     // Audio: si hay audioBuffer, crea un MediaStreamAudioDestinationNode y lo añade.
     let audioCtx = null;
@@ -268,8 +278,8 @@ export class FilmRenderer {
     const done = new Promise((resolve) => { recorder.onstop = () => resolve(); });
     recorder.start();
 
-    // Reproduce la timeline en tiempo real dibujando frames.
-    await this._preloadAround(0);
+    // Reproduce la timeline en tiempo real dibujando frames. Todas las imágenes
+    // ya están en imgCache (precargadas), así que _drawFrame nunca queda en negro.
     this.playing = true;
     this.startTime = performance.now() / 1000;
     await new Promise((resolve) => {
@@ -284,7 +294,6 @@ export class FilmRenderer {
         }
         this._drawFrame(time);
         onProgress?.(time, this.totalDuration);
-        this._preloadAround(time);
         requestAnimationFrame(loop);
       };
       loop();
@@ -294,6 +303,16 @@ export class FilmRenderer {
     await done;
     const blob = new Blob(chunks, { type: mime });
     return blob;
+  }
+
+  // Precarga TODAS las imágenes de la timeline en el caché LRU. Para timelines
+  // largas (100+ fotos) puede tardar unos segundos, pero garantiza que ningún
+  // frame quede en negro durante la grabación.
+  async _preloadAll() {
+    const hashes = this.clips.map((c) => c.hash).filter(Boolean);
+    for (const h of hashes) {
+      if (!this.imgCache.has(h)) await this._getImage(h);
+    }
   }
 }
 

@@ -87,9 +87,11 @@ export default function ExportPanel({ filmPlan, music, settings, exportConfig, o
             value={exportConfig.format}
             onChange={(e) => onChange({ ...exportConfig, format: e.target.value })}
             className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+            disabled
           >
-            <option value="mp4">MP4 / WebM</option>
+            <option value="webm">WebM (navegador)</option>
           </select>
+          <p className="mt-1 text-[10px] text-muted-foreground">El navegador genera WebM. MP4 requiere conversión posterior.</p>
         </div>
       </div>
 
@@ -114,10 +116,10 @@ export default function ExportPanel({ filmPlan, music, settings, exportConfig, o
       {downloadUrl && !exporting && (
         <a
           href={downloadUrl}
-          download={`emotive-film.${downloadUrl.includes("mp4") ? "mp4" : "webm"}`}
+          download={`emotive-film.webm`}
           className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-accent px-4 py-2 text-sm font-medium text-accent hover:bg-accent/5"
         >
-          <Download className="h-4 w-4" /> Descargar vídeo
+          <Download className="h-4 w-4" /> Descargar vídeo (.webm)
         </a>
       )}
 

@@ -37,6 +37,7 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
 
   let done = 0;
   const total = toAnalyze.length;
+  const batchErrors = []; // [{ count, error }] — lotes donde TODOS los proveedores fallaron
   await runParallel(batches, ANALYZE_CONCURRENCY, async (batch) => {
     if (signal?.aborted) return;
     const hashes = batch.map((p) => p.fingerprint_hash);
@@ -60,6 +61,10 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
         photos: photosWithPreview,
       });
       const results = res?.data?.results || [];
+      if (!results.length && photosWithPreview.length) {
+        // El backend no devolvió resultados: todos los proveedores fallaron.
+        batchErrors.push({ count: photosWithPreview.length, error: res?.data?.error || "Proveedores IA no disponibles" });
+      }
       for (const r of results) {
         if (r.fingerprint_hash) {
           analyzed[r.fingerprint_hash] = {
@@ -76,10 +81,19 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
       }
     } catch (e) {
       console.warn("analyze-batch error", e?.message || e);
+      batchErrors.push({ count: photosWithPreview.length, error: e?.message || "Error de red" });
     }
     done += batch.length;
     onProgress?.("analyze", done, total);
   });
+
+  // Si TODOS los lotes con fotos fallaron, lanza un error claro al usuario.
+  const totalFailed = batchErrors.reduce((s, e) => s + e.count, 0);
+  const totalAnalyzed = Object.keys(analyzed).filter((k) => !cache[k]).length;
+  if (totalFailed > 0 && totalAnalyzed === 0) {
+    const lastError = batchErrors[batchErrors.length - 1]?.error || "desconocido";
+    throw new Error(`Todos los proveedores IA fallaron (${totalFailed} fotos sin analizar). Último error: ${lastError}. Revisa los proveedores en Proveedores IA.`);
+  }
 
   // Persiste el caché de análisis.
   film = await mergeAnalysisCache(film, Object.values(analyzed).filter((v) => !cache[v.fingerprint_hash]));
@@ -126,7 +140,12 @@ export async function runAnalysis({ projectId, style, settings, onProgress, sign
     couple_ids: coupleHashes,
   });
 
-  return { photos: allPhotos, analyzed, coupleHashes, selection, film };
+  // Advertencia parcial: algunos lotes fallaron pero el análisis continuó.
+  const partialWarning = batchErrors.length > 0 && totalAnalyzed > 0
+    ? `${batchErrors.length} lote(s) fallaron (${totalFailed} fotos sin analizar). ${totalAnalyzed} fotos analizadas correctamente.`
+    : null;
+
+  return { photos: allPhotos, analyzed, coupleHashes, selection, film, partialWarning };
 }
 
 // Construye la selección automática. Combina scores, prioriza la pareja, evita

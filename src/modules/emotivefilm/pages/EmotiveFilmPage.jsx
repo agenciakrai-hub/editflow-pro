@@ -109,7 +109,11 @@ export default function EmotiveFilmPage() {
       });
       setSelection(result.selection);
       setFilm(result.film);
-      toast({ title: "Análisis completado", description: `${result.selection.length} fotos seleccionadas por la IA` });
+      if (result.partialWarning) {
+        toast({ title: "Análisis completado con advertencias", description: result.partialWarning, variant: "destructive" });
+      } else {
+        toast({ title: "Análisis completado", description: `${result.selection.length} fotos seleccionadas por la IA` });
+      }
     } catch (e) {
       toast({ title: "Error en el análisis", description: e?.message, variant: "destructive" });
     } finally {

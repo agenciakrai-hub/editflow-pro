@@ -107,12 +107,14 @@ export function ensureClimaxCouple(clips, climaxAt, coupleHashes) {
   }
   if (climaxIdx < 0) climaxIdx = Math.floor(clips.length / 2);
   if (coupleSet.has(clips[climaxIdx].hash)) return clips; // ya es de pareja
-  // Busca el clip de pareja más cercano al clímax por intensidad.
-  let bestCoupleIdx = -1, bestDist = Infinity;
+  // Busca el clip de pareja MÁS POTENTE (mayor intensidad), no el más cercano.
+  // El clímax debe tener la mejor foto de pareja, no una mediocre solo por
+  // cercanía temporal. La intensidad del clip refleja la potencia emocional
+  // asignada por el Film Director.
+  let bestCoupleIdx = -1, bestIntensity = -1;
   for (let i = 0; i < clips.length; i++) {
     if (!coupleSet.has(clips[i].hash)) continue;
-    const dist = Math.abs(clips[i].start - climaxAt);
-    if (dist < bestDist) { bestDist = dist; bestCoupleIdx = i; }
+    if (clips[i].intensity > bestIntensity) { bestIntensity = clips[i].intensity; bestCoupleIdx = i; }
   }
   if (bestCoupleIdx < 0 || bestCoupleIdx === climaxIdx) return clips;
   // Intercambia los hashes (mantiene tiempos y movimientos).
