@@ -182,7 +182,7 @@ export async function exportWithWebCodecs(renderer, onProgress) {
   videoEncoder.close();
 
   // === AUDIO ENCODER ===
-  if (audioBuffer) {
+  if (actualAudioBuffer) {
     let audioEncoderError = null;
     const audioEncoder = new AudioEncoder({
       output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
@@ -190,31 +190,30 @@ export async function exportWithWebCodecs(renderer, onProgress) {
     });
     audioEncoder.configure({
       codec: formatInfo.audioCodec,
-      sampleRate: formatInfo.format === "mp4" ? 44100 : 48000,
-      numberOfChannels: Math.min(2, audioBuffer.numberOfChannels),
+      sampleRate: audioSampleRate,
+      numberOfChannels: audioChannels,
       bitrate: AUDIO_BITRATE,
     });
 
-    // Codifica el audio en chunks de 1 segundo.
-    const targetSampleRate = formatInfo.format === "mp4" ? 44100 : 48000;
-    const channels = Math.min(2, audioBuffer.numberOfChannels);
-    const chunkFrames = audioBuffer.sampleRate; // 1 segundo
+    // Codifica el audio en chunks de 1 segundo usando el buffer real (posiblemente
+    // remuestreado). Todos los sample rates coinciden: encoder, muxer y AudioData.
+    const chunkFrames = actualAudioBuffer.sampleRate; // 1 segundo
 
-    for (let i = 0; i < audioBuffer.length; i += chunkFrames) {
+    for (let i = 0; i < actualAudioBuffer.length; i += chunkFrames) {
       if (audioEncoderError) throw audioEncoderError;
-      const frames = Math.min(chunkFrames, audioBuffer.length - i);
+      const frames = Math.min(chunkFrames, actualAudioBuffer.length - i);
       // Construye datos planares f32: [ch0_samples, ch1_samples, ...]
-      const planarData = new Float32Array(frames * channels);
-      for (let ch = 0; ch < channels; ch++) {
-        const chData = audioBuffer.getChannelData(ch);
+      const planarData = new Float32Array(frames * audioChannels);
+      for (let ch = 0; ch < audioChannels; ch++) {
+        const chData = actualAudioBuffer.getChannelData(ch);
         planarData.set(chData.subarray(i, i + frames), ch * frames);
       }
       const audioData = new AudioData({
         format: "f32-planar",
-        sampleRate: audioBuffer.sampleRate,
+        sampleRate: audioSampleRate,
         numberOfFrames: frames,
-        numberOfChannels: channels,
-        timestamp: Math.round((i / audioBuffer.sampleRate) * 1_000_000),
+        numberOfChannels: audioChannels,
+        timestamp: Math.round((i / audioSampleRate) * 1_000_000),
         data: planarData,
       });
       audioEncoder.encode(audioData);
@@ -237,4 +236,20 @@ export async function exportWithWebCodecs(renderer, onProgress) {
   if (onProgress) onProgress(1, totalDuration, totalDuration);
 
   return { blob, format: formatInfo.format, mime };
+}
+
+// Remuestrea un AudioBuffer a la frecuencia objetivo usando OfflineAudioContext.
+// Necesario para Opus (WebM) que solo soporta 8000/12000/16000/24000/48000 Hz.
+// Si el audio original está a 44100 Hz (típico en música), se remuestrea a 48000.
+async function resampleAudio(audioBuffer, targetRate) {
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!OAC) return audioBuffer; // No se puede remuestrear: usa el original
+  const channels = Math.min(2, audioBuffer.numberOfChannels);
+  const length = Math.ceil(audioBuffer.duration * targetRate);
+  const oac = new OAC(channels, length, targetRate);
+  const src = oac.createBufferSource();
+  src.buffer = audioBuffer;
+  src.connect(oac.destination);
+  src.start();
+  return await oac.startRendering();
 }
