@@ -29,25 +29,16 @@ export default function MisProyectos() {
   const [open, setOpen] = useState({});
   const [deleting, setDeleting] = useState(null);
 
+  // Carga SOLO los proyectos (ligero: 4 registros). Los fingerprints se cargan
+  // bajo demanda al expandir un proyecto — antes se cargaban TODOS de golpe
+  // (5000+ registros), lo que bloqueaba la página durante segundos.
   const load = async () => {
     setLoading(true);
     try {
       const list = await base44.entities.Project.list("-created_date", 50);
-      const projectList = Array.isArray(list) ? list : [];
-      setProjects(projectList);
-
-      // Una sola consulta para todos los proyectos del usuario (RLS ya restringe a los
-      // suyos), agrupada por project_id — evita N consultas y mantiene la misma fuente de
-      // verdad que DetalleProyectoPage.
-      const fps = await base44.entities.ProjectPhotoFingerprint.list("-created_date", 2000);
-      const grouped = {};
-      for (const f of Array.isArray(fps) ? fps : []) {
-        (grouped[f.project_id] ||= []).push(f);
-      }
-      setFpByProject(grouped);
+      setProjects(Array.isArray(list) ? list : []);
     } catch (e) {
       setProjects([]);
-      setFpByProject({});
       toast({ title: "No se pudieron cargar los proyectos", description: e?.message, variant: "destructive" });
     }
     setLoading(false);
@@ -55,7 +46,26 @@ export default function MisProyectos() {
 
   useEffect(() => { load(); }, []);
 
-  const toggle = (id) => setOpen((p) => ({ ...p, [id]: !p[id] }));
+  // Carga los fingerprints de UN solo proyecto, solo al expandirlo.
+  const loadFingerprints = async (projectId) => {
+    if (fpByProject[projectId]) return; // ya cargados
+    try {
+      const fps = await base44.entities.ProjectPhotoFingerprint.filter(
+        { project_id: projectId }, "-created_date", 500
+      );
+      setFpByProject((prev) => ({ ...prev, [projectId]: Array.isArray(fps) ? fps : [] }));
+    } catch {
+      setFpByProject((prev) => ({ ...prev, [projectId]: [] }));
+    }
+  };
+
+  const toggle = (id) => {
+    setOpen((p) => {
+      const next = { ...p, [id]: !p[id] };
+      if (next[id]) loadFingerprints(id);
+      return next;
+    });
+  };
 
   const remove = async (id) => {
     if (!window.confirm("¿Eliminar este proyecto? Solo se borran los metadatos guardados.")) return;
@@ -108,8 +118,6 @@ export default function MisProyectos() {
         <div className="space-y-3">
           {projects.map((p) => {
             const fps = fpByProject[p.id] || [];
-            const selCount = fps.filter((f) => f.marked !== false).length;
-            const topCount = fps.filter((f) => f.selection_status === "TOP_PICK").length;
             const isOpen = !!open[p.id];
             return (
               <div key={p.id} className="rounded-xl border border-border bg-card overflow-hidden">
@@ -119,7 +127,7 @@ export default function MisProyectos() {
                     <div>
                       <p className="text-sm font-semibold">{p.title}</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {p.event_date || "Sin fecha"} · {fps.length} fotos · {selCount} seleccionadas · {topCount} top
+                        {p.event_date || "Sin fecha"} · {p.photo_count || 0} fotos · {p.selected_count || 0} seleccionadas
                       </p>
                     </div>
                   </button>
@@ -136,7 +144,11 @@ export default function MisProyectos() {
                 </div>
                 {isOpen && (
                   <div className="border-t border-border">
-                    {fps.length === 0 ? (
+                    {fpByProject[p.id] === undefined ? (
+                      <div className="flex items-center gap-2 p-4 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Cargando fotos…
+                      </div>
+                    ) : fps.length === 0 ? (
                       <p className="p-4 text-xs text-muted-foreground">Sin fotos registradas.</p>
                     ) : (
                       <ul className="divide-y divide-border max-h-80 overflow-auto">

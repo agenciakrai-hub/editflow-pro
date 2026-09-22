@@ -32,7 +32,7 @@ export async function updateCatalogBinding(id, data) {
 }
 
 export async function listFingerprints(projectId) {
-  return base44.entities.ProjectPhotoFingerprint.filter({ project_id: projectId });
+  return base44.entities.ProjectPhotoFingerprint.filter({ project_id: projectId }, "-created_date", 5000);
 }
 
 // El SDK limita las operaciones masivas a 500 registros por llamada. Partimos en lotes
@@ -82,7 +82,7 @@ export async function deleteFolder(id) {
 
 // Fingerprints de UNA carpeta concreta (la unidad de trabajo independiente).
 export async function listFingerprintsByFolder(folderId) {
-  return base44.entities.ProjectPhotoFingerprint.filter({ folder_id: folderId });
+  return base44.entities.ProjectPhotoFingerprint.filter({ folder_id: folderId }, "-created_date", 5000);
 }
 
 // Borra solo los fingerprints de UNA carpeta (no toca las demás carpetas del proyecto).
