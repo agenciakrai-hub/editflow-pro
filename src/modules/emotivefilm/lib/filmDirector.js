@@ -311,11 +311,14 @@ export async function runPlanFilm({ projectId, selection, music, style, settings
   const film_plan = res?.data?.film_plan;
   if (!film_plan) throw new Error("El AI Film Director no pudo generar el plan.");
 
-  // Enriquece cada entrada de la timeline con subject_position desde la selección,
-  // para que el renderer aplique motionAtSafe y no corte al sujeto.
+  // Enriquece cada entrada de la timeline con subject_position y orientation
+  // desde la selección, para que el renderer aplique el motor cinematográfico
+  // con el contexto completo de cada foto (no corte al sujeto, respete formato).
   const hashToSubject = new Map(selection.map((s) => [s.fingerprint_hash, s.subject_position || "center"]));
+  const hashToOrientation = new Map(selection.map((s) => [s.fingerprint_hash, s.orientation || "landscape"]));
   for (const t of film_plan.timeline || []) {
     t.subject_position = hashToSubject.get(t.hash) || "center";
+    t.orientation = hashToOrientation.get(t.hash) || "landscape";
   }
 
   // Construye la timeline normalizada y asegura que el clímax tenga fotos de pareja.

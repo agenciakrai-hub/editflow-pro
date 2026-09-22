@@ -28,6 +28,8 @@ export function buildTimeline(filmPlan, music, settings) {
       duration: dur,
       transitionDur: transDur,
       subjectPosition: t.subject_position || "center",
+      orientation: t.orientation || "landscape",
+      musicIntensity: 0.5, // se rellena tras alinear a beats (si hay música)
     });
     // El siguiente clip empieza solapado con la transición de este.
     cursor += dur - (i < timeline.length - 1 ? transDur : 0);
@@ -43,7 +45,35 @@ export function buildTimeline(filmPlan, music, settings) {
     alignToBeats(clips, beats, totalDuration);
   }
 
+  // Intensidad musical por clip: para cada clip, calcula la intensidad media
+  // de la canción durante su duración. El motor cinematográfico usa este valor
+  // para modular la amplitud del movimiento (más energía → más zoom/pan).
+  if (music?.intensity_curve?.length) {
+    assignMusicIntensity(clips, music.intensity_curve, music.duration_sec || totalDuration);
+  }
+
   return { clips, totalDuration };
+}
+
+// Asigna la intensidad musical media a cada clip muestreando la curva de
+// intensidad durante la duración del clip. El motor cinematográfico usa este
+// valor (0..1) para modular la amplitud del movimiento de cámara.
+function assignMusicIntensity(clips, intensityCurve, musicDuration) {
+  if (!intensityCurve?.length || !musicDuration) return;
+  for (const c of clips) {
+    const startIdx = Math.floor((c.start / musicDuration) * intensityCurve.length);
+    const endIdx = Math.min(
+      intensityCurve.length - 1,
+      Math.floor(((c.start + c.duration) / musicDuration) * intensityCurve.length)
+    );
+    if (startIdx < 0 || endIdx < startIdx) { c.musicIntensity = 0.5; continue; }
+    let sum = 0, count = 0;
+    for (let i = startIdx; i <= endIdx; i++) {
+      sum += intensityCurve[i] || 0;
+      count++;
+    }
+    c.musicIntensity = count > 0 ? sum / count : 0.5;
+  }
 }
 
 // Alinea los inicios de clip a beats cercanos. Mueve el cursor de cada clip

@@ -7,6 +7,7 @@
 // IndexedDB (getCachedPreview) y se cachean en un Map en memoria (LRU simple)
 // para no recargarlas en cada frame.
 import { motionAt, motionAtSafe } from "./motionEngine";
+import { cinematicAtSafe } from "./cinematicCamera";
 import { transitionState, transitionDuration } from "./transitionEngine";
 import { getCachedPreview } from "@/modules/proyectos/lib/previewCache";
 
@@ -123,7 +124,11 @@ export class FilmRenderer {
     if (opts.blur) ctx.filter = `blur(${opts.blur}px)`;
     else ctx.filter = "none";
 
-    const m = motionAtSafe(clip.motion, localT, clip.subjectPosition);
+    // AI Cinematic Camera Engine: si el clip tiene contexto (scene), usa el motor
+    // cinematográfico dinámico. Si no (legacy), cae al motor de presets.
+    const m = clip.scene && clip.intensity != null
+      ? cinematicAtSafe(clip, localT)
+      : motionAtSafe(clip.motion, localT, clip.subjectPosition);
     const zoom = (opts.zoom || 1) * m.scale;
 
     // Contener la imagen en el canvas (object-fit: contain).
