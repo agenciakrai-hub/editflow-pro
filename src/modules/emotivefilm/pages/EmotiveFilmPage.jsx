@@ -272,6 +272,7 @@ export default function EmotiveFilmPage() {
         filmPlan: film.film_plan,
         heroVideos: film.hero_videos || {},
         settings,
+        exportConfig,
         onProgress: (hash, status, info) => {
           setHeroProgress((p) => ({ ...p, [hash]: { status, info } }));
         },

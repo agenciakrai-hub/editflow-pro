@@ -71,6 +71,102 @@ export default function AdvancedSettings({ settings, onChange }) {
               )}
             </div>
           ))}
+
+          {/* === Proveedor I2V (HERO VIDEOS) === */}
+          <div className="border-t border-border pt-4">
+            <h4 className="text-xs font-semibold text-foreground">Proveedor I2V (HERO VIDEOS)</h4>
+
+            <div className="mt-2">
+              <label className="text-xs text-muted-foreground">Modo</label>
+              <select
+                value={s.i2v_provider || "auto"}
+                onChange={(e) => setField("i2v_provider", e.target.value)}
+                className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1.5 text-sm"
+              >
+                <option value="auto">AUTO — primer proveedor gratuito disponible</option>
+                <option value="nvidia">NVIDIA Cosmos 3 Nano (FREE)</option>
+                <option value="openrouter">OpenRouter (PREMIUM)</option>
+                <option value="fal">fal.ai Kling 3.0 Pro (PREMIUM)</option>
+              </select>
+            </div>
+
+            {/* NVIDIA — FREE, experimental */}
+            <div className="mt-2 flex items-start gap-2 rounded-lg bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-400">
+              <span className="font-semibold shrink-0">NVIDIA FREE</span>
+              <span>Endpoint gratuito. Diseñado para Physical AI (robótica/simulación). Experimental para bodas — puede producir movimiento menos natural en personas.</span>
+            </div>
+            <label className="mt-1.5 flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={s.i2v_nvidia_enabled !== false}
+                onChange={(e) => setField("i2v_nvidia_enabled", e.target.checked)}
+              />
+              <span>Habilitar NVIDIA (gratuito, activo por defecto)</span>
+            </label>
+
+            {/* OpenRouter — PREMIUM */}
+            <div className="mt-3 flex items-start gap-2 rounded-lg bg-blue-500/10 p-2 text-[11px] text-blue-700 dark:text-blue-400">
+              <span className="font-semibold shrink-0">OpenRouter PREMIUM</span>
+              <span>Modelos de pago (Seedance, Veo, Wan...). Desde $0.03363/segundo. Requiere API key (OPENROUTER_API_KEY). Todos los modelos son de pago.</span>
+            </div>
+            <label className="mt-1.5 flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={s.i2v_openrouter_enabled === true}
+                onChange={(e) => setField("i2v_openrouter_enabled", e.target.checked)}
+              />
+              <span>Habilitar OpenRouter (pago — consumo bajo demanda)</span>
+            </label>
+            {s.i2v_openrouter_enabled && (
+              <input
+                type="text"
+                value={s.i2v_openrouter_model || ""}
+                onChange={(e) => setField("i2v_openrouter_model", e.target.value)}
+                placeholder="bytedance/seedance-2.0-mini"
+                className="mt-1.5 w-full rounded-md border border-input bg-background px-2 py-1 text-xs"
+              />
+            )}
+
+            {/* fal.ai — PREMIUM, desactivado */}
+            <div className="mt-3 flex items-start gap-2 rounded-lg bg-red-500/10 p-2 text-[11px] text-red-700 dark:text-red-400">
+              <span className="font-semibold shrink-0">fal.ai PREMIUM</span>
+              <span>Kling 3.0 Pro — máxima calidad I2V. Consume créditos de fal.ai. Desactivado por defecto.</span>
+            </div>
+            <label className="mt-1.5 flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={s.i2v_fal_enabled === true}
+                onChange={(e) => setField("i2v_fal_enabled", e.target.checked)}
+              />
+              <span>Habilitar fal.ai (pago — consume créditos)</span>
+            </label>
+
+            {/* Duración y máx shots */}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">Duración I2V (s)</label>
+                <input
+                  type="number"
+                  min={3}
+                  max={10}
+                  value={s.i2v_duration || 5}
+                  onChange={(e) => setField("i2v_duration", Number(e.target.value))}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">Máx HERO shots</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={25}
+                  value={s.i2v_max_shots || 20}
+                  onChange={(e) => setField("i2v_max_shots", Number(e.target.value))}
+                  className="mt-1 w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
+                />
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
