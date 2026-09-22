@@ -206,10 +206,10 @@ export default function AIProviders() {
   // verificados compatibles (true) y los no verificados (null) para no romper configs
   // existentes sin probar.
   const markedModelsOf = (task) => {
-    const val = task === "ajustes" ? active.active_ajustes : task === "album" ? active.active_album : active.active_seleccion;
+    const val = task === "ajustes" ? active.active_ajustes : task === "album" ? active.active_album : task === "video" ? (active.active_video_chain?.[0] || "") : active.active_seleccion;
     const p = providers.find((c) => `custom:${c.id}` === val);
-    const marked = task === "ajustes" ? p?.ajustes_models : task === "album" ? p?.album_models : p?.seleccion_models;
-    const capKey = task === "ajustes" || task === "album" || task === "seleccion" ? "vision" : null;
+    const marked = task === "ajustes" ? p?.ajustes_models : task === "album" ? p?.album_models : task === "video" ? p?.video_models : p?.seleccion_models;
+    const capKey = task === "ajustes" || task === "album" || task === "seleccion" || task === "video" ? "vision" : null;
     const meta = new Map((p?.available_models_meta || []).map((e) => [e.id, e]));
     return (Array.isArray(marked) ? marked : []).filter((m) => {
       if (!capKey) return true;
@@ -220,6 +220,26 @@ export default function AIProviders() {
   const seleccionModelOptions = markedModelsOf("seleccion");
   const ajustesModelOptions = markedModelsOf("ajustes");
   const albumModelOptions = markedModelsOf("album");
+  const videoModelOptions = markedModelsOf("video");
+  // Proveedores utilizables para Vídeo (encendidos, conectados, con modelos de vídeo).
+  const videoProviderOptions = providerOptions.filter((o) => usable(o.value, "video"));
+  // Cadena de vídeo: respeta la guardada; si está vacía, auto-selecciona los 3 primeros.
+  const effectiveVideoChain = (active.active_video_chain || []).filter((v) => usable(v, "video"));
+  const videoChainResolved = effectiveVideoChain.length > 0
+    ? effectiveVideoChain
+    : videoProviderOptions.slice(0, 3).map((o) => o.value);
+  const toggleVideoProvider = (val) => {
+    setActive((a) => {
+      const current = a.active_video_chain || [];
+      const next = current.includes(val) ? current.filter((v) => v !== val) : [...current, val];
+      // Si el primario cambió, limpia el modelo exacto si ya no pertenece al nuevo primario.
+      const newPrimary = next[0] || "";
+      const p = providers.find((c) => `custom:${c.id}` === newPrimary);
+      const marked = p?.video_models || [];
+      const modelStillValid = marked.includes(a.active_model_video);
+      return { ...a, active_video_chain: next, active_model_video: modelStillValid ? a.active_model_video : "" };
+    });
+  };
   // Cambia el proveedor activo de una tarea y LIMPIA el modelo exacto si deja de
   // pertenecer a la lista marcada del nuevo proveedor.
   const setTaskProvider = (task, value) => {
@@ -375,6 +395,52 @@ export default function AIProviders() {
           se reintenta con otro modelo marcado del <strong>mismo proveedor</strong> — nunca salta a otro proveedor. En Álbum,
           el proveedor activo se usa primero y, si falla, la cadena de Album AI (Gemini de pago → Qwen → NVIDIA) continúa.
         </p>
+        <div className="space-y-1.5 border-t border-border pt-4">
+          <label className="text-sm font-medium">Vídeo — EMOTIVE FILM IA</label>
+          <p className="text-xs text-muted-foreground">
+            Cadena ordenada de proveedores para Vídeo. El motor intenta el primero; si falla (todos sus modelos), salta al siguiente.
+            Marca los proveedores en orden de prioridad. Si no seleccionas ninguno, se usan por defecto los 3 primeros disponibles.
+          </p>
+          {videoProviderOptions.length === 0 ? (
+            <p className="text-xs text-muted-foreground italic">
+              No hay proveedores utilizables para Vídeo. Añade un proveedor, márcalo como compatible con visión y marca modelos en su pestaña «Vídeo».
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {videoProviderOptions.map((o) => {
+                const checked = videoChainResolved.includes(o.value);
+                const order = videoChainResolved.indexOf(o.value) + 1;
+                return (
+                  <label key={o.value} className="flex items-center gap-2 rounded-md border border-border px-3 py-2 cursor-pointer hover:bg-secondary/50">
+                    <input type="checkbox" checked={checked} onChange={() => toggleVideoProvider(o.value)} className="h-4 w-4" />
+                    <span className="text-sm flex-1">{o.label}</span>
+                    {checked && order > 0 && (
+                      <span className="text-xs font-mono font-semibold text-accent">#{order}</span>
+                    )}
+                  </label>
+                );
+              })}
+              <p className="text-xs text-muted-foreground">
+                Orden de failover: {videoChainResolved.length > 0
+                  ? videoChainResolved.map((v) => providers.find((p) => `custom:${p.id}` === v)?.name || v).join(" → ")
+                  : "— ninguno seleccionado —"}
+              </p>
+            </div>
+          )}
+          {videoModelOptions.length > 0 && (
+            <div className="space-y-1.5 pt-2">
+              <label className="text-sm font-medium">Modelo exacto para Vídeo (proveedor primario)</label>
+              <select value={active.active_model_video || ""} onChange={(e) => setActive((a) => ({ ...a, active_model_video: e.target.value }))}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-sm">
+                <option value="">Auto — mejor modelo marcado de vídeo</option>
+                {videoModelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                El modelo exacto se aplica al proveedor PRIMARIO de la cadena. Los demás proveedores usan «Auto».
+              </p>
+            </div>
+          )}
+        </div>
       </div>
 
       <NvidiaVisionTest />
