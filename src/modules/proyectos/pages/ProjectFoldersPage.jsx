@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, FolderOpen, Plus, Loader2, Trash2, Pencil, ChevronUp, ChevronDown, Check, X, CheckCircle2, Circle, CircleDot, AlertCircle, RotateCcw } from "lucide-react";
+import { ArrowLeft, FolderOpen, Plus, Loader2, Trash2, Pencil, ChevronUp, ChevronDown, Check, X, CheckCircle2, Circle, CircleDot, AlertCircle, RotateCcw, Film } from "lucide-react";
 import { getProject, ensureFoldersMigrated, createFolder, updateFolder, deleteFolder, deleteFingerprintsByFolder } from "../hooks/useProjectStore";
 import { startProcessing, getJob, subscribe } from "../lib/backgroundProcessor";
 import { getJob as getAiJob, subscribe as subscribeAi, cancelSelection as cancelAiSelection } from "../lib/backgroundAiSelection";
@@ -317,6 +317,12 @@ export default function ProjectFoldersPage() {
           Añadir carpeta
         </button>
         <input ref={folderInputRef} type="file" multiple className="hidden" onChange={onFolderPicked} />
+        <Link
+          to={`/emotive-film?project=${id}`}
+          className="ml-auto inline-flex items-center gap-2 rounded-md border border-accent px-4 py-2 text-sm font-medium text-accent hover:bg-accent/5"
+        >
+          <Film className="h-4 w-4" /> Emotive Film IA
+        </Link>
       </div>
 
       {folders.length === 0 ? (

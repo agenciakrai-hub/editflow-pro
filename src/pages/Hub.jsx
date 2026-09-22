@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Images, Sparkles, FileImage, FolderHeart, Wand2, Brain, BookOpen } from "lucide-react";
+import { Images, Sparkles, FileImage, FolderHeart, Wand2, Brain, BookOpen, Film } from "lucide-react";
 
 // Hub de herramientas. Presenta las tres herramientas independientes como tarjetas.
 // No ejecuta ninguna herramienta: cada tarjeta solo navega a su ruta.
@@ -45,6 +45,12 @@ const tools = [
     title: "Album AI",
     desc: "Maqueta álbumes spread a spread: importa tu carpeta de fotos finales y diseña a mano (IA en fases próximas).",
     icon: BookOpen,
+  },
+  {
+    to: "/emotive-film",
+    title: "Emotive Film IA",
+    desc: "La IA monta automáticamente un vídeo cinematográfico de boda desde tus fotos y una canción. Tú solo revisas.",
+    icon: Film,
   },
 ];
 

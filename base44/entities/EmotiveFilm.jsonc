@@ -1,0 +1,143 @@
+{
+  "name": "EmotiveFilm",
+  "type": "object",
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "description": "Referencia al Project. Un EmotiveFilm por proyecto."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "analyzing",
+        "selected",
+        "planning",
+        "planned",
+        "rendering",
+        "completed",
+        "failed"
+      ],
+      "default": "draft",
+      "description": "Estado del flujo: draft\u2192analyzing (IA analizando fotos)\u2192selected (selecci\u00f3n lista para revisi\u00f3n)\u2192planning (generando Film Plan)\u2192planned (plan listo)\u2192rendering (exportando)\u2192completed."
+    },
+    "selection": {
+      "type": "array",
+      "description": "Fotos seleccionadas por la IA con sus an\u00e1lisis. Cada entrada referencia un fingerprint por hash (estable entre sesiones).",
+      "items": {
+        "type": "object",
+        "properties": {
+          "fingerprint_hash": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          },
+          "folder_id": {
+            "type": "string"
+          },
+          "pin": {
+            "type": "boolean",
+            "default": false,
+            "description": "Fijada por el usuario: la IA no puede quitarla."
+          },
+          "exclude": {
+            "type": "boolean",
+            "default": false,
+            "description": "Excluida por el usuario: nunca aparece autom\u00e1ticamente."
+          },
+          "scene": {
+            "type": "string",
+            "description": "Escena narrativa asignada (preparativos, ceremonia, pareja, fiesta...)."
+          },
+          "emotion_score": {
+            "type": "number"
+          },
+          "quality_score": {
+            "type": "number"
+          },
+          "people_score": {
+            "type": "number"
+          },
+          "narrative_score": {
+            "type": "number"
+          },
+          "has_couple": {
+            "type": "boolean"
+          },
+          "description": {
+            "type": "string",
+            "description": "Descripci\u00f3n breve del contenido (la IA la genera al analizar)."
+          }
+        }
+      }
+    },
+    "couple_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "fingerprint_hashes identificados como la pareja protagonista."
+    },
+    "music": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "An\u00e1lisis de la canci\u00f3n: { name, duration_sec, bpm, beats:[], intensity_curve:[], sections:[{name,start,end,intensity}], climax_at }."
+    },
+    "style": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "elegant",
+        "cinematic",
+        "emotional",
+        "luxury",
+        "dynamic",
+        "story"
+      ],
+      "default": "auto"
+    },
+    "film_plan": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Film Plan generado por el AI Film Director: { scenes:[], timeline:[{hash,duration,motion,transition,intensity,beat_align}], total_duration, climax_at }."
+    },
+    "advanced_settings": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Ajustes avanzados (todos AUTO por defecto): emotion_intensity, couple_priority, rhythm, max_photos, target_duration, motion_intensity, transition_intensity, family_weight, friends_weight, party_weight, narrative."
+    },
+    "export_config": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Configuraci\u00f3n de exportaci\u00f3n: { aspect_ratio: '16:9'|'9:16'|'1:1', resolution: '1080p'|'4k', format: 'mp4' }."
+    },
+    "generation_state": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Estado de generaci\u00f3n en curso: { stage, progress, total, error }."
+    },
+    "analysis_cache": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Cach\u00e9 de an\u00e1lisis IA por fingerprint_hash: evita re-analizar fotos ya procesadas. { hash: { emotion, quality, people, scene, description, at } }."
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "rls": {
+    "read": {
+      "created_by_id": "{{user.id}}"
+    },
+    "create": {
+      "created_by_id": "{{user.id}}"
+    },
+    "update": {
+      "created_by_id": "{{user.id}}"
+    },
+    "delete": {
+      "created_by_id": "{{user.id}}"
+    }
+  }
+}
