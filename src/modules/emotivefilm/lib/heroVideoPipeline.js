@@ -1,45 +1,47 @@
-// Pipeline de generación de HERO VIDEOS.
+// Pipeline de generación de HERO VIDEOS — arquitectura multi-proveedor.
 //
 // Orquesta para cada hero shot:
-//   prompt → upload proxy → submit I2V → poll → download → validate → fallback
+//   prompt → upload proxy → submit I2V (cadena de proveedores) → poll → validate → fallback 2D
+//
+// Cadena de proveedores (configurable):
+//   NVIDIA FREE → OpenRouter (si habilitado) → fal.ai (si habilitado) → fallback 2D
+//
+// El I2VCostGuard impide llamadas de pago no autorizadas: solo prueba proveedores
+// habilitados. NVIDIA (FREE) es el proveedor por defecto. fal.ai está DESACTIVADO
+// por defecto — nunca consume créditos sin consentimiento explícito.
 //
 // Persiste el estado en la entidad EmotiveFilm (hero_videos) tras cada shot,
 // de forma que el usuario puede cerrar la app y continuar después.
-//
-// Fallback: si un hero shot falla tras MAX_RETRIES intentos, se marca como
-// "fallback" y el renderer usa el motor cinematográfico 2D para ese clip.
-// NUNCA queda un hueco negro ni un clip roto en la película.
 
 import { getI2VProvider } from "./i2vProvider";
+import { getFallbackChain, I2V_PROVIDERS } from "./i2vCostGuard";
 import { buildHeroPrompt, buildConservativePrompt } from "./heroPromptBuilder";
 import { validateHeroVideo } from "./videoValidator";
 import { getCachedPreview } from "@/modules/proyectos/lib/previewCache";
 import { upsertFilm } from "./filmStore";
 
-const MAX_RETRIES = 2;
 const POLL_INTERVAL = 5000; // 5s entre polls
 const POLL_TIMEOUT = 240000; // 4min máximo por shot
 
 // Genera los HERO VIDEOS para los hero shots del film plan.
-// heroVideos: estado previo (para reanudar).
-// onProgress(hash, status, info): notifica el avance de cada shot.
-// signal: { aborted } para cancelar.
-// settings: { i2v_duration, i2v_max_shots } configuración del pipeline.
+// settings: { i2v_duration, i2v_max_shots, i2v_provider, i2v_nvidia_enabled, ... }
+// exportConfig: { aspect_ratio, resolution } — para adaptar el I2V al formato final.
 // Devuelve el mapa hero_videos actualizado.
 export async function generateHeroVideos({
   projectId,
   filmPlan,
   heroVideos = {},
   settings = {},
+  exportConfig = {},
   onProgress,
   signal,
 }) {
-  const provider = getI2VProvider({
-    duration: settings.i2v_duration || 5,
-  cfg_scale: 0.5,
-  });
+  const chain = getFallbackChain(settings);
+  if (!chain.length) {
+    // Ningún proveedor habilitado — todos los shots van a fallback 2D.
+    onProgress?.(null, "no_providers", { reason: "No hay proveedores I2V habilitados" });
+  }
 
-  // Obtiene los hero shots del plan (marcados por el AI Film Director).
   const heroClips = (filmPlan?.timeline || []).filter((t) => t.is_hero);
   const maxShots = settings.i2v_max_shots || 20;
   const clips = heroClips.slice(0, maxShots);
@@ -62,55 +64,88 @@ export async function generateHeroVideos({
       continue;
     }
 
-    onProgress?.(hash, "starting", {});
-    updated[hash] = await generateOneHeroShot(clip, provider, updated[hash], settings, onProgress, signal);
+    onProgress?.(hash, "starting", { chain });
+    updated[hash] = await generateOneHeroShot(clip, chain, settings, exportConfig, updated[hash], onProgress, signal);
 
-    // Persiste tras cada shot (resumable: el usuario puede cerrar y volver).
+    // Persiste tras cada shot (resumable).
     await upsertFilm(projectId, { hero_videos: updated, status: "generating_heroes" });
   }
 
   return updated;
 }
 
-// Genera un hero shot individual con reintentos y fallback.
-async function generateOneHeroShot(clip, provider, existing, settings, onProgress, signal) {
+// Genera un hero shot individual recorriendo la cadena de proveedores.
+// Si todos los proveedores fallan, marca como fallback (motor 2D).
+async function generateOneHeroShot(clip, chain, settings, exportConfig, existing, onProgress, signal) {
   const hash = clip.hash;
   const state = existing || { status: "pending", attempts: 0 };
 
   let prompt = state.prompt || buildHeroPrompt(clip);
   let attempts = state.attempts || 0;
   const i2vDuration = settings.i2v_duration || 5;
+  const aspectRatio = exportConfig?.aspect_ratio || "16:9";
 
-  while (attempts <= MAX_RETRIES) {
+  // Si no hay proveedores habilitados, fallback inmediato.
+  if (!chain.length) {
+    onProgress?.(hash, "fallback", { error: "No hay proveedores I2V habilitados" });
+    return {
+      status: "fallback",
+      fallback_used: true,
+      prompt,
+      attempts: 0,
+      error: "Sin proveedores I2V — motor cinematográfico 2D",
+      generated_at: Date.now(),
+    };
+  }
+
+  // Obtiene el preview de alta calidad desde IndexedDB (local-first).
+  let blob;
+  try {
+    const preview = await getCachedPreview(hash);
+    const bestUrl = preview?.hiResDataUrl || preview?.dataUrl;
+    if (!bestUrl) throw new Error("Preview no disponible en caché local");
+    blob = dataUrlToBlob(bestUrl);
+  } catch (e) {
+    onProgress?.(hash, "fallback", { error: e.message });
+    return { ...state, status: "fallback", fallback_used: true, error: e.message, generated_at: Date.now() };
+  }
+
+  // Recorre la cadena de proveedores: NVIDIA → OpenRouter → fal.ai → fallback 2D.
+  for (const providerId of chain) {
     if (signal?.aborted) return { ...state, status: "failed", error: "Cancelado" };
 
+    const meta = I2V_PROVIDERS[providerId];
+    onProgress?.(hash, "submitting", { provider: providerId, tier: meta?.tier });
+
     try {
-      // 1. Obtener preview de alta calidad desde IndexedDB (local-first).
-      onProgress?.(hash, "uploading", { attempt: attempts + 1 });
-      const preview = await getCachedPreview(hash);
-      const bestUrl = preview?.hiResDataUrl || preview?.dataUrl;
-      if (!bestUrl) throw new Error("Preview no disponible en caché local");
+      const provider = getI2VProvider(providerId, {
+        duration: i2vDuration,
+        aspectRatio,
+        model: settings.i2v_openrouter_model,
+        resolution: exportConfig?.resolution === "4k" ? "1080p" : "720p",
+      });
 
-      // 2. Convertir data URL a Blob (proxy de alta calidad, NO el original).
-      const blob = dataUrlToBlob(bestUrl);
+      // 1. Submit al proveedor.
+      onProgress?.(hash, "submitting", { provider: providerId });
+      const { request_id, image_url, video_url, synchronous } = await provider.submit(blob, prompt);
 
-      // 3. Subir proxy + submit a I2V (fal.ai Kling 3.0 Pro).
-      onProgress?.(hash, "submitting", { attempt: attempts + 1 });
-      const { request_id, image_url } = await provider.submit(blob, prompt);
+      // 2. Si es síncrono (NVIDIA), video_url ya está disponible. Si no, poll.
+      let finalVideoUrl = video_url;
+      if (!synchronous && request_id) {
+        onProgress?.(hash, "processing", { provider: providerId, request_id });
+        finalVideoUrl = await pollJob(provider, request_id, signal);
+      }
 
-      // 4. Poll hasta completar o fallar.
-      onProgress?.(hash, "processing", { attempt: attempts + 1, request_id });
-      const videoUrl = await pollJob(provider, request_id, signal);
-
-      // 5. Validar vídeo (duración, resolución, frames negros).
-      onProgress?.(hash, "validating", { attempt: attempts + 1 });
-      const validation = await validateHeroVideo(videoUrl, i2vDuration);
+      // 3. Validar vídeo (duración, resolución, frames negros).
+      onProgress?.(hash, "validating", { provider: providerId });
+      const validation = await validateHeroVideo(finalVideoUrl, i2vDuration);
 
       if (validation.valid) {
-        onProgress?.(hash, "completed", { video_url: videoUrl });
+        onProgress?.(hash, "completed", { provider: providerId, video_url: finalVideoUrl });
         return {
           status: "completed",
-          video_url: videoUrl,
+          video_url: finalVideoUrl,
+          provider: providerId,
           prompt,
           request_id,
           image_url,
@@ -125,21 +160,20 @@ async function generateOneHeroShot(clip, provider, existing, settings, onProgres
         };
       }
 
-      // Validación falló: reintento con prompt conservador.
+      // Validación falló: reintento con prompt conservador en el siguiente proveedor.
       attempts++;
       prompt = buildConservativePrompt(clip);
-      onProgress?.(hash, "retrying", { attempt: attempts, errors: validation.errors });
+      onProgress?.(hash, "retrying", { provider: providerId, errors: validation.errors });
     } catch (e) {
       attempts++;
-      console.warn(`Hero shot ${hash} attempt ${attempts} failed:`, e.message);
-      onProgress?.(hash, "retrying", { attempt: attempts, error: e.message });
-
-      if (attempts > MAX_RETRIES) break;
+      console.warn(`Hero shot ${hash} provider ${providerId} failed:`, e.message);
+      onProgress?.(hash, "provider_failed", { provider: providerId, error: e.message });
+      // Continúa al siguiente proveedor de la cadena.
     }
   }
 
-  // Todos los intentos fallaron: fallback al motor 2D.
-  onProgress?.(hash, "fallback", { error: state.error || "Todos los intentos fallaron" });
+  // Todos los proveedores fallaron: fallback al motor 2D.
+  onProgress?.(hash, "fallback", { error: "Todos los proveedores I2V fallaron" });
   return {
     status: "fallback",
     fallback_used: true,
