@@ -7,7 +7,9 @@
 export function capKeyForTask(task) {
   if (task === "seleccion" || task === "ajustes" || task === "album") return "vision";
   if (task === "edicion") return "image_edit";
-  if (task === "video") return "video";
+  // EMOTIVE FILM IA usa VLM (visión) para analizar fotos, no modelos de generación de vídeo.
+  // El backend (aiProviderAdapter callCustom) comprueba caps.vision para task="video".
+  if (task === "video") return "vision";
   return null;
 }
 
