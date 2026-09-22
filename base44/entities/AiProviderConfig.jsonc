@@ -75,6 +75,18 @@
       "type": "string",
       "description": "Modelo EXACTO para \u00c1lbum dentro del proveedor activo: el motor lo usa SIEMPRE para el proveedor activo. Para proveedores propios debe pertenecer a album_models del proveedor. Vac\u00edo = autom\u00e1tico (mejor modelo marcado o modelo por defecto del proveedor)."
     },
+    "active_video_chain": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Cadena ordenada de proveedores para V\u00eddeo (EMOTIVE FILM IA). Cada entrada es un valor de proveedor (custom:<id>, qwen, nvidia, gemini, base44). El motor intenta el PRIMERO; si falla (todos sus modelos), salta al SIGUIENTE. Por defecto se seleccionan 3 proveedores. Vac\u00edo = usa el proveedor activo de Selecci\u00f3n IA como fallback."
+    },
+    "active_model_video": {
+      "type": "string",
+      "description": "Modelo EXACTO para V\u00eddeo dentro del proveedor PRIMARIO de la cadena (el primero de active_video_chain). Debe pertenecer a la lista marcada (video_models) de ese proveedor. Vac\u00edo = autom\u00e1tico (mejor modelo marcado de v\u00eddeo). Los dem\u00e1s proveedores de la cadena usan auto."
+    },
     "builtin_migrated": {
       "type": "boolean",
       "default": false,

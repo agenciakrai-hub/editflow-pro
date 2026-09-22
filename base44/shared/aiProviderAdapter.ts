@@ -18,7 +18,7 @@
 
 import { secrets } from "base44:runtime";
 
-export type AiTask = "seleccion" | "ajustes";
+export type AiTask = "seleccion" | "ajustes" | "video";
 export type Provider = "qwen" | "base44" | "nvidia" | "gemini" | "none";
 
 const NVIDIA_DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1";
@@ -61,6 +61,10 @@ async function getConfig(base44: any): Promise<any> {
 export async function activeProviderFor(base44: any, task: AiTask): Promise<string> {
   const cfg = await getConfig(base44);
   if (!cfg) return "base44";
+  if (task === "video") {
+    const chain = Array.isArray(cfg.active_video_chain) ? cfg.active_video_chain.filter(Boolean) : [];
+    return chain[0] || "base44";
+  }
   const field: any = task === "seleccion" ? cfg.active_seleccion : cfg.active_ajustes;
   if (typeof field === "string" && field.trim()) return field.trim();
   return "base44";
@@ -69,9 +73,15 @@ export async function activeProviderFor(base44: any, task: AiTask): Promise<stri
 // Devuelve el proveedor activo y el MODELO EXACTO configurado para una tarea. El modelo
 // exacto (active_model_seleccion/ajustes) es la fuente de verdad del usuario: si está
 // fijado, invokeVision NO hace failover (no sustituye el modelo por otro proveedor).
-async function getTaskConfig(base44: any, task: AiTask): Promise<{ active: string; exact: string }> {
+async function getTaskConfig(base44: any, task: AiTask): Promise<{ active: string; exact: string; chain?: string[] }> {
   const cfg = await getConfig(base44);
   if (!cfg) return { active: "base44", exact: "" };
+  if (task === "video") {
+    const chain = Array.isArray(cfg.active_video_chain) ? cfg.active_video_chain.map((s: any) => String(s || "").trim()).filter(Boolean) : [];
+    const active = chain[0] || "base44";
+    const exact = typeof cfg.active_model_video === "string" ? cfg.active_model_video.trim() : "";
+    return { active, exact, chain };
+  }
   const active: any = task === "seleccion" ? cfg.active_seleccion : cfg.active_ajustes;
   const exact: any = task === "seleccion" ? cfg.active_model_seleccion : cfg.active_model_ajustes;
   return {
@@ -428,13 +438,53 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
       throw e;
     }
   }
-  const { active, exact } = await getTaskConfig(base44, opts.task);
+  const { active, exact, chain } = await getTaskConfig(base44, opts.task);
   if (opts._trace) { opts._trace.active_provider = active; opts._trace.configured_model = exact || "(auto)"; }
-  // REGLA DE FAILOVER: el proveedor activo es el ÚNICO que se intenta. Si el modelo
-  // elegido falla (429/500/timeout), callCustom reintenta con OTRO MODELO del MISMO
-  // proveedor (failover a nivel de modelo). NUNCA se salta a otro proveedor: el
-  // proveedor seleccionado por el administrador es el único que procesa las fotos.
-  // Si todos los modelos del proveedor fallan, la tarea falla con error explícito.
+
+  // VÍDEO: cadena multi-proveedor (failover entre proveedores). Si el proveedor
+  // primario falla (todos sus modelos), se salta al siguiente proveedor de la
+  // cadena. Cada proveedor hace su propio failover a nivel de modelo (callCustom).
+  // Si todos los proveedores de la cadena fallan, la tarea falla con el último error.
+  if (opts.task === "video" && Array.isArray(chain) && chain.length > 1) {
+    let lastErr: any;
+    for (let pi = 0; pi < chain.length; pi++) {
+      const provider = chain[pi];
+      if (opts._trace) { opts._trace.active_provider = provider; opts._trace.chain_index = pi; }
+      const isCustomV = typeof provider === "string" && provider.startsWith("custom:");
+      const tV0 = Date.now();
+      try {
+        const out = await callProvider(base44, provider, opts);
+        if (opts._trace) {
+          if (!isCustomV) {
+            opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: true, http_status: opts._trace.http_status ?? null, latency_ms: Date.now() - tV0 });
+          }
+          opts._trace.failover = pi > 0 || opts._trace.attempts.length > 1;
+          opts._trace.final_provider = provider;
+          opts._trace.final_model = opts._trace.model || null;
+          opts._trace.failover_reason = null;
+        }
+        return out;
+      } catch (e: any) {
+        const msg = String(e?.message || e).slice(0, 300);
+        if (opts._trace) {
+          if (!isCustomV) {
+            opts._trace.attempts.push({ provider, model: opts._trace.model || null, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - tV0 });
+          }
+          opts._trace.failover_reason = `Proveedor ${pi + 1}/${chain.length} (${provider}) falló: ${msg}`;
+        }
+        lastErr = e;
+        console.log(`[aiProvider] video chain: proveedor ${provider} (${pi + 1}/${chain.length}) falló, saltando al siguiente`);
+      }
+    }
+    if (opts._trace) { opts._trace.final_provider = null; opts._trace.final_model = null; }
+    throw lastErr || new Error("Todos los proveedores de la cadena de Vídeo fallaron");
+  }
+
+  // REGLA DE FAILOVER (seleccion/ajustes): el proveedor activo es el ÚNICO que se
+  // intenta. Si el modelo elegido falla (429/500/timeout), callCustom reintenta con
+  // OTRO MODELO del MISMO proveedor (failover a nivel de modelo). NUNCA se salta a
+  // otro proveedor: el proveedor seleccionado por el administrador es el único que
+  // procesa las fotos. Si todos los modelos del proveedor fallan, la tarea falla.
   const isCustom = typeof active === "string" && active.startsWith("custom:");
   const t0 = Date.now();
   try {
@@ -500,15 +550,15 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   //   error explícito (exige verificar con "Probar capacidad").
   // NUNCA return models[0] ni heurística de nombre: un modelo de texto o no verificado
   // no puede ejecutarse para visión.
-  const taskLabel = opts.task === "ajustes" ? "Ajustes IA" : "Selección IA";
-  const markedRaw: any = opts.task === "ajustes" ? rec.ajustes_models : rec.seleccion_models;
+  const taskLabel = opts.task === "ajustes" ? "Ajustes IA" : opts.task === "video" ? "Vídeo IA" : "Selección IA";
+  const markedRaw: any = opts.task === "ajustes" ? rec.ajustes_models : opts.task === "video" ? rec.video_models : rec.seleccion_models;
   const marked = (Array.isArray(markedRaw) ? markedRaw : [])
     .map((m: any) => String(m || "").trim())
     .filter(Boolean);
   let exactModel = "";
   try {
     const cfg = await getConfig(base44);
-    const exactRaw = opts.task === "ajustes" ? cfg?.active_model_ajustes : cfg?.active_model_seleccion;
+    const exactRaw = opts.task === "ajustes" ? cfg?.active_model_ajustes : opts.task === "video" ? cfg?.active_model_video : cfg?.active_model_seleccion;
     exactModel = String(exactRaw || "").trim();
   } catch {}
   // CAPACIDADES desde la fuente única de verdad (available_models_meta, resuelta en
@@ -655,7 +705,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       if (auto) {
         try {
           const fresh: any = await base44.asServiceRole.entities.CustomAiProvider.get(customId);
-          const listKey: string = opts.task === "ajustes" ? "ajustes_models" : "seleccion_models";
+          const listKey: string = opts.task === "ajustes" ? "ajustes_models" : opts.task === "video" ? "video_models" : "seleccion_models";
           const current: string[] = Array.isArray(fresh?.[listKey]) ? fresh[listKey] : [];
           if (!current.includes(model)) {
             await base44.asServiceRole.entities.CustomAiProvider.update(customId, { [listKey]: [...current, model] });

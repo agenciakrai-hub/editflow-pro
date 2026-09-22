@@ -395,6 +395,13 @@ export default async function(req: Request): Promise<Response> {
       // cualquier string (sin exigir trim truthy).
       if (typeof body.active_album === 'string') patch.active_album = body.active_album.trim();
       if (body.active_model_album !== undefined && typeof body.active_model_album === 'string') patch.active_model_album = body.active_model_album.trim();
+      // Vídeo: cadena multi-proveedor (array ordenado) + modelo exacto del primario.
+      if (Array.isArray(body.active_video_chain)) {
+        patch.active_video_chain = body.active_video_chain
+          .map((s: any) => String(s || '').trim())
+          .filter(Boolean);
+      }
+      if (body.active_model_video !== undefined && typeof body.active_model_video === 'string') patch.active_model_video = body.active_model_video.trim();
       const existing = await getConfigRecord(base44);
       let cfg;
       if (existing) {
@@ -543,6 +550,11 @@ export default async function(req: Request): Promise<Response> {
           if (cfg.active_seleccion === `custom:${id}`) { patch.active_seleccion = 'base44'; patch.active_model_seleccion = ''; }
           if (cfg.active_ajustes === `custom:${id}`) { patch.active_ajustes = 'base44'; patch.active_model_ajustes = ''; }
           if (cfg.active_album === `custom:${id}`) { patch.active_album = ''; patch.active_model_album = ''; }
+          // Vídeo: quita el proveedor eliminado de la cadena (conserva el resto del orden).
+          if (Array.isArray(cfg.active_video_chain) && cfg.active_video_chain.includes(`custom:${id}`)) {
+            patch.active_video_chain = cfg.active_video_chain.filter((v: string) => v !== `custom:${id}`);
+            if (cfg.active_model_video && cfg.active_video_chain[0] === `custom:${id}`) patch.active_model_video = '';
+          }
           if (Object.keys(patch).length) await base44.asServiceRole.entities.AiProviderConfig.update(cfg.id, patch);
         }
       } catch {}

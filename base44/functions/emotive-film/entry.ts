@@ -56,7 +56,7 @@ Devuelve un JSON con un array "results" con una entrada por foto en el mismo ord
   const file_urls = photos.map((p) => `data:image/jpeg;base64,${p.preview_base64}`);
   const trace = {};
   const res = await invokeVision(base44, {
-    task: "seleccion",
+    task: "video",
     prompt,
     file_urls,
     response_json_schema: {
@@ -121,7 +121,7 @@ Si no puedes identificar a la pareja con claridad, devuelve couple_hashes vacío
   const file_urls = photos.map((p) => `data:image/jpeg;base64,${p.preview_base64}`);
   const trace = {};
   const res = await invokeVision(base44, {
-    task: "seleccion",
+    task: "video",
     prompt,
     file_urls,
     response_json_schema: {

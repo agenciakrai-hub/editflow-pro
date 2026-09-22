@@ -15,7 +15,7 @@ export default function AIProviders() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [providers, setProviders] = useState([]);
-  const [active, setActive] = useState({ active_seleccion: "base44", active_ajustes: "", active_model_seleccion: "", active_model_ajustes: "", active_album: "", active_model_album: "" });
+  const [active, setActive] = useState({ active_seleccion: "base44", active_ajustes: "", active_model_seleccion: "", active_model_ajustes: "", active_album: "", active_model_album: "", active_video_chain: [], active_model_video: "" });
   const [adding, setAdding] = useState(false);
   const [addResult, setAddResult] = useState(null);
   const [busyAction, setBusyAction] = useState(null);
@@ -36,6 +36,8 @@ export default function AIProviders() {
         active_model_ajustes: cfg?.active_model_ajustes || "",
         active_album: cfg?.active_album || "",
         active_model_album: cfg?.active_model_album || "",
+        active_video_chain: Array.isArray(cfg?.active_video_chain) ? cfg.active_video_chain : [],
+        active_model_video: cfg?.active_model_video || "",
       });
     } catch (e) {
       toast({ title: "Error al cargar", description: e.message, variant: "destructive" });
@@ -120,6 +122,8 @@ export default function AIProviders() {
         active_model_ajustes: a.active_ajustes === `custom:${id}` ? "" : a.active_model_ajustes,
         active_album: a.active_album === `custom:${id}` ? "" : a.active_album,
         active_model_album: a.active_album === `custom:${id}` ? "" : a.active_model_album,
+        active_video_chain: (a.active_video_chain || []).filter((v) => v !== `custom:${id}`),
+        active_model_video: a.active_video_chain?.[0] === `custom:${id}` ? "" : a.active_model_video,
       }));
       toast({ title: "Proveedor eliminado" });
     } catch (e) {
@@ -169,6 +173,12 @@ export default function AIProviders() {
   // Usabilidad de un proveedor para una tarea: encendido, conexión verificada y con
   // modelos marcados (o modelo legado como fallback).
   const usable = (val, task) => {
+    if (task === "video") {
+      if (!String(val || "").startsWith("custom:")) return false;
+      const p = providers.find((c) => `custom:${c.id}` === val);
+      if (!p || !p.enabled || p.last_ok === false) return false;
+      return (p.video_models?.length > 0) || !!p.model;
+    }
     if (task === "album") {
       // Álbum: proveedores de la cadena propia (siempre utilizables) o propios con
       // modelos marcados para Álbum (o modelo legado como fallback).
