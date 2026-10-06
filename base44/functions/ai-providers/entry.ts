@@ -11,6 +11,7 @@ import {
   pickBestVisionModel,
 } from '../../shared/aiProviderAdapter.ts';
 import { resolveCapabilitiesFull } from '../../shared/capabilityResolver.ts';
+import { editKraiImage, isKraiGateway } from '../../shared/kraiImageAdapter.ts';
 
 // Proveedores IA — admin-only. UNA SOLA herramienta de proveedores: se añade un
 // proveedor con endpoint + API key, la función autodetecta el nombre (dominio), normaliza
@@ -81,7 +82,10 @@ async function fetchModels(
       return { ok: false, models: [], raw: [], reason: `HTTP ${res.status}: ${bodyText.slice(0, 200)}`, http_status: res.status, latency_ms: Date.now() - t0 };
     }
     const data = JSON.parse(bodyText);
-    const raw = (data?.data || data?.models || []).slice(0, MODELS_PAGE_LIMIT);
+    const raw = (data?.data || data?.models || [])
+      // /execute accepts engine IDs. Web Target IDs belong to a different API.
+      .filter((m: any) => !isKraiGateway(endpoint) || m?.object !== 'web_target')
+      .slice(0, MODELS_PAGE_LIMIT);
     const models = raw.map((m: any) => String(m?.id || m?.name || '').trim()).filter(Boolean);
     if (!models.length) {
       return { ok: false, models: [], raw: [], reason: 'El proveedor no devolvió modelos en GET /models', http_status: res.status, latency_ms: Date.now() - t0 };
@@ -223,6 +227,21 @@ export default async function(req: Request): Promise<Response> {
     const body = await req.json().catch(() => ({}));
     const action = body?.action;
     console.log(`[ai-providers] user=${user.id} action=${action}`);
+
+    if (action === 'edit-image') {
+      try {
+        const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(String(body.id || ''));
+        if (!rec?.enabled || !isKraiGateway(rec.endpoint)) throw new Error('Selecciona un proveedor KRAI activo.');
+        const model = String(body.model || '');
+        const meta = (rec.available_models_meta || []).find((m: any) => m.id === model);
+        if (!rec.edicion_models?.includes(model) || meta?.caps?.image_edit !== true) {
+          throw new Error('Marca y guarda un motor compatible en la columna Edición.');
+        }
+        return Response.json(await editKraiImage(rec.endpoint, effectiveKey(rec), model, body));
+      } catch (e: any) {
+        return Response.json({ ok: false, reason: String(e?.message || 'No se pudo editar la fotografía').slice(0, 300) });
+      }
+    }
 
     // ------------------------------------------------------------------
     // Proveedores integrados (Qwen, NVIDIA, Gemini) — secrets de Base44.

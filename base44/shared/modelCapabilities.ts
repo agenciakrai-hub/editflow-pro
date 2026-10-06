@@ -38,6 +38,16 @@ export function resolveDeclaredCaps(rawModel: any): ModelCaps {
   const caps: ModelCaps = { vision: null, image_edit: null, video: null };
   if (!rawModel || typeof rawModel !== "object") return caps;
 
+  // KRAI declares supported tasks as an exhaustive array, not an OpenAI modality.
+  if (Array.isArray(rawModel.capabilities)) {
+    const tasks = new Set(rawModel.capabilities);
+    return {
+      vision: tasks.has("vision"),
+      image_edit: tasks.has("image_edit"),
+      video: tasks.has("video_generation"),
+    };
+  }
+
   // --- OpenRouter: architecture.modality ---
   const modalityRaw: string = String(
     rawModel?.architecture?.modality || rawModel?.modality || ""
