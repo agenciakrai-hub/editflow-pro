@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, KeyRound, Loader2, Power, RefreshCw, RotateCw, Save, Search, Trash2, XCircle } from "lucide-react";
 import { checkboxState, taskCandidate } from "@/lib/ai/modelCapabilities";
+import KraiPhotoEditor from "./KraiPhotoEditor";
 
 // Tarjeta de proveedor (unificada). Las casillas de modelo/tarea se habilitan o
 // deshabilitan según las capacidades RESUELTAS (available_models_meta), que son la
@@ -281,6 +282,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
           Sin modelos detectados. Pulsa Re-test para verificar la conexión y obtener la lista de modelos.
         </p>
       )}
+      {provider.enabled && /^https:\/\/[^/]+\/api\/gateway\/v1\/?$/.test(provider.endpoint || "") && <KraiPhotoEditor provider={provider} />}
     </div>
   );
 }
