@@ -17,6 +17,7 @@ import { computeFolderKey, savePartialResults, loadPartialResults, clearPartialR
 import { getSession } from "@/lib/rawaistudio/localSession";
 import { getCachedPreview } from "@/modules/proyectos/lib/previewCache";
 import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
+import { requireVisualValues } from "@/lib/ai/visualDevelopResult";
 import { pickRepresentatives, adaptPhotoWithProfile } from "@/lib/rawaistudio/hybridAdaptEngine";
 import { useToast } from "@/components/ui/use-toast";
 import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelector";
@@ -404,7 +405,7 @@ export default function AjustesIA() {
             photos: [{ id: photo.id, preview_base64: base64ForVisual }],
             preferences,
           });
-          const all = data?.results?.[photo.id] || {};
+          const all = requireVisualValues(data, photo.id, enabledParams);
           aiValues = {};
           for (const k of enabledParams) if (typeof all[k] === "number") aiValues[k] = all[k];
           // needsCorrection: la IA devolvió algún valor no nulo → hay corrección que aplicar.
@@ -436,7 +437,7 @@ export default function AjustesIA() {
     // PAUSA: pausedRef.current = true hace que los workers terminen su foto en curso
     // y salgan del bucle sin procesar más. Las fotos ya procesadas (out[i] !== null)
     // se saltan al reanudar, así no se repite trabajo ni se gastan créditos de IA.
-    const CONCURRENCY = 4;
+    const CONCURRENCY = mode === "free" ? 4 : 1;
     let nextIdx = 0;
     const worker = async () => {
       while (true) {
@@ -448,8 +449,8 @@ export default function AjustesIA() {
           out[i] = await processOnePhoto(photos[i]);
           ok++;
           okRef.current = ok;
-        } catch {
-          // Continúa con la siguiente aunque una falle.
+        } catch (error) {
+          backendErrors.push(`${photos[i].file?.name || photos[i].id}: ${error?.message || "No se pudo revelar la foto"}`);
         }
         done++;
         setProgress({ done, total: photos.length });
