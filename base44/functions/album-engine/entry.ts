@@ -19,6 +19,9 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { secrets } from "base44:runtime";
 import { invokeVision, pickBestVisionModel } from "../../shared/aiProviderAdapter.ts";
+import { isKraiGateway } from "../../shared/kraiImageAdapter.ts";
+
+function isKraiEndpoint(url) { return isKraiGateway(url) || /^https:\/\/api\.srv1468934\.hstgr\.cloud(?:\/|$)/i.test(url); }
 
 const GEMINI_DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta";
 const GEMINI_DEFAULT_MODEL = "gemini-2.5-flash";
@@ -127,7 +130,7 @@ async function callCustomAlbum(base44, customId, prompt, fileUrls, modelOverride
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages: [{ role: "user", content }], stream: false }),
-  });
+  }, isKraiEndpoint(base) ? 100000 : PROVIDER_TIMEOUT_MS);
   if (!res.ok) {
     const txt = await res.text().catch(() => "");
     const err = new Error(`album custom [${rec.name}] HTTP ${res.status}: ${txt.slice(0, 200)}`);
@@ -324,6 +327,10 @@ async function invokeAlbumVision(base44, action, prompt, fileUrls, skip, useUser
     } catch (e) {
       console.log(`[album-engine] ${action} task=${task} provider=${provider} fallo: ${e?.message || e}`);
       errors.push({ provider, error: String(e?.message || e) });
+      if (String(provider).startsWith("custom:")) {
+        const rec = await base44.asServiceRole.entities.CustomAiProvider.get(provider.slice("custom:".length)).catch(() => null);
+        if (rec && isKraiEndpoint(String(rec.endpoint || ""))) throw e;
+      }
     }
   }
   throw new Error(`album-engine ${action}: todos los proveedores fallaron: ${JSON.stringify(errors)}`);

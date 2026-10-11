@@ -16,6 +16,11 @@
 
 import { buildModelsMeta, resolveDeclaredCaps, ModelMetaEntry } from "./modelCapabilities.ts";
 import { runWithConcurrency } from "./concurrency.ts";
+import { isKraiGateway } from "./kraiImageAdapter.ts";
+
+function isKraiSession(endpoint: string): boolean {
+  return isKraiGateway(endpoint) || /^https:\/\/api\.srv1468934\.hstgr\.cloud(?:\/|$)/i.test(endpoint);
+}
 
 const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
 const PROBE_CONCURRENCY = 4;
@@ -102,10 +107,12 @@ async function probeOne(
     { type: "image_url", image_url: { url: TEST_IMAGE_DATA_URL } },
   ];
   const body = JSON.stringify({ model, messages: [{ role: "user", content }], stream: false, max_tokens: 16 });
-  for (let attempt = 1; attempt <= PROBE_MAX_ATTEMPTS; attempt++) {
+  const kraiSession = isKraiSession(endpoint);
+  const maxAttempts = kraiSession ? 1 : PROBE_MAX_ATTEMPTS;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+      const timer = setTimeout(() => controller.abort(), kraiSession ? 100000 : PROBE_TIMEOUT_MS);
       let res: Response;
       try {
         res = await fetch(endpoint, {
@@ -119,7 +126,7 @@ async function probeOne(
       }
       const txt = await res.text().catch(() => "");
       // Reintento en 429/503 (rate-limit / service unavailable) — mismo modelo.
-      if (PROBE_RETRY_STATUSES.has(res.status) && attempt < PROBE_MAX_ATTEMPTS) {
+      if (PROBE_RETRY_STATUSES.has(res.status) && attempt < maxAttempts) {
         await new Promise((r) => setTimeout(r, 1500 * attempt));
         continue;
       }
@@ -141,7 +148,7 @@ async function probeOne(
       if (noImageSupport) return { vision: false, status: "rejected", reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` };
       return { vision: null, status: "error", reason: `HTTP ${res.status}: ${txt.slice(0, 120)}` };
     } catch (e: any) {
-      if (attempt < PROBE_MAX_ATTEMPTS) {
+      if (attempt < maxAttempts) {
         await new Promise((r) => setTimeout(r, 1500 * attempt));
         continue;
       }
@@ -162,7 +169,7 @@ export async function probeVisionAutomatic(
   if (!toProbe.length) return metaList;
   const chatEndpoint = endpoint.replace(/\/+$/, "") + "/chat/completions";
   const results = new Map<string, { vision: boolean | null; status: string; reason: string }>();
-  await runWithConcurrency(toProbe, PROBE_CONCURRENCY, async (entry: ModelMetaEntry) => {
+  await runWithConcurrency(toProbe, isKraiSession(endpoint) ? 1 : PROBE_CONCURRENCY, async (entry: ModelMetaEntry) => {
     const r = await probeOne(chatEndpoint, apiKey, entry.id);
     results.set(entry.id, r);
   });

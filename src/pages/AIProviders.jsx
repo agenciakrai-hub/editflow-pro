@@ -396,9 +396,7 @@ export default function AIProviders() {
           )}
         </div>
         <p className="text-xs text-muted-foreground">
-          En Selección y Ajustes, el proveedor activo es el único responsable: si el modelo elegido falla (429/500/timeout),
-          se reintenta con otro modelo marcado del <strong>mismo proveedor</strong> — nunca salta a otro proveedor. En Álbum,
-          el proveedor activo se usa primero y, si falla, la cadena de Album AI (Gemini de pago → Qwen → NVIDIA) continúa.
+          KRAI usa el proveedor y modelo elegidos. Si hay un error o se agota el tiempo, informa del fallo sin repetir la petición ni cambiar de modelo automáticamente. Para otros proveedores se conserva su política de recuperación.
         </p>
         <div className="space-y-1.5 border-t border-border pt-4">
           <label className="text-sm font-medium">Vídeo — EMOTIVE FILM IA</label>
