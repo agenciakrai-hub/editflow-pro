@@ -34,7 +34,7 @@ const MAX_IMAGES_PER_CALL = 12;
 // Concurrencia de LLM aumentada: más ráfagas procesadas en paralelo dentro de cada
 // petición HTTP. Los VLM externos (Qwen/NVIDIA/Gemini) toleran 5 llamadas concurrentes
 // sin rate-limit; InvokeLLM (base44) también lo permite.
-const MAX_CONCURRENT_LLM = 5;
+const MAX_CONCURRENT_LLM = 1;
 // Para grupos > MAX_IMAGES_PER_CALL: dos llamadas (mitades) + una TERCERA llamada de
 // consolidación SOLO entre los mejores candidatos de ambas mitades (re-análisis visual,
 // no overall numérico). Finalistas por mitad.
@@ -573,10 +573,8 @@ export default async function(req: Request): Promise<Response> {
           const mid = Math.ceil(candidateIds.length / 2);
           const h1Ids = candidateIds.slice(0, mid);
           const h2Ids = candidateIds.slice(mid);
-          const [h1, h2] = await Promise.all([
-            analyzeSubset(base44, `group_0`, h1Ids, uploaded, false, trace),
-            analyzeSubset(base44, `group_1`, h2Ids, uploaded, false, trace),
-          ]);
+          const h1 = await analyzeSubset(base44, `group_0`, h1Ids, uploaded, false, trace);
+          const h2 = await analyzeSubset(base44, `group_1`, h2Ids, uploaded, false, trace);
           const f1 = pickFinalists(h1Ids, h1.byId, FINALISTS_PER_HALF);
           const f2 = pickFinalists(h2Ids, h2.byId, FINALISTS_PER_HALF);
           finalistIds = [...f1, ...f2];

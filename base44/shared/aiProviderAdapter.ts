@@ -17,6 +17,7 @@
 // existen en backend; nunca se devuelven al frontend ni se persisten en entidades.
 
 import { secrets } from "base44:runtime";
+import { isKraiGateway } from "./kraiImageAdapter.ts";
 
 export type AiTask = "seleccion" | "ajustes" | "video";
 export type Provider = "qwen" | "base44" | "nvidia" | "gemini" | "none";
@@ -574,6 +575,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   const base = String(rec.endpoint || "").trim().replace(/\/+$/, "");
   if (!base) throw new Error(`El proveedor "${rec.name}" no tiene endpoint configurado`);
   const endpoint = base + "/chat/completions";
+  const kraiSession = isKraiGateway(base) || new URL(base).hostname === "api.srv1468934.hstgr.cloud";
   // Resolución DETERMINISTA del modelo para una tarea de VISIÓN. Reglas (auditable):
   // - Modelo EXACTO (active_model_seleccion/ajustes): debe estar marcado Y verificado
   //   vision-capable (caps.vision === true). Si no está marcado, o está verificado como
@@ -693,9 +695,10 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   // Abortar inmediatamente con un error claro en vez de probar 273 modelos uno a uno.
   const ACCOUNT_LEVEL_STATUS = new Set([402, 403]);
   let lastErr: any;
-  for (let mi = 0; mi < fullChain.length; mi++) {
+  const attemptChain = kraiSession ? fullChain.slice(0, 1) : fullChain;
+  for (let mi = 0; mi < attemptChain.length; mi++) {
     const { model, auto } = fullChain[mi];
-    const isLastModel = mi === fullChain.length - 1;
+    const isLastModel = mi === attemptChain.length - 1;
     if (opts._trace) opts._trace.model = model;
     console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${mi + 1}/${fullChain.length})${mi > 0 ? " failover-modelo" : ""}${auto ? " auto-descubierto" : ""}`);
     const content: any[] = [{ type: "text", text: opts.prompt }];
@@ -713,7 +716,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      });
+      }, kraiSession ? 100000 : PROVIDER_TIMEOUT_MS, kraiSession ? 1 : 2);
       const latency = Date.now() - t0;
       if (opts._trace) { opts._trace.request_ms = latency; opts._trace.http_status = res.status; opts._trace.endpoint = endpoint; }
       if (!res.ok) {
@@ -754,6 +757,8 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0, auto_discovered: auto });
       console.log(`[aiProvider] modelo ${model} fallo: ${msg}${isLastModel ? " (sin mas modelos en este proveedor)" : ""}`);
       lastErr = e;
+      // Never repeat an ambiguous request against a shared browser session.
+      if (kraiSession) throw e;
       // ABORT early en errores a nivel de cuenta (402/403): todos los modelos del mismo
       // proveedor fallarán igual. No tiene sentido probar los 273 modelos restantes.
       if (ACCOUNT_LEVEL_STATUS.has(e?.httpStatus)) {

@@ -26,7 +26,7 @@ import { decodePreviewImage } from "./previewDecodeCache";
 // y más ráfagas analizadas simultáneamente (selección IA). Los VLM modernos y el backend
 // toleran esta carga sin degradar la precisión.
 const PREVIEW_CONCURRENCY = 10;
-const BATCH_CONCURRENCY = 8;
+const BATCH_CONCURRENCY = 1;
 
 // Umbral MUY estricto para considerar dos seleccionados de grupos distintos como
 // casi-duplicados (mu más bajo que el de agrupación). Solo se fusionan los

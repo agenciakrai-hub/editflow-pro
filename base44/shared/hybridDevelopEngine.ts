@@ -66,7 +66,7 @@ export async function generateSessionProfile(
   const prompt = `Eres un colorista profesional que revela fotos en Adobe Lightroom / Camera Raw, especializado en bodas y retrato.
 SOLO revelas — nunca generas ni alteras pixeles, identidad, anatomia, ropa ni fondo.
 
-Te muestro ${representatives.length} fotos REPRESENTATIVAS de una misma sesion fotografica (mismo evento, mismo estilo, misma luz general). Tu trabajo NO es revelarlas una a una: es definir un PERFIL DE SESION unico, un recipe base de revelado coherente que un motor local aplicara y adaptara despues a CADA foto de la sesion (corrigiendo exposicion/luces/sombras por foto segun su histograma real).
+Te muestro ${sampled.length} fotos REPRESENTATIVAS de una misma sesion fotografica (mismo evento, mismo estilo, misma luz general). Tu trabajo NO es revelarlas una a una: es definir un PERFIL DE SESION unico, un recipe base de revelado coherente que un motor local aplicara y adaptara despues a CADA foto de la sesion (corrigiendo exposicion/luces/sombras por foto segun su histograma real).
 
 PRIORIDAD ABSOLUTA: si hay personas, su piel y rostros deben quedar bien expuestos, con color de piel natural y sano — SIN aclarar la sesion por sistema ni quemar las luces. Optimiza para CONSISTENCIA entre tomas (look de sesion) mas que para el gusto variable de una sola foto.
 

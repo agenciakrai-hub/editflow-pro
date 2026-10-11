@@ -1,0 +1,9 @@
+const fs=require('fs'),assert=require('node:assert/strict'),esbuild=require('esbuild');
+let s=fs.readFileSync('base44/shared/aiProviderAdapter.ts','utf8').replace(/^import .*;$/gm,'');
+const compiled=esbuild.transformSync(s,{loader:'ts',format:'cjs'}).code;
+let calls=0,status=200;
+const exportsObj={};const mod={exports:exportsObj};
+new Function('module','exports','fetch','secrets','isKraiGateway',compiled)(mod,exportsObj,async()=>{calls++;return {ok:status===200,status,text:async()=>JSON.stringify({error:'timeout'}),json:async()=>({choices:[{message:{content:'{"color":"red"}'}}]})}}, {get:()=>''}, u=>new URL(u).hostname==='connect.krai.es');
+const record={name:'KRAI',enabled:true,api_key:'test-only',endpoint:'https://connect.krai.es/v1',seleccion_models:['gemini','chatgpt-kiko'],available_models_meta:[{id:'gemini',caps:{vision:true}},{id:'chatgpt-kiko',caps:{vision:true}}]};
+const client={asServiceRole:{entities:{CustomAiProvider:{get:async()=>record},AiProviderConfig:{list:async()=>[{active_seleccion:'custom:test'}]}}}};
+(async()=>{for(const model of ['gemini','chatgpt-kiko']){calls=0;status=200;assert.deepEqual(await mod.exports.invokeVision(client,{task:'seleccion',prompt:'test',file_urls:['data:image/png;base64,test'],forceModel:model}),{color:'red'});assert.equal(calls,1)}calls=0;status=504;await assert.rejects(()=>mod.exports.invokeVision(client,{task:'seleccion',prompt:'test',file_urls:['data:image/png;base64,test']}),/504/);assert.equal(calls,1,'KRAI must not retry or switch model after timeout');record.available_models_meta.forEach(m=>m.caps.vision=null);calls=0;await assert.rejects(()=>mod.exports.invokeVision(client,{task:'seleccion',prompt:'test',file_urls:['data:image/png;base64,test']}));assert.equal(calls,0);console.log('4 KRAI provider regression checks passed')})().catch(e=>{console.error(e);process.exit(1)});
