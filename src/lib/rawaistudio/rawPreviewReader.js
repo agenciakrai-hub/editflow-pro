@@ -3,6 +3,8 @@
 // orientación EXIF para auto-rotar la previsualización, y calcula métricas técnicas reales
 // (nitidez, exposición) usadas por el motor de selección — todo en el navegador.
 
+import { extractRafJpeg } from "./rafPreview";
+
 import { extractDngPreview } from "./dngPreviewExtractor";
 
 // CR3 y DNG suelen contener VARIOS segmentos JPEG embebidos (miniatura + preview, a veces
@@ -287,6 +289,14 @@ export async function extractRawPreview(file, maxEdge = 800, { autoRotate = true
   // TIFF) se busca en cualquiera de los JPEG embebidos, no solo en el elegido como preview.
   const tiffOrientation = readTiffOrientation(bytes);
   const sigOrientation = readExifOrientationFromSignature(bytes);
+
+  // RAF puede contener miniaturas JPEG dentro de Exif: el escaneo genérico las
+  // confunde con el flujo principal. Usar el rango oficial completo de Fuji.
+  const rafJpeg = extractRafJpeg(bytes);
+  if (rafJpeg) {
+    const orientation = tiffOrientation || sigOrientation || getExifOrientation(rafJpeg);
+    return analyzeJpegBytes(rafJpeg, maxEdge, autoRotate ? orientationToDegrees(orientation) : 0, hiResMaxEdge);
+  }
 
   const segments = findEmbeddedJpegSegments(bytes);
   if (segments.length) {
