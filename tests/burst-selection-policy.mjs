@@ -13,3 +13,20 @@ assert.equal(r.keep.size,3); // vuelta de cabeza = nueva secuencia, no fusionar 
 r=run([['dark',{status:'REJECT'}]]);assert.ok(r.keep.has('dark'));
 r=run([['missing',{status:'REVIEW',previewWarning:true}]]);assert.ok(r.keep.has('missing'));assert.equal(r.meta.get('missing').previewWarning,true);
 console.log('PASS: all-reject, eyes/expression, head turn, return pose, dark singleton, unavailable preview, labels');
+r=run([['a',{status:'SELECT',scores:{eye_quality:80,expression:80,focus:90,sharpness:1}}],['b',{status:'SELECT',scores:{eye_quality:80,expression:80,focus:10,sharpness:100}}]]);assert.ok(r.keep.has('a'));
+r=run([['a',{status:'SELECT',scores:{eye_quality:80,expression:null}}],['b',{status:'SELECT',scores:{eye_quality:60,expression:60}}]]);assert.ok(r.keep.has('a'));
+r=run([['a',{status:'SELECT',rejectReasons:['EYES_CLOSED'],scores:{overall:100}}],['b',{status:'REVIEW',scores:{overall:50}}]]);assert.ok(r.keep.has('b'));
+r=run([['a',{status:'SELECT',poseKey:' Front '}],['b',{status:'REVIEW',poseKey:'unknown'}],['c',{status:'REVIEW',poseKey:'front'}]]);assert.equal(r.keep.size,1);
+const unordered = new Map([['c',{groupId:'g',poseKey:'left',status:'SELECT'}],['a',{groupId:'g',poseKey:'front',status:'SELECT'}],['b',{groupId:'g',poseKey:'front',status:'REVIEW'}]]);
+const orderedKeep = new Set();applyBurstSelectionPolicy(orderedKeep,unordered,[{id:'a'},{id:'b'},{id:'c'}]);assert.equal(orderedKeep.size,2);assert.equal(unordered.get('a').groupId,unordered.get('b').groupId);
+console.log('PASS: focus metric, missing dimensions, closed eyes, unknown pose and asynchronous ordering');
+const { readFileSync } = await import('node:fs');
+const engine = readFileSync(new URL('../src/lib/rawaistudio/smartSelectionEngine.js', import.meta.url), 'utf8');
+const fallbackStart = engine.indexOf('        fb.forEach((m, i) => {');
+const fallbackEnd = engine.indexOf('\n      }', fallbackStart);
+const fallbackMeta = new Map(), fallbackKeep = new Set();
+new Function('fb','burst','keep','meta','groupIdFor','groupSizeFor',engine.slice(fallbackStart,fallbackEnd))(
+ [{status:'REVIEW',scores:null}], {files:[{id:'offline'}],independent:false}, fallbackKeep,fallbackMeta,()=> 'burst',()=>1
+);
+applyBurstSelectionPolicy(fallbackKeep,fallbackMeta,[{id:'offline'}]);assert.ok(fallbackKeep.has('offline'));
+console.log('PASS: actual provider-error recovery block does not crash and keeps a representative');

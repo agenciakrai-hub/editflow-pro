@@ -3,10 +3,17 @@ export function applyBurstSelectionPolicy(keep, meta, photos) {
   const photosById = new Map(photos.map(p => [p.id, p]));
   const groups = new Map();
   const segments = new Map();
-  for (const [id, m] of meta) {
+  // Orden de captura, independiente del orden en que terminen las peticiones.
+  const orderedIds = [...photos.map(p => p.id), ...meta.keys()];
+  const seen = new Set();
+  for (const id of orderedIds) {
+    if (seen.has(id) || !meta.has(id)) continue;
+    seen.add(id);
+    const m = meta.get(id);
     const base = m.groupId || `single-${id}`;
-    const pose = m.poseKey || 'unknown';
     const previous = segments.get(base);
+    const rawPose = String(m.poseKey || '').trim().toLowerCase().replace(/[ _]+/g, '-');
+    const pose = !rawPose || rawPose === 'unknown' ? (previous?.pose || 'unknown') : rawPose;
     const segment = previous ? previous.segment + (previous.pose !== pose ? 1 : 0) : 0;
     segments.set(base, { pose, segment });
     const key = `${base}:pose-${segment}`;
@@ -17,7 +24,11 @@ export function applyBurstSelectionPolicy(keep, meta, photos) {
   const score = ([id, m]) => {
     const s = m.scores || {};
     const people = Number.isFinite(s.eye_quality) || Number.isFinite(s.expression);
-    if (people) return (s.eye_quality ?? 0) * 4 + (s.expression ?? 0) * 4 + (s.focus_accuracy ?? s.sharpness ?? 0) * 2 + (s.moment_quality ?? 0);
+    if (people) {
+      const metrics = [[s.eye_quality, 4], [s.expression, 4], [s.focus ?? s.focus_accuracy ?? s.sharpness, 2], [s.moment_quality, 1]]
+        .filter(([value]) => Number.isFinite(value));
+      return metrics.reduce((sum, [value, weight]) => sum + value * weight, 0) / metrics.reduce((sum, [, weight]) => sum + weight, 0);
+    }
     if (Number.isFinite(s.overall)) return s.overall;
     const t = photosById.get(id)?.technical || {};
     return (t.sharpness ?? 0) + (t.exposureScore ?? 0);
@@ -25,7 +36,11 @@ export function applyBurstSelectionPolicy(keep, meta, photos) {
   const promotions = [];
   for (const [group, entries] of groups) {
     const ordered = [...entries].sort((a, b) => score(b) - score(a) || (a[1].groupRank ?? 999) - (b[1].groupRank ?? 999));
-    const bestId = ordered[0][0];
+    // Si existe una candidata sin ojos cerrados/defecto crítico, no gana una defectuosa
+    // por inconsistencias entre sus puntuaciones y las razones del proveedor.
+    const critical = new Set(['EYES_CLOSED', 'CRITICAL_BLUR', 'FOCUS_FAILURE', 'CORRUPT', 'SEVERE_EXPOSURE_FAILURE']);
+    const usable = ordered.filter(([, m]) => !(m.rejectReasons || []).some(reason => critical.has(reason)));
+    const bestId = (usable.length ? usable : ordered)[0][0];
     const forced = !entries.some(([, m]) => ['SELECT', 'TOP_PICK'].includes(m.status));
     entries.forEach(([id, m]) => {
       keep.delete(id);

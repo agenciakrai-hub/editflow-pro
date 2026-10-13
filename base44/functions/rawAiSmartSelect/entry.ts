@@ -326,7 +326,7 @@ async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<str
 // Fusiona mitades + finalistas en un ranking global único.
 function mergeConsolidation(candidateIds: string[], h1: any, h2: any, finals: Record<string, any>): any {
   const byId: Record<string, any> = { ...h1.byId, ...h2.byId };
-  for (const id of Object.keys(finals)) byId[id] = finals[id];
+  for (const id of Object.keys(finals)) byId[id] = { ...finals[id], pose_key: finals[id].pose_key || byId[id]?.pose_key || null };
   // Un único TOP_PICK global (el de finals). Cualquier otro TOP_PICK → SELECT.
   let globalTop: string | null = null;
   for (const id of Object.keys(finals)) {

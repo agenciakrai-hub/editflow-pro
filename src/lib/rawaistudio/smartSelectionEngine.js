@@ -319,7 +319,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
           const f = burst.files[i];
           if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(f.id);
           meta.set(f.id, {
-            poseKey: r?.pose_key || null,
+            poseKey: null,
             groupId: groupIdFor(f), groupSize: groupSizeFor(), status: m.status,
             scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
             confidence: m.confidence, confidenceTier: "UNCERTAIN_REVIEW", comparedWith: [],
