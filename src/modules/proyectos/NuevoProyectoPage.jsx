@@ -685,15 +685,15 @@ export default function NuevoProyectoPage() {
       const saved = await listFingerprintsByFolder(existing.folderId);
       const replacements = new Map();
       for (const file of files) {
-        const matches = saved.filter(fp => fp.filename === file.name && (!fp.file_size || fp.file_size === file.size));
-        if (matches.length !== 1) continue;
+        const matches = saved.filter(fp => fp.filename === file.name);
+        if (!matches.length) continue;
         try {
           const preview = await extractRawPreview(file, 800, { hiResMaxEdge: 2400 });
           const hash = phashHex(await computePHash(preview.dataUrl, preview.decodedSource));
           if (!hash) throw new Error("No se pudo identificar la vista previa");
           await cachePreviews([{ hash, dataUrl: preview.dataUrl, hiResDataUrl: preview.hiResDataUrl }]);
           // Actualizar solo la huella visual: preservar selección, estrellas y etiquetas.
-          await bulkUpdateFingerprints([{ id: matches[0].id, fingerprint_hash: hash }]);
+          await bulkUpdateFingerprints(matches.map(fp => ({ id: fp.id, fingerprint_hash: hash })));
           replacements.set(file.name, hash);
           repaired++; setRepairDone(repaired);
         } catch { failed++; }
