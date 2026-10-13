@@ -1,3 +1,4 @@
+import { normalizeJpegOrientation } from "./jpegOrientation";
 import { findEmbeddedJpegSegments } from "./jpegSegments";
 // RAW AI Studio — lector de RAW (solo lectura, nunca modifica el archivo original).
 // Extrae el JPEG embebido de cualquier RAW (CR2/CR3/NEF/ARW/DNG/RAF/ORF/RW2/PEF), lee su
@@ -207,7 +208,7 @@ function renderHiResDataUrl(source, srcW, srcH, maxEdge, rotationDeg) {
 }
 
 async function analyzeJpegBytes(jpegBytes, maxEdge, rotationDeg, hiResMaxEdge) {
-  const blobUrl = URL.createObjectURL(new Blob([jpegBytes], { type: "image/jpeg" }));
+  const blobUrl = URL.createObjectURL(new Blob([normalizeJpegOrientation(jpegBytes)], { type: "image/jpeg" }));
   try {
     const img = await loadImageElement(blobUrl);
     const result = analyzeSource(img, img.naturalWidth, img.naturalHeight, maxEdge, rotationDeg);
