@@ -94,6 +94,16 @@ export default function NuevoProyectoPage() {
         if (!folderIdParam) { navigate(`/proyectos/${projectIdParam}`, { replace: true }); return; }
         const folder = folders.find((f) => f.id === folderIdParam);
         if (!folder) { navigate(`/proyectos/${projectIdParam}`, { replace: true }); return; }
+        // La identidad del proyecto también es necesaria al abrir un trabajo en memoria.
+        const p = await getProject(projectIdParam);
+        if (!alive) return;
+        setTitle(p?.title || "");
+        setEventDate(p?.event_date || "");
+        setExisting({
+          projectId: projectIdParam,
+          folderId: folder.id,
+          folderName: folder.raw_folder_name || folder.name || "",
+        });
         // Si hay un job activo de ESTA carpeta, se suscribe a él.
         const activeJob = getJob(projectIdParam, folder.id);
         if (activeJob) {
@@ -125,15 +135,8 @@ export default function NuevoProyectoPage() {
           });
           return;
         }
-        const [p, fps] = await Promise.all([getProject(projectIdParam), listFingerprintsByFolder(folder.id)]);
+        const fps = await listFingerprintsByFolder(folder.id);
         if (!alive) return;
-        setTitle(p?.title || "");
-        setEventDate(p?.event_date || "");
-        setExisting({
-          projectId: projectIdParam,
-          folderId: folder.id,
-          folderName: folder.raw_folder_name || folder.name || "",
-        });
         // NO se cargan todas las previews al abrir: con 4000+ fotos, cargar todas
         // las previews agotaría la memoria del navegador. Las previews se cargan
         // bajo demanda (LazyPhotoCard en la galería, PreviewLightbox en el visor)
