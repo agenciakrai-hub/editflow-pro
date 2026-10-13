@@ -1,13 +1,14 @@
+import { albumReadRetry, readAlbumPages, writeAlbumBatches } from "./albumReadRetry";
 // CRUD contra las entidades Album* — única puerta de datos del módulo. RLS por usuario;
 // sin dependencias con ninguna entidad existente de EditFlow.
 import { base44 } from "@/api/base44Client";
 
 export async function listAlbums() {
-  return base44.entities.AlbumProject.list("-updated_date", 100);
+  return albumReadRetry(() => base44.entities.AlbumProject.list("-updated_date", 100));
 }
 
 export async function getAlbum(id) {
-  return base44.entities.AlbumProject.get(id);
+  return albumReadRetry(() => base44.entities.AlbumProject.get(id));
 }
 
 export async function createAlbum(data) {
@@ -25,22 +26,22 @@ export async function deleteAlbum(id) {
 }
 
 export async function listPhotos(projectId) {
-  return base44.entities.AlbumPhoto.filter({ project_id: projectId }, "filename", 2000);
+  return readAlbumPages(base44.entities.AlbumPhoto, { project_id: projectId }, "filename");
 }
 
 export async function addPhotos(metas) {
-  return base44.entities.AlbumPhoto.bulkCreate(metas);
+  return writeAlbumBatches(base44.entities.AlbumPhoto, "bulkCreate", metas);
 }
 
 export async function listSpreads(projectId) {
-  return base44.entities.AlbumSpread.filter({ project_id: projectId }, "order_index", 500);
+  return readAlbumPages(base44.entities.AlbumSpread, { project_id: projectId }, "order_index");
 }
 
 // Grupos de similitud (ráfagas/secuencias) persistidos por el pipeline de
 // Selección IA. Los consume el planificador de maquetación para no colocar
 // fotos casi idénticas en el mismo lienzo ni en lienzos consecutivos.
 export async function listPhotoGroups(projectId) {
-  return base44.entities.AlbumPhotoGroup.filter({ project_id: projectId }, "group_index", 2000);
+  return readAlbumPages(base44.entities.AlbumPhotoGroup, { project_id: projectId }, "group_index");
 }
 
 export async function createSpread(data) {
@@ -62,5 +63,5 @@ export async function updatePhoto(id, patch) {
 }
 
 export async function bulkUpdatePhotos(list) {
-  return base44.entities.AlbumPhoto.bulkUpdate(list);
+  return writeAlbumBatches(base44.entities.AlbumPhoto, "bulkUpdate", list);
 }

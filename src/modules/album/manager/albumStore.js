@@ -66,6 +66,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   const goneRef = useRef(new Set());
   const timerRef = useRef(null);
   const flushRef = useRef(null);
+  const flushingRef = useRef(false);
 
   // Resuelve la identidad ACTUAL de un id de snapshot siguiendo la cadena de
   // re-mapeos (tmp→real al persistir, real borrado→tmp nuevo al restaurar). Los
@@ -104,7 +105,8 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // la cola si su escritura tuvo éxito; si algo falla, se avisará al usuario (banner con
   // reintentar) y el estado local permanece intacto.
   const flush = useCallback(async () => {
-    if (!dirtyRef.current.size && !deletedRef.current.size) return;
+    if (flushingRef.current || (!dirtyRef.current.size && !deletedRef.current.size)) return;
+    flushingRef.current = true;
     setSaving(true);
     let failed = false;
     try {
@@ -137,14 +139,17 @@ export function useAlbumStore(project, initialSpreads, photosById) {
           try {
             const rec = await createSpread(payload);
             remapRef.current.set(id, rec.id);
+            const latest = dirtyRef.current.get(id);
             dirtyRef.current.delete(id);
+            if (!spreadsRef.current.some(s => s.id === id)) deletedRef.current.add(rec.id);
+            else if (latest && latest !== data) dirtyRef.current.set(rec.id, { ...latest, id: rec.id });
             setSpreads((prev) => prev.map((s) => (s.id === id ? { ...s, id: rec.id } : s)));
             setSelectedSpreadId((cur) => (cur === id ? rec.id : cur));
           } catch { failed = true; }
         } else {
           try {
             await updateSpread(id, payload);
-            dirtyRef.current.delete(id);
+            if (dirtyRef.current.get(id) === data) dirtyRef.current.delete(id);
           } catch { failed = true; }
         }
       }
@@ -154,9 +159,11 @@ export function useAlbumStore(project, initialSpreads, photosById) {
       }
       setSaveError(failed ? "No se pudo guardar parte del álbum. Tus cambios siguen en pantalla y se reintentarán." : null);
     } finally {
+      flushingRef.current = false;
       setSaving(false);
+      if (!failed && (dirtyRef.current.size || deletedRef.current.size)) scheduleSave();
     }
-  }, [project]);
+  }, [project, scheduleSave]);
 
   useEffect(() => { flushRef.current = flush; }, [flush]);
   // P4 — el timer de autosave nunca sobrevive al desmontaje del editor.
@@ -247,7 +254,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
   // (fill/fit) queda fijado por el hueco; el botón "Rellenar contenedor" del lienzo
   // y los botones "Relleno"/"Contener" del hueco siguen cambiándolo a voluntad.
   const fitOrSmartFillSlot = useCallback((sl, photo, spread) => {
-    if (!sl || !photo) return { fit_mode: "fit", transform: freshTransform() };
+    if (!sl || !photo || spread?.fill_photos === false) return { fit_mode: "fit", transform: freshTransform() };
     return smartFillSlot(sl, photo);
   }, []);
 
@@ -256,7 +263,7 @@ export function useAlbumStore(project, initialSpreads, photosById) {
     if (!s || s.locked) return;
     const layout = getLayout(layoutId);
     if (!layout) return;
-    const next = applyLayout(s, layout, project);
+    let next = applyLayout(s, layout, project);
     next.slots = (next.slots || []).map((sl, i) => ({ ...sl, photo_id: photoIds?.[i] ?? null }));
     if (next.fill_canvas) next = { ...next, slots: expandSlotsToCanvas(project, next.mode, next.slots || []) };
     // ENCUADRE AUTOMÁTICO INTELIGENTE — detecta caras antes de aplicar Smart Cover
@@ -563,8 +570,10 @@ export function useAlbumStore(project, initialSpreads, photosById) {
 
   // ---- Slots ----
   const updateSlot = useCallback((spreadId, slotId, patch, history = true) => {
+    const live = spreadsRef.current.find(s => s.id === spreadId);
+    if (!live || live.locked) return;
     const list = spreadsRef.current.map((s) => {
-      if (s.id !== spreadId) return s;
+      if (s.id !== spreadId || s.locked) return s;
       return {
         ...s,
         slots: (s.slots || []).map((sl) => {
@@ -586,6 +595,9 @@ export function useAlbumStore(project, initialSpreads, photosById) {
                 // reaplica Smart Cover face-aware. Si ya estaban cacheadas,
                 // ensureFaces es instantáneo y el resultado no cambia.
                 ensureFaces(project.id, photo).then(() => {
+                  const currentSpread = spreadsRef.current.find(x => x.id === spreadId);
+                  const currentSlot = currentSpread?.slots?.find(x => x.slot_id === slotId);
+                  if (!currentSlot || currentSpread.locked || currentSlot.photo_id !== merged.photo_id || currentSlot.fit_mode !== "fill" || currentSlot.transform !== merged.transform) return;
                   const f2 = smartFillSlot(merged, photo);
                   const list = spreadsRef.current.map((x) => x.id !== spreadId ? x : {
                     ...x, slots: (x.slots || []).map((sl) => sl.slot_id !== slotId ? sl : { ...sl, transform: f2.transform }),

@@ -1,3 +1,4 @@
+import { slotEffDpi, slotRequiredEdge } from "@/modules/album/editor/slotPhotoView";
 // Orquestación de exportación de LIENZOS — NIVEL 4 DE CALIDAD: las imágenes SIEMPRE
 // salen del ARCHIVO ORIGINAL, generadas a la resolución exacta que cada hueco necesita
 // a la resolución de salida configurada (nunca miniaturas, ni previews, ni capturas
@@ -71,8 +72,7 @@ async function loadSpreadImages(album, spread, photosById, pxPerMm, requireOrigi
       meta.set(sl.photo_id, { source: "missing", url: null, ow: null, oh: null });
       return;
     }
-    const scale = sl.transform?.scale ?? 1;
-    const requiredEdge = Math.ceil(Math.max(sl.w_mm, sl.h_mm) * pxPerMm * scale);
+    const requiredEdge = (w, h) => Math.max(...spread.slots.filter(other => other.photo_id === sl.photo_id).map(other => slotRequiredEdge(other, { width_px: w, height_px: h }, pxPerMm)));
     const file = await findOriginalFile(album.id, photo);
     if (file) {
       try {
@@ -96,11 +96,13 @@ async function loadSpreadImages(album, spread, photosById, pxPerMm, requireOrigi
       oh: photo.height_px || null,
     });
   };
-  for (const sl of (spread.slots || [])) {
-    if (!sl.photo_id || images.has(sl.photo_id)) continue;
-    await loadOne(sl);
-  }
-  return { images, meta };
+  try {
+    for (const sl of (spread.slots || [])) {
+      if (!sl.photo_id || images.has(sl.photo_id)) continue;
+      await loadOne(sl);
+    }
+    return { images, meta };
+  } catch (e) { releaseImages(meta); throw e; }
 }
 
 function releaseImages(meta) {
@@ -116,6 +118,8 @@ export async function exportSpreads({ album, spreads, photosById, options, onPro
     folderHandle, format = "jpeg", quality = 0.92, pxPerMm,
     includeBleed = false, overlays = null, checkResolution = false, requireOriginals = false,
   } = options;
+
+  if (!Number.isFinite(pxPerMm) || pxPerMm <= 0) throw new Error("La resolución de exportación debe ser mayor que cero.");
 
   // Para impresión: SIEMPRE originales. Si falta uno, no se genera NADA y se
   // detiene para una decisión explícita del usuario (localizar / re-vincular).
@@ -134,54 +138,60 @@ export async function exportSpreads({ album, spreads, photosById, options, onPro
   for (let i = 0; i < spreads.length; i++) {
     const spread = spreads[i];
     const { images, meta } = await loadSpreadImages(album, spread, photosById, pxPerMm, requireOriginals);
-    meta.forEach((m, pid) => { if (m.source === "preview") fromPreview.add(pid); });
+    try {
+      if (requireOriginals && [...meta.values()].some(m => m.source !== "original")) {
+        const failed = [...meta.entries()].filter(([, m]) => m.source !== "original").map(([id]) => photosById.get(id)?.filename || id);
+        throw new Error(`No se pudo cargar el original de ${failed.join(", ")}. El lienzo ${i + 1} no se ha exportado${i ? `; ${i} lienzo(s) anteriores sí se guardaron` : ""}.`);
+      }
+      meta.forEach((m, pid) => { if (m.source === "preview") fromPreview.add(pid); });
 
-    // Control de resolución (impresión): DPI efectivo real del ORIGINAL en el tamaño
-    // físico que ocupa la foto dentro del lienzo. Solo AVISA, nunca bloquea.
-    if (checkResolution) {
-      (spread.slots || []).forEach((sl) => {
-        if (!sl.photo_id || lowResSeen.has(sl.photo_id)) return;
-        const m = meta.get(sl.photo_id);
-        const photo = photosById.get(sl.photo_id);
-        if (!m || !m.ow || !m.oh || !photo) return;
-        const effDpi = Math.min(m.ow / (sl.w_mm / 25.4), m.oh / (sl.h_mm / 25.4));
-        if (effDpi < LOW_RES_DPI) {
-          lowResSeen.add(sl.photo_id);
-          lowRes.push({ filename: photo.filename, dpi: Math.round(effDpi) });
-        }
+      // Control de resolución (impresión): DPI efectivo real del ORIGINAL en el tamaño
+      // físico que ocupa la foto dentro del lienzo. Solo AVISA, nunca bloquea.
+      if (checkResolution) {
+        (spread.slots || []).forEach((sl) => {
+          if (!sl.photo_id || lowResSeen.has(sl.photo_id)) return;
+          const m = meta.get(sl.photo_id);
+          const photo = photosById.get(sl.photo_id);
+          if (!m || !m.ow || !m.oh || !photo) return;
+          const effDpi = slotEffDpi(sl, { width_px: m.ow, height_px: m.oh });
+          if (effDpi != null && effDpi < LOW_RES_DPI) {
+            lowResSeen.add(sl.photo_id);
+            lowRes.push({ filename: photo.filename, dpi: Math.round(effDpi) });
+          }
+        });
+      }
+
+      const { canvas, missingCount } = renderSpreadToCanvas(album, spread, images, {
+        pxPerMm,
+        includeBleed,
+        overlays: overlays ? { ...overlays, lienzoNumber: i + 1, lienzoTotal: spreads.length } : null,
+        photosById,
       });
-    }
+      missing += missingCount;
 
-    const { canvas, missingCount } = renderSpreadToCanvas(album, spread, images, {
-      pxPerMm,
-      includeBleed,
-      overlays: overlays ? { ...overlays, lienzoNumber: i + 1, lienzoTotal: spreads.length } : null,
-      photosById,
-    });
-    missing += missingCount;
+      const fileName = `${sanitizeName(album.name)}-lienzo-${String(i + 1).padStart(2, "0")}.${ext}`;
+      const blob = await canvasToBlob(canvas, format, quality);
+      if (!blob) throw new Error(`No se pudo generar el archivo del lienzo ${i + 1}.`);
+      if (folderHandle) {
+        const fh = await folderHandle.getFileHandle(fileName, { create: true });
+        const w = await fh.createWritable();
+        try { await w.write(blob); await w.close(); }
+        catch (e) { try { await w.abort?.(); } catch {} throw e; }
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        await new Promise((r) => setTimeout(r, 300)); // respiración entre descargas
+      }
 
-    const fileName = `${sanitizeName(album.name)}-lienzo-${String(i + 1).padStart(2, "0")}.${ext}`;
-    const blob = await canvasToBlob(canvas, format, quality);
-    if (folderHandle) {
-      const fh = await folderHandle.getFileHandle(fileName, { create: true });
-      const w = await fh.createWritable();
-      await w.write(blob);
-      await w.close();
-    } else {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 3000);
-      await new Promise((r) => setTimeout(r, 300)); // respiración entre descargas
-    }
-
-    // Memoria acotada: las imágenes grandes de este lienzo se liberan ya.
-    releaseImages(meta);
-    onProgress?.(i + 1, spreads.length, fileName);
+      // Memoria acotada: las imágenes grandes de este lienzo se liberan ya.
+      onProgress?.(i + 1, spreads.length, fileName);
+    } finally { releaseImages(meta); }
   }
 
   return {

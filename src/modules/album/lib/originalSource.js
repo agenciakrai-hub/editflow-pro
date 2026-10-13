@@ -4,14 +4,9 @@
 // la resolución exacta necesaria. Los originales jamás se modifican ni se suben.
 import { getFolderHandle } from "@/modules/album/lib/previewStore";
 
-const handleCache = new Map();
-
 async function projectFolder(projectId) {
-  if (handleCache.has(projectId)) return handleCache.get(projectId);
-  let h = null;
-  try { h = await getFolderHandle(projectId); } catch { h = null; }
-  handleCache.set(projectId, h);
-  return h;
+  // Releer el handle permite usar una carpeta recién vinculada sin recargar.
+  try { return await getFolderHandle(projectId); } catch { return null; }
 }
 
 // Localiza el archivo ORIGINAL de una foto en la carpeta vinculada del proyecto.
@@ -24,12 +19,17 @@ export async function findOriginalFile(projectId, photo) {
   const paths = [...new Set([photo.relative_path, photo.filename].filter(Boolean))];
   for (const p of paths) {
     try {
-      const fh = await dir.getFileHandle(p);
+      const parts = p.replace(/\\/g, "/").split("/").filter(Boolean);
+      if (parts.some(part => part === ".." || part.includes(":"))) continue;
+      if (parts.length > 1 && parts[0] === dir.name) parts.shift();
+      if (!parts.length) continue;
+      let folder = dir;
+      for (const part of parts.slice(0, -1)) folder = await folder.getDirectoryHandle(part);
+      const fh = await folder.getFileHandle(parts.at(-1));
       return await fh.getFile();
     } catch {}
   }
   // No cachear el handle fallido: reintenta tras volver a vincular la carpeta.
-  handleCache.delete(projectId);
   return null;
 }
 
@@ -52,7 +52,8 @@ export async function renderScaledFromOriginal(file, targetEdge = 0, quality = 0
     const img = await loadUrlImage(srcUrl);
     const w = img.naturalWidth;
     const h = img.naturalHeight;
-    const scale = targetEdge > 0 ? Math.min(1, targetEdge / Math.max(w, h)) : 1;
+    const edge = typeof targetEdge === "function" ? targetEdge(w, h) : targetEdge;
+    const scale = edge > 0 ? Math.min(1, edge / Math.max(w, h)) : 1;
     const cw = Math.max(1, Math.round(w * scale));
     const ch = Math.max(1, Math.round(h * scale));
     const canvas = document.createElement("canvas");

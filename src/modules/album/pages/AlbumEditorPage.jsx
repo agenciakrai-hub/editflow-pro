@@ -37,8 +37,10 @@ import { useToast } from "@/components/ui/use-toast";
 export default function AlbumEditorPage({ projectId }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [loadRevision, setLoadRevision] = useState(0);
 
   useEffect(() => {
+    setError(null); setData(null);
     let alive = true;
     (async () => {
       try {
@@ -68,7 +70,7 @@ export default function AlbumEditorPage({ projectId }) {
       }
     })();
     return () => { alive = false; };
-  }, [projectId]);
+  }, [projectId, loadRevision]);
 
   if (error) {
     return (
@@ -76,7 +78,8 @@ export default function AlbumEditorPage({ projectId }) {
         <Link to="/album" className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary">
           <ArrowLeft className="h-3.5 w-3.5" /> Álbumes
         </Link>
-        <p className="text-sm text-destructive">{error}</p>
+        <p className="text-sm text-destructive">{/rate limit/i.test(error) ? "El servidor está ocupado. Espera un momento y reintenta la carga." : error}</p>
+        <button onClick={() => setLoadRevision(value => value + 1)} className="rounded-lg border border-border px-3 py-2 text-sm">Reintentar</button>
       </div>
     );
   }

@@ -106,3 +106,13 @@ export function photoPanMargins(slot, photo) {
   const my = (k * dh - sh) / 2;
   return { mx: mx > 0 ? mx : null, my: my > 0 ? my : null };
 }
+// Resolución del archivo intermedio suficiente para el área dibujada, incluido
+// cover y zoom. Una panorámica en un hueco vertical necesita más que el lado del hueco.
+export function slotRequiredEdge(slot, photo, pxPerMm) {
+  const r = photo.width_px / photo.height_px;
+  if (!(r > 0) || !(pxPerMm > 0) || !(slot.w_mm > 0) || !(slot.h_mm > 0)) return 0;
+  const base = slot.fit_mode === 'fill'
+    ? { w: Math.max(slot.w_mm, slot.h_mm * r), h: Math.max(slot.h_mm, slot.w_mm / r) }
+    : { w: Math.min(slot.w_mm, slot.h_mm * r), h: Math.min(slot.h_mm, slot.w_mm / r) };
+  return Math.ceil(Math.max(base.w, base.h) * pxPerMm * (slot.transform?.scale ?? 1));
+}
