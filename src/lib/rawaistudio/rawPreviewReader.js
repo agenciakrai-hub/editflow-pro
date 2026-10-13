@@ -1,3 +1,4 @@
+import { findEmbeddedJpegSegments } from "./jpegSegments";
 // RAW AI Studio — lector de RAW (solo lectura, nunca modifica el archivo original).
 // Extrae el JPEG embebido de cualquier RAW (CR2/CR3/NEF/ARW/DNG/RAF/ORF/RW2/PEF), lee su
 // orientación EXIF para auto-rotar la previsualización, y calcula métricas técnicas reales
@@ -13,29 +14,6 @@ import { extractDngPreview } from "./dngPreviewExtractor";
 // "decodificaba" parcialmente, pero el validador de adjuntos de la IA lo rechazaba como
 // "Invalid file attachment". Ahora cada SOI se empareja con su EOI más cercano, y se usa
 // el segmento JPEG completo de mayor tamaño (la preview real, no la miniatura).
-function findEmbeddedJpegSegments(bytes) {
-  const segments = [];
-  const len = bytes.length;
-  let i = 0;
-  while (i < len - 3) {
-    if (bytes[i] === 0xff && bytes[i + 1] === 0xd8 && bytes[i + 2] === 0xff) {
-      let j = i + 2;
-      let eoi = -1;
-      while (j < len - 1) {
-        if (bytes[j] === 0xff && bytes[j + 1] === 0xd9) { eoi = j; break; }
-        if (j > i + 2 && bytes[j] === 0xff && bytes[j + 1] === 0xd8 && bytes[j + 2] === 0xff) break;
-        j++;
-      }
-      if (eoi !== -1) {
-        segments.push(bytes.slice(i, eoi + 2));
-        i = eoi + 2;
-        continue;
-      }
-    }
-    i++;
-  }
-  return segments;
-}
 
 const readU16 = (bytes, o, little) => (little ? bytes[o] | (bytes[o + 1] << 8) : (bytes[o] << 8) | bytes[o + 1]);
 const readU32 = (bytes, o, little) =>
