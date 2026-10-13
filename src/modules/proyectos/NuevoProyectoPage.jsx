@@ -684,6 +684,7 @@ export default function NuevoProyectoPage() {
     try {
       const saved = await listFingerprintsByFolder(existing.folderId);
       const replacements = new Map();
+      const fingerprintUpdates = [];
       for (const file of files) {
         const matches = saved.filter(fp => fp.filename === file.name);
         if (!matches.length) continue;
@@ -693,16 +694,17 @@ export default function NuevoProyectoPage() {
           if (!hash) throw new Error("No se pudo identificar la vista previa");
           await cachePreviews([{ hash, dataUrl: preview.dataUrl, hiResDataUrl: preview.hiResDataUrl }]);
           // Actualizar solo la huella visual: preservar selección, estrellas y etiquetas.
-          await bulkUpdateFingerprints(matches.map(fp => ({ id: fp.id, fingerprint_hash: hash })));
+          fingerprintUpdates.push(...matches.map(fp => ({ id: fp.id, fingerprint_hash: hash })));
           replacements.set(file.name, hash);
           repaired++; setRepairDone(repaired);
-        } catch { failed++; }
+        } catch (e) { failed++; console.warn("Preview repair:", file.name, e?.message); }
       }
+      if (fingerprintUpdates.length) await bulkUpdateFingerprints(fingerprintUpdates);
       setItems(previous => previous.map(it => replacements.has(it.file.name) ? {
         ...it, preview: null, fingerprint: { ...it.fingerprint, fingerprint_hash: replacements.get(it.file.name) },
       } : it));
       setPreviewRevision(value => value + 1);
-      toast({ title: repaired ? "Vistas previas reparadas" : "No se repararon vistas previas", description: `${repaired} reparadas · ${failed} con error. La selección y las estrellas se conservan.` });
+      toast({ title: repaired ? "Vistas previas reparadas" : "No se repararon vistas previas", duration: 60000, description: `${repaired} reparadas · ${failed} con error. La selección y las estrellas se conservan.` });
     } catch (e) {
       toast({ title: "No se pudieron reparar las vistas previas", description: e?.message, variant: "destructive" });
     } finally { setRepairing(false); setBusyAction(null); }
