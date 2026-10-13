@@ -4,9 +4,13 @@ import { FolderOpen, FileText, Loader2, ArrowLeft, X, Plus } from "lucide-react"
 import { base44 } from "@/api/base44Client";
 // Solo IMPORTA (no modifica) utilidades del motor de Selección existente.
 import { selectBursts } from "@/lib/ai/aiGateway";
+import { extractRawPreview } from "@/lib/rawaistudio/rawPreviewReader";
+import { computePHash, phashHex } from "@/lib/rawaistudio/perceptualHash";
+import { cachePreviews } from "./lib/previewCache";
+
 import { statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { saveHandle } from "./lib/idbHandles";
-import { createProject, createCatalogBinding, bulkCreateFingerprints, getProject, listFingerprintsByFolder, deleteFingerprintsByFolder, ensureFoldersMigrated, updateFolder, updateProject } from "./hooks/useProjectStore";
+import { createProject, createCatalogBinding, bulkCreateFingerprints, bulkUpdateFingerprints, getProject, listFingerprintsByFolder, deleteFingerprintsByFolder, ensureFoldersMigrated, updateFolder, updateProject } from "./hooks/useProjectStore";
 import { startProcessing, getJob, subscribe } from "./lib/backgroundProcessor";
 import { startAiSelection, getJob as getAiJob, subscribe as subscribeAi, cancelSelection as cancelAiSelection } from "./lib/backgroundAiSelection";
 import ProjectPhotoWorkspace from "./components/ProjectPhotoWorkspace";
@@ -27,6 +31,10 @@ export default function NuevoProyectoPage() {
   const [items, setItems] = useState([]);
   const [extracting, setExtracting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const repairInput = useRef(null);
+  const [repairing, setRepairing] = useState(false);
+  const [repairDone, setRepairDone] = useState(0);
+  const [previewRevision, setPreviewRevision] = useState(0);
   // Acción en curso («save», «seleccion», «editar», «album»): SOLO el botón
   // pulsado muestra su spinner; el resto queda deshabilitado pero sin girar.
   const [busyAction, setBusyAction] = useState(null);
@@ -667,6 +675,39 @@ export default function NuevoProyectoPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items.length, modeParam, existing?.projectId]);
 
+  async function repairPreviews(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    if (!files.length || !existing?.folderId) return;
+    setRepairing(true); setRepairDone(0); setBusyAction("repair");
+    let repaired = 0, failed = 0;
+    try {
+      const saved = await listFingerprintsByFolder(existing.folderId);
+      const replacements = new Map();
+      for (const file of files) {
+        const matches = saved.filter(fp => fp.filename === file.name && (!fp.file_size || fp.file_size === file.size));
+        if (matches.length !== 1) continue;
+        try {
+          const preview = await extractRawPreview(file, 800, { hiResMaxEdge: 2400 });
+          const hash = phashHex(await computePHash(preview.dataUrl, preview.decodedSource));
+          if (!hash) throw new Error("No se pudo identificar la vista previa");
+          await cachePreviews([{ hash, dataUrl: preview.dataUrl, hiResDataUrl: preview.hiResDataUrl }]);
+          // Actualizar solo la huella visual: preservar selección, estrellas y etiquetas.
+          await bulkUpdateFingerprints([{ id: matches[0].id, fingerprint_hash: hash }]);
+          replacements.set(file.name, hash);
+          repaired++; setRepairDone(repaired);
+        } catch { failed++; }
+      }
+      setItems(previous => previous.map(it => replacements.has(it.file.name) ? {
+        ...it, preview: null, fingerprint: { ...it.fingerprint, fingerprint_hash: replacements.get(it.file.name) },
+      } : it));
+      setPreviewRevision(value => value + 1);
+      toast({ title: repaired ? "Vistas previas reparadas" : "No se repararon vistas previas", description: `${repaired} reparadas · ${failed} con error. La selección y las estrellas se conservan.` });
+    } catch (e) {
+      toast({ title: "No se pudieron reparar las vistas previas", description: e?.message, variant: "destructive" });
+    } finally { setRepairing(false); setBusyAction(null); }
+  }
+
   // Modo «nuevo proyecto» (sin projectId): formulario simple con nombre + fecha +
   // catálogo. NO pide carpeta de fotos — las carpetas se añaden después, desde
   // la página de carpetas del proyecto.
@@ -786,7 +827,12 @@ export default function NuevoProyectoPage() {
       )}
 
       {!extracting && items.length > 0 && (
-        <ProjectPhotoWorkspace
+        <div>
+          <input ref={repairInput} type="file" multiple webkitdirectory="" className="hidden" onChange={repairPreviews} />
+          <button disabled={repairing || aiRunning || saving} onClick={() => repairInput.current?.click()} className="mb-3 rounded-md border border-border px-3 py-2 text-sm disabled:opacity-50">
+            {repairing ? `Reparando vistas previas… ${repairDone}` : "Reparar vistas previas"}
+          </button>
+        <ProjectPhotoWorkspace key={previewRevision}
           items={items.map((it) => ({
             id: it.id,
             filename: it.file.name,
@@ -824,6 +870,7 @@ export default function NuevoProyectoPage() {
           onGoEditar={goEditar}
           onGoAlbum={goAlbum}
         />
+        </div>
       )}
 
       {!extracting && items.length === 0 && (
