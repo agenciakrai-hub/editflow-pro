@@ -45,7 +45,8 @@ export default async function(req: Request): Promise<Response> {
         const { values, confidence } = await developPhotoVisual(
           base44,
           String(p.preview_base64),
-          preferences
+          preferences,
+          Array.isArray(body.enabled_params) ? body.enabled_params : undefined
         );
         results[id] = values;
         confidences[id] = confidence;

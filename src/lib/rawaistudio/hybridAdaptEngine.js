@@ -1,3 +1,4 @@
+import { applyEnabledWhiteBalance } from "./developControls";
 // Motor de adaptación HÍBRIDO (cliente). Aplica un PERFIL DE SESIÓN (generado por la IA
 // desde K fotos representativas, ver hybridDevelopEngine.ts) y lo ADAPTA a cada foto
 // usando fotometría local (analyzePhotometrics + computeTechnicalBaseline).
@@ -54,7 +55,7 @@ export function pickRepresentatives(photos, max = 8) {
 //   enabledParams → lista de claves a rellenar (filtro de la UI); si se omite, todas.
 export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced", preferences = {}, enabledParams = null, asShotWB = null, skinStats = null) {
   const recipe = (profile && profile.base_recipe) || {};
-  const allKeys = enabledParams && enabledParams.length ? enabledParams : Object.keys(RANGES);
+  const allKeys = enabledParams != null ? enabledParams : Object.keys(RANGES);
   // WB es Kelvin absoluto sobre As Shot (whiteBalanceEngine), no un shift crs:. Se maneja
   // fuera del dict de valores para que patchXmpAttributes no lo escriba como tono.
   const keys = allKeys.filter((k) => k !== "Temperature" && k !== "Tint");
@@ -77,5 +78,5 @@ export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced"
   let wb = computeWhiteBalance(stats, skinStats, asShotWB, precisionMode);
   const wbEnabled = allKeys.includes("Temperature") || allKeys.includes("Tint");
   if (!wbEnabled) wb = { ...wb, write: false, reason: "WB desactivado por el usuario" };
-  return { values: final, wb };
+  return { values: final, wb: applyEnabledWhiteBalance(wb, allKeys) };
 }

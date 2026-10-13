@@ -1,3 +1,4 @@
+import { requireDevelopNumbers } from "./developResponseValidation.ts";
 // Motor de Revelado IA Visual — la IA decide los ajustes de revelado COMPLETOS de
 // Lightroom analizando el CONTENIDO de la foto (sujeto, luz, color, mood), no solo el
 // histograma. Sin baseline técnico acotado: la IA devuelve valores absolutos profesionales.
@@ -20,14 +21,12 @@ const RANGES: Record<string, { min: number; max: number }> = {
   Shadows2012: { min: -100, max: 100 },
   Whites2012: { min: -100, max: 100 },
   Blacks2012: { min: -100, max: 100 },
-  Temperature: { min: -100, max: 100 },
-  Tint: { min: -100, max: 100 },
   Vibrance: { min: -100, max: 100 },
   Saturation: { min: -100, max: 100 },
   Texture2012: { min: -100, max: 100 },
   Clarity2012: { min: -100, max: 100 },
   Dehaze2012: { min: -100, max: 100 },
-  Sharpness: { min: 0, max: 100 },
+  Sharpness: { min: 0, max: 60 },
 };
 
 export const VISUAL_PARAM_KEYS = Object.keys(RANGES);
@@ -40,12 +39,15 @@ const clamp = (key: string, value: number): number => {
 export async function developPhotoVisual(
   base44: any,
   previewBase64: string,
-  preferences: Record<string, number> = {}
+  preferences: Record<string, number> = {},
+  enabledParams?: string[]
 ): Promise<{ values: Record<string, number>; confidence: number | null }> {
   if (!previewBase64) throw new Error("preview_base64 requerido");
   const dataUrl = `data:image/jpeg;base64,${previewBase64}`;
 
-  const propList = VISUAL_PARAM_KEYS.map((k) => {
+  const keys = enabledParams ? VISUAL_PARAM_KEYS.filter(k => enabledParams.includes(k)) : VISUAL_PARAM_KEYS;
+  if (!keys.length) return { values: {}, confidence: null };
+  const propList = keys.map((k) => {
     const r = RANGES[k];
     return `- ${k}: numero entre ${r.min} y ${r.max}`;
   }).join("\n");
@@ -53,7 +55,7 @@ export async function developPhotoVisual(
   const prompt = `Eres un colorista profesional que revela fotos en Adobe Lightroom / Camera Raw, especializado en fotografia de bodas y retrato.
 SOLO revelas la fotografia — nunca generas, retocas ni alteras pixeles, identidad, anatomia, ropa ni fondo.
 
-REGLA CRITICA DE EXPOSICION: la imagen que ves es la preview JPEG ya procesada por la camara y refleja la exposicion REAL del RAW. Tus valores se aplican SOBRE el revelado NEUTRO de Camera Raw (0 = sin ajuste). Si la foto ya esta bien expuesta, devuelve valores PEQUEÑOS, cercanos a 0 — NO aclares la foto por sistema ni inventes correcciones que la foto no necesita.
+REGLA CRITICA DE EXPOSICION: la imagen que ves es la preview JPEG ya procesada por la camara y puede incorporar una curva tonal, balance de blancos y estilo de camara; NO equivale a un revelado RAW neutro. Tus valores se aplican SOBRE el revelado NEUTRO de Camera Raw (0 = sin ajuste). Si la foto ya esta bien expuesta, devuelve valores PEQUEÑOS, cercanos a 0 — NO aclares la foto por sistema ni inventes correcciones que la foto no necesita.
 
 Analiza el CONTENIDO de esta foto: sujeto principal, tipo de luz (ventana, contraluz, lateral, flash), ambiente, paleta de color, contraste y mood, y corrige SOLO lo necesario, con criterio de experto CONSERVADOR:
 - Exposure2012: ±0.3 o menos si la exposicion ya es correcta; solo valores mayores (hasta ±1) en fotos claramente sub o sobreexpuestas.
@@ -65,17 +67,17 @@ Devuelve valores tecnicamente correctos y profesionales para:
 ${propList}
 - confidence_score: 0-100, confianza en que los sujetos importantes quedan bien revelados.
 
-No inventes valores fuera de rango. No toques curvas de tono, HSL, calibracion de camara ni mascaras — solo los sliders listados.
+No inventes valores fuera de rango. Preserva fotos oscuras intencionales y contraluces; no intentes recuperar textura que el JPEG ya ha perdido. El balance de blancos se gestiona aparte con metadatos RAW fiables. No toques curvas de tono, HSL, calibracion de camara ni mascaras — solo los sliders listados.
 
 Devuelve un JSON con las claves exactas listadas mas confidence_score.`;
 
   const properties: Record<string, any> = {};
-  for (const k of VISUAL_PARAM_KEYS) properties[k] = { type: "number" };
+  for (const k of keys) properties[k] = { type: "number" };
   properties.confidence_score = { type: "number" };
   const schema = {
     type: "object",
     properties,
-    required: [...VISUAL_PARAM_KEYS, "confidence_score"],
+    required: [...keys, "confidence_score"],
   };
 
   // Proveedor activo por herramienta AJUSTES (Proveedores IA): el modelo que el
@@ -95,15 +97,17 @@ Devuelve un JSON con las claves exactas listadas mas confidence_score.`;
     forceProvider: provider,
   } as any);
 
+  requireDevelopNumbers(result, keys);
   const values: Record<string, number> = {};
-  for (const k of VISUAL_PARAM_KEYS) {
-    const pref = Number(preferences?.[k]) || 0;
+  for (const k of keys) {
+    const preference = Number(preferences?.[k]);
+    const pref = Number.isFinite(preference) ? preference : 0;
     const raw = typeof result[k] === "number" ? result[k] : 0;
     values[k] = clamp(k, raw + pref);
   }
   const confidence =
-    typeof result.confidence_score === "number"
+    Number.isFinite(result.confidence_score)
       ? Math.min(100, Math.max(0, result.confidence_score))
-      : 80;
+      : null;
   return { values, confidence };
 }

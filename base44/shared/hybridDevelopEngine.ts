@@ -1,3 +1,4 @@
+import { requireDevelopNumbers } from "./developResponseValidation.ts";
 // Motor de Revelado Híbrido — FASE DE PERFIL (backend).
 // La IA analiza SOLO K fotos representativas de la sesión (una sola llamada Vision) y
 // genera un PERFIL DE SESION: un recipe base de revelado coherente (look de sesión) más
@@ -43,7 +44,7 @@ export async function generateSessionProfile(
   base44: any,
   representatives: Array<{ id: string; preview_base64: string }>,
   preferences: Record<string, number> = {}
-): Promise<{ base_recipe: Record<string, number>; analysis: string; confidence: number }> {
+): Promise<{ base_recipe: Record<string, number>; analysis: string; confidence: number | null }> {
   if (!representatives?.length) throw new Error("representatives requerido (min 1 preview)");
 
   // Gemini procesa las previews como inline_data. Ocho JPEG de 800px en una sola petición
@@ -104,14 +105,15 @@ Devuelve un JSON con las claves exactas listadas, mas "analysis" (frase corta de
     forceProvider: provider,
   } as any);
 
+  requireDevelopNumbers(result, PROFILE_KEYS);
   const base_recipe: Record<string, number> = {};
   for (const k of PROFILE_KEYS) {
-    const pref = Number(preferences?.[k]) || 0;
+    // Las preferencias se aplican una sola vez en adaptPhotoWithProfile.
     const raw = typeof result[k] === "number" ? result[k] : 0;
-    base_recipe[k] = clamp(k, raw + pref);
+    base_recipe[k] = clamp(k, raw);
   }
   const analysis = typeof result.analysis === "string" ? result.analysis : "";
   const confidence =
-    typeof result.confidence_score === "number" ? Math.min(100, Math.max(0, result.confidence_score)) : 80;
+    Number.isFinite(result.confidence_score) ? Math.min(100, Math.max(0, result.confidence_score)) : null;
   return { base_recipe, analysis, confidence };
 }

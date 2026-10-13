@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import {build} from 'esbuild';
+const result=await build({stdin:{contents:`export {developPhotoVisual} from './base44/shared/visualDevelopEngine.ts';export {generateSessionProfile} from './base44/shared/hybridDevelopEngine.ts';`,resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'mock-provider-only',setup(b){b.onResolve({filter:/aiProviderAdapter\.ts$/},()=>({path:'provider',namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},()=>({contents:`export async function activeProviderFor(){return 'custom:krai'};export async function invokeVision(){return globalThis.testDevelopResponse}`,loader:'js'}));}}]});
+const engine=await import('data:text/javascript;base64,'+Buffer.from(result.outputFiles[0].text).toString('base64'));
+globalThis.testDevelopResponse={Exposure2012:0.3,Contrast2012:0,Highlights2012:0,Shadows2012:0,Whites2012:0,Blacks2012:0,Temperature:0,Tint:0,Vibrance:0,Saturation:0,Clarity2012:0,Sharpness:0,confidence_score:80};
+assert.equal((await engine.developPhotoVisual({},'image',{Exposure2012:0.2},['Exposure2012'])).values.Exposure2012,0.5);
+assert.equal((await engine.generateSessionProfile({},[{id:'a',preview_base64:'image'}],{Exposure2012:0.2})).base_recipe.Exposure2012,0.3);
+globalThis.testDevelopResponse={};await assert.rejects(()=>engine.developPhotoVisual({},'image',{},['Exposure2012']),/incompletos/);
+await assert.rejects(()=>engine.generateSessionProfile({},[{id:'a',preview_base64:'image'}],{}),/incompletos/);
+assert.deepEqual((await engine.developPhotoVisual({},'image',{},[])).values,{});
+delete globalThis.testDevelopResponse;
+console.log('PASS: actual visual/hybrid backend applies preference once, rejects incomplete results, handles disabled parameters');

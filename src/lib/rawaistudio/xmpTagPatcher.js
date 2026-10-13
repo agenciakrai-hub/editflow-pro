@@ -153,11 +153,11 @@ export function addOrientation(xmpText, rotation) {
 export function writeWhiteBalance(xmpText, wb) {
   if (!wb || !wb.write || wb.finalKelvin == null) return xmpText;
   let result = xmpText;
-  result = stripCrsChildElement(result, "Temperature");
-  result = stripCrsChildElement(result, "Tint");
+  if (wb.writeTemperature !== false) result = stripCrsChildElement(result, "Temperature");
+  if (wb.writeTint !== false) result = stripCrsChildElement(result, "Tint");
   result = setAttribute(result, "crs", "WhiteBalance", "Custom");
-  result = setAttribute(result, "crs", "Temperature", String(wb.finalKelvin));
-  result = setAttribute(result, "crs", "Tint", String(wb.finalTint ?? 0));
+  if (wb.writeTemperature !== false) result = setAttribute(result, "crs", "Temperature", String(wb.finalKelvin));
+  if (wb.writeTint !== false) result = setAttribute(result, "crs", "Tint", String(wb.finalTint ?? 0));
   return result;
 }
 

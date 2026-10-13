@@ -38,10 +38,11 @@ export async function analyzePhotos({ photos, enabledParams, preferences, precis
 // a Qwen, sin UploadFile ni InvokeLLM Base44.
 // photos: [{ id, preview_base64 }] · preferences: { [param]: offset }
 // Devuelve { results: { id: { Exposure2012, ... } }, errors, confidences }
-export async function developPhotosVisual({ photos, preferences }) {
+export async function developPhotosVisual({ photos, preferences, enabledParams }) {
   const res = await base44.functions.invoke("rawAiVisualDevelop", {
     photos,
     preferences: preferences || {},
+    enabled_params: enabledParams,
   });
   return res?.data ?? res;
 }

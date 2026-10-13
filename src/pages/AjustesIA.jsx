@@ -1,3 +1,5 @@
+import { applyEnabledDevelopValues, applyEnabledWhiteBalance } from "@/lib/rawaistudio/developControls";
+import { computeWhiteBalance } from "@/lib/rawaistudio/whiteBalanceEngine";
 import { useMemo, useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { FolderOpen, Loader2, Sparkles, Package, Plug, CheckCircle2, ArrowLeft, Brain, Pause, Play, Download, Trash2 } from "lucide-react";
@@ -378,7 +380,7 @@ export default function AjustesIA() {
     // la pueda lanzar concurrentemente. Devuelve el resultado o lanza si falla.
     const processOnePhoto = async (photo) => {
         const p = await ensurePreview(photo);
-        const base64 = p.preview?.base64;
+        const base64 = p.preview?.base64 || (p.preview?.dataUrl ? p.preview.dataUrl.split(",")[1] : null);
         const stats = base64 ? await analyzePhotometrics(base64) : null;
         let aiValues = {};
         let wb = null;
@@ -387,8 +389,8 @@ export default function AjustesIA() {
         if (mode === "free") {
           // Auto Ajustes Básicos Pro — GRATIS: 100% determinista, cero llamadas IA/red.
           const pro = stats ? computeAutoBasicsPro(stats, precisionMode, photo.asShotWB, photo.skinStats) : null;
-          aiValues = pro?.values || {};
-          wb = pro?.wb || null;
+          aiValues = applyEnabledDevelopValues(pro?.values || {}, enabledParams, preferences);
+          wb = applyEnabledWhiteBalance(pro?.wb || null, enabledParams);
           needsCorrection = !!pro?.needsCorrection;
           allZero = !!pro?.allZero;
         } else {
@@ -404,10 +406,13 @@ export default function AjustesIA() {
           const data = await developPhotosVisual({
             photos: [{ id: photo.id, preview_base64: base64ForVisual }],
             preferences,
+            enabledParams,
           });
-          const all = requireVisualValues(data, photo.id, enabledParams);
+          const numericKeys = enabledParams.filter(k => k !== "Temperature" && k !== "Tint");
+          const all = requireVisualValues(data, photo.id, numericKeys);
           aiValues = {};
-          for (const k of enabledParams) if (typeof all[k] === "number") aiValues[k] = all[k];
+          for (const k of numericKeys) if (typeof all[k] === "number") aiValues[k] = all[k];
+          wb = applyEnabledWhiteBalance(computeWhiteBalance(stats, photo.skinStats, photo.asShotWB, precisionMode), enabledParams);
           // needsCorrection: la IA devolvió algún valor no nulo → hay corrección que aplicar.
           // Antes needsCorrection se quedaba siempre false en este modo, por eso el validador
           // mostraba "0 fotos con corrección aplicada" aunque la IA sí hubiera calculado valores.
@@ -419,10 +424,12 @@ export default function AjustesIA() {
           if (errMsg) backendErrors.push(`${photo.file?.name || photo.id}: ${errMsg}`);
         }
         const finalValues = restrictToTechnicalBasics(aiValues, !!presetTemplateText);
+        needsCorrection = Object.values(finalValues).some(v => v !== 0) || !!wb?.write;
+        allZero = !needsCorrection;
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
         xmp = patchXmpAttributes(xmp, finalValues);
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
-        xmp = writeWhiteBalance(xmp, wb);
+        xmp = writeWhiteBalance(xmp, applyEnabledWhiteBalance(wb, enabledParams));
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
           label: photo.colorLabel && photo.colorLabel !== "none" ? lightroomLabelFor(photo.colorLabel) : null,
@@ -579,7 +586,7 @@ export default function AjustesIA() {
     const processed = await runPool(photos, 4, async (photo) => {
       try {
         const p = await ensurePreview(photo);
-        const base64 = p.preview?.base64;
+        const base64 = p.preview?.base64 || (p.preview?.dataUrl ? p.preview.dataUrl.split(",")[1] : null);
         const photometricStart = performance.now();
         const stats = base64 ? await analyzePhotometrics(base64, p.preview?.decodedSource) : null;
         const photometricMs = performance.now() - photometricStart;
@@ -593,7 +600,7 @@ export default function AjustesIA() {
         let xmp = presetTemplateText || DEFAULT_TEMPLATE;
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
-        xmp = writeWhiteBalance(xmp, wb);
+        xmp = writeWhiteBalance(xmp, applyEnabledWhiteBalance(wb, enabledParams));
         xmp = addRatingAndLabel(xmp, {
           rating: photo.rating || 0,
           label: photo.colorLabel && photo.colorLabel !== "none" ? lightroomLabelFor(photo.colorLabel) : null,
@@ -722,7 +729,6 @@ export default function AjustesIA() {
                   type="file"
                   className="hidden"
                   webkitdirectory=""
-                  directory=""
                   multiple
                   onChange={(e) => onPick(e.target.files)}
                 />
@@ -738,7 +744,6 @@ export default function AjustesIA() {
                   type="file"
                   className="hidden"
                   webkitdirectory=""
-                  directory=""
                   multiple
                   onChange={(e) => onPick(e.target.files)}
                 />
