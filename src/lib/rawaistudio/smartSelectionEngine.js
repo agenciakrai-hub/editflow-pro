@@ -1,3 +1,4 @@
+import { applyBurstSelectionPolicy } from "./selectionPolicy";
 // RAW AI Studio — pipeline de CULLING profesional (multicapa, local-first).
 //
 // INGEST → PASS 1 (fast cull cliente: integridad + métricas + EXIF captura + pHash)
@@ -149,7 +150,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   const meta = new Map();
   withPreview.filter((p) => !p.preview || p.preview.isPlaceholder).forEach((p) => {
     meta.set(p.id, {
-      groupId: "corrupt", groupSize: 1, status: "REVIEW",
+      groupId: `unreadable-${p.id}`, groupSize: 1, status: "REVIEW",
       scores: null, rejectReasons: ["PREVIEW_UNAVAILABLE"],
       reason: "Preview no disponible para análisis",
       confidence: 0, category: null, groupRank: 1, complementary: false, category_note: "",
@@ -292,6 +293,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
           const selectable = status === "SELECT" || status === "TOP_PICK";
           if (selectable) keep.add(f.id);
           meta.set(f.id, {
+            poseKey: r?.pose_key || null,
             groupId: groupIdFor(f),
             groupSize: groupSizeFor(),
             status,
@@ -317,6 +319,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
           const f = burst.files[i];
           if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(f.id);
           meta.set(f.id, {
+            poseKey: r?.pose_key || null,
             groupId: groupIdFor(f), groupSize: groupSizeFor(), status: m.status,
             scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
             confidence: m.confidence, confidenceTier: "UNCERTAIN_REVIEW", comparedWith: [],
@@ -357,13 +360,13 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   // expresión, composición, sujeto) y solo rebaja si es un duplicado REAL. Diferencia
   // significativa de momento/expresión/composición → NO se consideran duplicados.
   trace.stages.dedup = { start_ms: Date.now() };
-  await dedupAcrossGroups(keep, meta, withPreview, trace);
+  // La cobertura por ráfaga prevalece: no descartar representantes entre grupos.
   trace.stages.dedup.end_ms = Date.now();
   trace.stages.dedup.duration_ms = trace.stages.dedup.end_ms - trace.stages.dedup.start_ms;
 
   // ORDEN: dedup → cobertura por grupo → mínimo 1 TOP_PICK global.
   trace.stages.coverage = { start_ms: Date.now() };
-  const coverage = ensureCoveragePerGroup(keep, meta, withPreview);
+  const coverage = applyBurstSelectionPolicy(keep, meta, withPreview);
   trace.stages.coverage.end_ms = Date.now();
   trace.stages.coverage.duration_ms = trace.stages.coverage.end_ms - trace.stages.coverage.start_ms;
   trace.stages.coverage.promotions = coverage.promotions?.length || 0;
@@ -558,7 +561,7 @@ function ensureCoveragePerGroup(keep, meta, withPreview) {
 // missingDimensions) que el Editor ignora pero la UI de revisión y el XMP usan.
 // Mantiene el contrato del Editor.
 const STATUS_COLOR = { TOP_PICK: "green", SELECT: "green", REVIEW: "yellow", REJECT: "red" };
-const STATUS_RATING = { TOP_PICK: 5, SELECT: 5, REVIEW: 0, REJECT: 0 };
+const STATUS_RATING = { TOP_PICK: 5, SELECT: 5, REVIEW: 3, REJECT: 0 };
 
 export function buildPhotoFromSelection(p, keep, meta) {
   const m = meta.get(p.id) || {};

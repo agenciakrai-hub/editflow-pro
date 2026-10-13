@@ -95,6 +95,9 @@ function statusRank(s: string): number {
   return s === 'TOP_PICK' ? 0 : s === 'SELECT' ? 1 : s === 'REVIEW' ? 2 : 3;
 }
 
+const SELECTION_POLICY = `
+FINAL POLICY (overrides conflicting rules above): Preserve one representative of EVERY burst even if all images are dark, blurred or eyes closed. Choose by open eyes and natural expression, then focus and moment. Other usable alternatives are REVIEW; clearly unusable/redundant frames are REJECT. Identify subject head/body orientation in EACH ranking as pose_key: use a stable descriptive key (front, left-profile, right-profile, back, etc., including subject identity/composition when it changes). A head turn creates a different pose group even if the background and position do not change. Do not label a pose change as a duplicate. For multiple faces include their orientations in a stable order. Use unknown only if orientation cannot be assessed. For singletons retain the photo and report its defects honestly. Never invent visible facial details.`;
+
 const VALID_STATUS = ['TOP_PICK', 'SELECT', 'REVIEW', 'REJECT'];
 
 function buildRankingEntry(id: string, r: any, category: string | null = null): any {
@@ -124,6 +127,7 @@ function buildRankingEntry(id: string, r: any, category: string | null = null): 
     id,
     rank: typeof r?.rank === 'number' ? r.rank : 999,
     status,
+    pose_key: typeof r?.pose_key === 'string' ? r.pose_key.slice(0, 160) : null,
     reject_reasons: Array.isArray(r?.reject_reasons) ? r.reject_reasons : [],
     note: typeof r?.note === 'string' ? r.note : '',
     scores,
@@ -226,6 +230,7 @@ function rankingItemSchema(): any {
     type: 'object',
     properties: {
       id: { type: 'string' },
+      pose_key: { type: 'string' },
       rank: { type: 'number' },
       status: { type: 'string', enum: VALID_STATUS },
       reject_reasons: { type: 'array', items: { type: 'string' } },
@@ -294,7 +299,7 @@ Return JSON: finalists (array, one entry per candidate id), each with id, rank (
 // Tercera llamada IA entre finalistas. Devuelve byId de los finalistas re-analizados.
 async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>, category: string | null = null, trace?: any): Promise<Record<string, any>> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
-  const prompt = buildFinalPrompt(ids, byIdAll);
+  const prompt = buildFinalPrompt(ids, byIdAll) + SELECTION_POLICY;
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
     prompt,
@@ -351,7 +356,7 @@ function mergeConsolidation(candidateIds: string[], h1: any, h2: any, finals: Re
 // Llama a la IA para un subconjunto de candidatos y devuelve byId + meta del subgrupo.
 async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: Record<string, string>, isSingleton: boolean, trace?: any): Promise<any> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
-  const prompt = buildPrompt(ids, isSingleton);
+  const prompt = buildPrompt(ids, isSingleton) + SELECTION_POLICY;
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
     prompt,
@@ -431,7 +436,7 @@ Return JSON: keep_ids (all SELECT+TOP_PICK ids), category (dominant genre or nul
 
 async function analyzeIndependent(base44: any, key: string, ids: string[], uploaded: Record<string, string>, trace?: any): Promise<any> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
-  const prompt = buildIndependentPrompt(ids);
+  const prompt = buildIndependentPrompt(ids) + SELECTION_POLICY;
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
     prompt,

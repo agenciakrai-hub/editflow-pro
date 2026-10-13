@@ -36,7 +36,7 @@ export const SELECTION_CYCLE = { REVIEW: "SELECT", SELECT: "TOP_PICK", TOP_PICK:
 export function statusMeta(status, rating = 0) {
   const selected = status === "TOP_PICK" || status === "SELECT";
   const n = Number(rating);
-  return { rating: Number.isFinite(n) ? n : 0, color_label: selected ? "green" : "none" };
+  return { rating: Number.isFinite(n) ? n : 0, color_label: selected ? "green" : status === "REVIEW" ? "yellow" : status === "REJECT" ? "red" : "none" };
 }
 
 const PHASH_MATCH_THRESHOLD = 8; // distancia Hamming máxima para considerar coincidencia visual
