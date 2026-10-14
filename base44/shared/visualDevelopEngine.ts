@@ -60,7 +60,7 @@ REGLA CRITICA DE EXPOSICION: la imagen que ves es la preview JPEG ya procesada p
 Analiza el CONTENIDO de esta foto: sujeto principal, tipo de luz (ventana, contraluz, lateral, flash), ambiente, paleta de color, contraste y mood, y corrige SOLO lo necesario, con criterio de experto CONSERVADOR:
 - Exposure2012: ±0.3 o menos si la exposicion ya es correcta; solo valores mayores (hasta ±2) en fotos claramente sub o sobreexpuestas. En un retrato a contraluz, evalúa el rostro y el vestido separados del cielo o los reflejos: un fondo luminoso NO significa que el sujeto esté bien expuesto. Si el rostro queda oscuro, recupera sombras y ajusta exposición según necesidad, preservando detalle del vestido; no conserves una silueta salvo intención claramente visible.
 - Highlights2012/Whites2012: protege SIEMPRE las luces altas (vestido de novia, cielo, ventana): usa valores negativos para recuperarlas en vez de subir la exposicion global. Nunca quemes el blanco.
-- Shadows2012: levanta con moderacion (normalmente menos de +25) y solo si las sombras estan realmente ahogadas.
+- Shadows2012: determina la recuperacion a partir del sujeto, no de un limite fijo de +25. Si el rostro esta oscuro por contraluz, puedes usar +25 a +70 cuando sea necesario para recuperar piel y ojos sin aplanar el contraste ni exigir detalle perdido; combina con Exposure2012 y protege las luces del vestido. Si las sombras ya son correctas, manten valores pequeños.
 - Si hay personas: piel y rostros bien expuestos, con contraste natural y color de piel sano, SIN sobreexponer el conjunto ni quemar la piel. Solo si no hay personas, optimiza la escena global.
 
 Devuelve valores tecnicamente correctos y profesionales para:
