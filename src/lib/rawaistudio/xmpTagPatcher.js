@@ -151,6 +151,14 @@ export function addOrientation(xmpText, rotation) {
 // Si wb.write=false (sin As Shot fiable, confianza < 40% o dead-zone) → no-op: Lightroom
 // conserva el WB nativo de la cámara (o el del preset si lo había).
 export function writeWhiteBalance(xmpText, wb) {
+  if (wb?.auto && wb.write && wb.writeTemperature !== false && wb.writeTint !== false) {
+    let result = xmpText;
+    for (const tag of ["Temperature", "Tint"]) {
+      result = stripCrsChildElement(result, tag);
+      result = updateMainOpening(result, opening => opening.replace(new RegExp(`\\s+crs:${tag}\\s*=\\s*"[^"]*"`, "g"), ""));
+    }
+    return setAttribute(result, "crs", "WhiteBalance", "Auto");
+  }
   if (!wb || !wb.write || wb.finalKelvin == null) return xmpText;
   let result = xmpText;
   if (wb.writeTemperature !== false) result = stripCrsChildElement(result, "Temperature");
@@ -187,4 +195,18 @@ export function validateXmp(xmpText, { rating, label, aiValues, treatment, selec
   if (treatment === "monochrome" && !/crs:ConvertToGrayscale\s*=\s*"True"/.test(xmpText)) issues.push("Tratamiento Monocromo solicitado pero crs:ConvertToGrayscale no está en 'True' en el XMP final");
   if (treatment === "color" && /crs:ConvertToGrayscale\s*=\s*"True"/.test(xmpText)) issues.push("Tratamiento Color solicitado pero el XMP final quedó marcado como monocromo (crs:ConvertToGrayscale=True)");
   return { valid: issues.length === 0, issues };
+}
+// Los ajustes básicos pertenecen al motor de corrección, nunca al preset de estilo.
+export function prepareBasicCorrectionTemplate(xmpText) {
+  const basics = ["Exposure2012", "Contrast2012", "Highlights2012", "Shadows2012", "Whites2012", "Blacks2012", "WhiteBalance", "Temperature", "Tint", "Exposure", "Contrast", "Brightness", "Shadows", "AutoExposure", "AutoContrast", "AutoBrightness", "AutoShadows", "AutoTone"];
+  let result = xmpText;
+  for (const tag of basics) {
+    result = stripCrsChildElement(result, tag);
+    result = updateMainOpening(result, opening => opening.replace(new RegExp(`\\s+crs:${tag}\\s*=\\s*"[^"]*"`, "g"), ""));
+  }
+  // Máscaras heredadas contienen exposición/WB locales y coordenadas de otra toma.
+  for (const tag of ["MaskGroupBasedCorrections", "PaintBasedCorrections", "GradientBasedCorrections", "CircularGradientBasedCorrections"]) {
+    result = result.replace(new RegExp(`<crs:${tag}\\b[^>]*>[\\s\\S]*?</crs:${tag}>`, "g"), "");
+  }
+  return result;
 }

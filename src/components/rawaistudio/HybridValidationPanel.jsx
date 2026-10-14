@@ -92,7 +92,7 @@ export default function HybridValidationPanel({
 
       <p className="text-xs text-muted-foreground">
         Revisa el perfil de sesión generado por la IA y los valores finales aplicados a {samples.length} fotos de
-        muestra. Si el look es coherente, confirma para procesar toda la sesión ({total} fotos) sin más llamadas de IA.
+        muestra. El perfil se adapta al lote ({total} fotos); los contraluces se revisan con llamadas IA adicionales. Las imágenes mostradas son las vistas previas originales, no una simulación del revelado de Lightroom.
       </p>
 
       {/* Perfil de sesión (IA) */}

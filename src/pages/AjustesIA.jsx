@@ -1,3 +1,4 @@
+import { prepareBasicCorrectionTemplate } from "@/lib/rawaistudio/xmpTagPatcher";
 import { applyEnabledDevelopValues, applyEnabledWhiteBalance } from "@/lib/rawaistudio/developControls";
 import { computeWhiteBalance } from "@/lib/rawaistudio/whiteBalanceEngine";
 import { useMemo, useState, useEffect, useRef } from "react";
@@ -20,7 +21,7 @@ import { getSession } from "@/lib/rawaistudio/localSession";
 import { getCachedPreview } from "@/modules/proyectos/lib/previewCache";
 import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
 import { requireVisualValues } from "@/lib/ai/visualDevelopResult";
-import { pickRepresentatives, adaptPhotoWithProfile, buildHybridReference } from "@/lib/rawaistudio/hybridAdaptEngine";
+import { pickRepresentatives, adaptPhotoWithProfile, buildHybridReference, needsHybridVisualReview } from "@/lib/rawaistudio/hybridAdaptEngine";
 import { useToast } from "@/components/ui/use-toast";
 import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelector";
 import ParameterPanel from "@/components/rawaistudio/ParameterPanel";
@@ -426,7 +427,7 @@ export default function AjustesIA() {
         const finalValues = restrictToTechnicalBasics(aiValues, !!presetTemplateText);
         needsCorrection = Object.values(finalValues).some(v => v !== 0) || !!wb?.write;
         allZero = !needsCorrection;
-        let xmp = presetTemplateText || DEFAULT_TEMPLATE;
+        let xmp = prepareBasicCorrectionTemplate(presetTemplateText || DEFAULT_TEMPLATE);
         xmp = patchXmpAttributes(xmp, finalValues);
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = writeWhiteBalance(xmp, applyEnabledWhiteBalance(wb, enabledParams));
@@ -530,7 +531,7 @@ export default function AjustesIA() {
     setSamples([]);
     setAwaitingConfirm(false);
     try {
-      const reps = pickRepresentatives(photos, 8);
+      const reps = pickRepresentatives(photos, 3);
       // Carga previews bajo demanda para los representantes (máx. 8 fotos).
       const repsWithPreview = await Promise.all(reps.map(ensurePreview));
       const repData = repsWithPreview
@@ -564,8 +565,12 @@ export default function AjustesIA() {
         const stats = base64 ? await analyzePhotometrics(base64, photo.preview?.decodedSource) : null;
         timing.photometricMs += performance.now() - photometricStart;
         const adaptationStart = performance.now();
-        const { values: rawValues, wb: sampleWb } = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        let { values: rawValues, wb: sampleWb } = adaptPhotoWithProfile(stats, sessionProfile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
         timing.adaptationMs += performance.now() - adaptationStart;
+        if (needsHybridVisualReview(stats)) {
+          const result = await developPhotosVisual({ photos: [{ id: photo.id, preview_base64: base64 }], preferences, enabledParams });
+          rawValues = requireVisualValues(result, photo.id, enabledParams.filter(k => k !== "Temperature" && k !== "Tint"));
+        }
         const values = restrictToTechnicalBasics(rawValues, !!presetTemplateText);
         sampleOut.push({ id: photo.id, filename: photo.file.name, preview: base64, values, wb: sampleWb });
       }
@@ -590,7 +595,7 @@ export default function AjustesIA() {
     setProgress({ done: 0, total: photos.length });
     let completed = 0;
     const hybridErrors = [];
-    const processed = await runPool(photos, 4, async (photo) => {
+    const processed = await runPool(photos, 1, async (photo) => {
       try {
         const p = await ensurePreview(photo);
         const base64 = p.preview?.base64 || (p.preview?.dataUrl ? p.preview.dataUrl.split(",")[1] : null);
@@ -599,13 +604,17 @@ export default function AjustesIA() {
         const stats = await analyzePhotometrics(base64, p.preview?.decodedSource);
         const photometricMs = performance.now() - photometricStart;
         const adaptationStart = performance.now();
-        const { values: rawValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
+        let { values: rawValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
         const adaptationMs = performance.now() - adaptationStart;
+        if (needsHybridVisualReview(stats)) {
+          const result = await developPhotosVisual({ photos: [{ id: photo.id, preview_base64: base64 }], preferences, enabledParams });
+          rawValues = requireVisualValues(result, photo.id, enabledParams.filter(k => k !== "Temperature" && k !== "Tint"));
+        }
         const aiValues = restrictToTechnicalBasics(rawValues, !!presetTemplateText);
-        const needsCorrection = Object.values(aiValues).some((v) => v) || (wb?.write && Math.abs(wb.temperatureDelta) > 0);
+        const needsCorrection = Object.values(aiValues).some((v) => v) || !!wb?.write;
         const allZero = !needsCorrection;
         const xmpStart = performance.now();
-        let xmp = presetTemplateText || DEFAULT_TEMPLATE;
+        let xmp = prepareBasicCorrectionTemplate(presetTemplateText || DEFAULT_TEMPLATE);
         xmp = patchXmpAttributes(xmp, aiValues);
         xmp = sanitizeTreatment(xmp, treatment, photo.cameraInfo);
         xmp = writeWhiteBalance(xmp, applyEnabledWhiteBalance(wb, enabledParams));
@@ -979,7 +988,8 @@ export default function AjustesIA() {
                   La IA que trabaja es SIEMPRE el proveedor activo por herramienta AJUSTES{ajustesProviderName ? ` (${ajustesProviderName})` : ""}: analiza
                   solo unas pocas fotos representativas (1 llamada) y genera un perfil de sesión con el look coherente.
                   El motor local adapta ese perfil a cada foto corrigiendo exposición/luces/sombras según su histograma
-                  real. Muy económico: 1 llamada de IA para toda la sesión, no 1 por foto. Selecciona parámetros y
+                  real. Los contraluces y escenas de alto contraste se revisan individualmente con IA para proteger al sujeto;
+                  esas fotos requieren llamadas adicionales. Selecciona parámetros y
                   preferencia (0 = sin desplazar).
                 </p>
                 {editStyleMode === "preset" && (
@@ -989,8 +999,8 @@ export default function AjustesIA() {
                       onLoaded={(text, file) => { setPresetTemplateText(text); setPresetFile(file); }}
                     />
                     <p className="mt-2 text-xs text-muted-foreground">
-                      Opcional: el preset aporta todo lo creativo (temperatura, tint, vibración, estilo…) como plantilla
-                      base; la IA solo rellena los básicos sobre él. No afecta al cálculo del revelado IA.
+                      El preset aporta curvas, HSL, color y detalle. Sus ajustes básicos y máscaras locales se excluyen:
+                      exposición, luces, sombras, blancos, negros, contraste y balance de blancos pertenecen a la corrección.
                     </p>
                   </>
                 )}

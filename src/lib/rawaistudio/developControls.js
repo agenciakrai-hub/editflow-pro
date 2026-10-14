@@ -15,6 +15,7 @@ export function applyEnabledWhiteBalance(wb, enabled) {
   if (!wb) return null;
   const writeTemperature = enabled.includes('Temperature');
   const writeTint = enabled.includes('Tint');
+  if (wb.auto) return { ...wb, write: !!wb.write && writeTemperature && writeTint, writeTemperature, writeTint };
   const changed = (writeTemperature && Math.abs(wb.temperatureDelta || 0) > 20) || (writeTint && Math.abs(wb.tintDelta || 0) > 2);
   return { ...wb, write: !!wb.write && changed, writeTemperature, writeTint };
 }

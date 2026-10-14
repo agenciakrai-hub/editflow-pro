@@ -3,6 +3,7 @@
 import React from "react";
 
 export default function WbBreakdown({ wb }) {
+  if (wb?.auto && wb.write) return <span className="text-[10px] font-mono text-foreground">WB: automático de Lightroom sobre el RAW · se calcula al importar los ajustes</span>;
   if (!wb || !wb.asShotKelvin) {
     return (
       <span className="text-[10px] font-mono text-muted-foreground/70">

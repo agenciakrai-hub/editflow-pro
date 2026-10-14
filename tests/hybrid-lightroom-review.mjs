@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
-const r=await build({stdin:{contents:`export {adaptPhotoWithProfile,buildHybridReference} from './src/lib/rawaistudio/hybridAdaptEngine.js';export {computeWhiteBalance} from './src/lib/rawaistudio/whiteBalanceEngine.js';export {writeWhiteBalance,patchXmpAttributes} from './src/lib/rawaistudio/xmpTagPatcher.js';`,resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
+const r=await build({stdin:{contents:`export {adaptPhotoWithProfile,buildHybridReference,needsHybridVisualReview} from './src/lib/rawaistudio/hybridAdaptEngine.js';export {computeWhiteBalance} from './src/lib/rawaistudio/whiteBalanceEngine.js';export {writeWhiteBalance,patchXmpAttributes,prepareBasicCorrectionTemplate} from './src/lib/rawaistudio/xmpTagPatcher.js';`,resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
 const m=await import('data:text/javascript;base64,'+Buffer.from(r.outputFiles[0].text).toString('base64'));
 const stats={p1:10,p5:30,p25:65,p50:80,p75:95,p95:180,p99:220,clipHighlightPct:0,clipShadowPct:0};
 const profile={base_recipe:{Exposure2012:0.4},technical_reference:m.buildHybridReference([stats,stats])};
@@ -17,3 +17,22 @@ const x='<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw
 assert.match(m.writeWhiteBalance(m.patchXmpAttributes(x,{Exposure2012:0.4}),wb),/Exposure2012="\+0.40"/);
 assert.match(m.writeWhiteBalance(x,wb),new RegExp(`Tint="${wb.finalTint}"`));
 console.log('PASS hybrid reference, exposure direction, preferences once, WB direction and unknown baseline, XMP values');
+
+const autoWb=m.adaptPhotoWithProfile(stats,profile,'balanced',{},['Temperature','Tint']).wb;
+assert.equal(autoWb.auto,true);
+const autoXmp=m.writeWhiteBalance('<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Temperature="2500" crs:Tint="-30"/>',autoWb);
+assert.match(autoXmp,/WhiteBalance="Auto"/);assert.doesNotMatch(autoXmp,/crs:(Temperature|Tint)=/);
+console.log('PASS: Lightroom RAW automatic WB without guessed Kelvin or stale preset values');
+
+assert.equal(m.needsHybridVisualReview({p25:59,p95:250}),true);
+assert.equal(m.needsHybridVisualReview({p25:110,p95:200}),false);
+const preset='<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="-2" crs:Temperature="2500" crs:Tint="-50" crs:SaturationAdjustmentRed="-11"><crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li><rdf:Description crs:LocalExposure2012="-0.4"/></rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description>';
+const clean=m.prepareBasicCorrectionTemplate(preset);
+assert.doesNotMatch(clean,/Exposure2012|Temperature|Tint|MaskGroupBasedCorrections|LocalExposure/);
+assert.match(clean,/SaturationAdjustmentRed="-11"/);assert.match(clean,/ToneCurvePV2012/);
+assert.match(m.patchXmpAttributes(clean,{Exposure2012:0.5}),/Exposure2012="\+0.50"/);
+const b=await build({stdin:{contents:`export {utf8Base64} from './base44/shared/utf8Base64.ts';`,resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
+const utf=await import('data:text/javascript;base64,'+Buffer.from(b.outputFiles[0].text).toString('base64'));
+const xml='<crs:CorrectionName>Máscara · edición</crs:CorrectionName>';
+assert.equal(Buffer.from(utf.utf8Base64(xml),'base64').toString('utf8'),xml);
+console.log('PASS: backlight visual review, preset isolates basic settings and masks, preserves style, UTF-8 plugin sidecars');

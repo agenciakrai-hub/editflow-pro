@@ -4,6 +4,7 @@
 // called by the native Lightroom plugin over HTTP with the X-LR-Token header.
 import { createClientFromRequest } from "npm:@base44/sdk@0.8.40";
 import JSZip from "npm:jszip@3.10.1";
+import { utf8Base64 } from "../../shared/utf8Base64.ts";
 import { generateXMP, LEEME_TXT } from "../../shared/xmp.ts";
 
 export default async function (req) {
@@ -264,7 +265,7 @@ async function doLrPending(req) {
   const out = jobs.map((j) => ({
     id: j.id,
     filename: j.filename,
-    xmp_b64: btoa(j.xmp_content || ""),
+    xmp_b64: utf8Base64(j.xmp_content || ""),
   }));
   return Response.json({ jobs: out });
 }

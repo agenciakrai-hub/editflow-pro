@@ -90,7 +90,19 @@ export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced"
   }
   // WB técnico per-foto sobre As Shot (no sobre el perfil IA de sesión).
   let wb = computeWhiteBalance(stats, skinStats, asShotWB, precisionMode);
+  // Sin Kelvin/matiz calibrados, Lightroom calcula el WB desde el RAW al leer Auto.
+  // Nunca inferir Kelvin absolutos desde los colores de un JPEG ya revelado.
+  if (!wb.write && allKeys.includes("Temperature") && allKeys.includes("Tint") &&
+      (!Number.isFinite(asShotWB?.kelvin) || !Number.isFinite(asShotWB?.tint) || asShotWB?.source === "dng-AsShotNeutral")) {
+    wb = { ...wb, auto: true, write: true, source: "lightroom-auto", reason: "Balance automático calculado por Lightroom sobre el RAW" };
+  }
   const wbEnabled = allKeys.includes("Temperature") || allKeys.includes("Tint");
   if (!wbEnabled) wb = { ...wb, write: false, reason: "WB desactivado por el usuario" };
   return { values: final, wb: applyEnabledWhiteBalance(wb, allKeys) };
+}
+// Un histograma bimodal no permite saber si el sujeto está en sombra o es una silueta.
+// Esas tomas requieren análisis visual propio, no heredar el perfil medio del lote.
+export function needsHybridVisualReview(stats) {
+  return !!stats && Number.isFinite(stats.p25) && Number.isFinite(stats.p95) &&
+    stats.p25 < 85 && stats.p95 > 225 && stats.p95 - stats.p25 > 145;
 }
