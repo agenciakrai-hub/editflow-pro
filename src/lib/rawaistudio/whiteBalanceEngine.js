@@ -36,7 +36,7 @@ const greennessOf = (r, g, b) => (g - (r + b) / 2) / Math.max(1, (r + g + b) / 3
 
 export function computeWhiteBalance(stats, skinStats, asShotWB, mode = "balanced") {
   // Sin As Shot fiable (RAW propietario) → no escribir WB. Lightroom conserva el original.
-  if (!asShotWB || !asShotWB.kelvin) {
+  if (!asShotWB || !Number.isFinite(asShotWB.kelvin) || !Number.isFinite(asShotWB.tint) || asShotWB.source === "dng-AsShotNeutral") {
     return noWrite("none", "Sin As Shot WB fiable (RAW propietario)", asShotWB);
   }
 
@@ -58,26 +58,8 @@ export function computeWhiteBalance(stats, skinStats, asShotWB, mode = "balanced
     return build(warmDev, greenDev, conf, "neutral", asShotWB, skinStats);
   }
 
-  // 3. SEÑAL RGB global — p95 por canal, excluyendo canales con clipping. Respaldo.
-  const ch = stats?.channels;
-  if (ch && ch.r && ch.g && ch.b) {
-    const CLIP = 0.03;
-    const usable = [];
-    if (ch.r.clipPct < CLIP) usable.push("r");
-    if (ch.g.clipPct < CLIP) usable.push("g");
-    if (ch.b.clipPct < CLIP) usable.push("b");
-    if (usable.length >= 2) {
-      const p95 = { r: ch.r.p95, g: ch.g.p95, b: ch.b.p95 };
-      const ref = usable.reduce((s, k) => s + p95[k], 0) / usable.length;
-      const warmDev = warmthOf(p95.r, p95.g, p95.b);
-      const greenDev = greennessOf(p95.r, p95.g, p95.b);
-      const brightConf = clamp((ref - 120) / 80, 0, 1);
-      const clipPenalty = usable.length === 3 ? 1 : 0.7;
-      const conf = brightConf * clipPenalty * 55; // global capped lower (menos fiable que piel/neutros)
-      return build(warmDev, greenDev, conf, "global", asShotWB, skinStats);
-    }
-  }
-
+  // Percentiles globales de canales distintos no representan un mismo neutro:
+  // vegetación, cielo o paredes de color no son una referencia de WB.
   // 4. Sin referencia fiable → no corregir.
   return noWrite("none", "Sin referencia fiable", asShotWB);
 }
@@ -85,7 +67,7 @@ export function computeWhiteBalance(stats, skinStats, asShotWB, mode = "balanced
 function build(warmDev, greenDev, confidence, source, asShotWB, skinStats) {
   let dK = 0, dT = 0;
   if (Math.abs(warmDev) > DEAD_WARMTH) dK = -warmDev * KELVIN_GAIN * (confidence / 100);
-  if (Math.abs(greenDev) > DEAD_GREENNESS) dT = -greenDev * TINT_GAIN * (confidence / 100);
+  if (Math.abs(greenDev) > DEAD_GREENNESS) dT = greenDev * TINT_GAIN * (confidence / 100);
 
   // Techo ±1500 K / ±40 tint.
   dK = clamp(dK, -MAX_DELTA_KELVIN, MAX_DELTA_KELVIN);

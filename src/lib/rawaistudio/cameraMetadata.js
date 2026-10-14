@@ -182,7 +182,7 @@ export function readAsShotWhiteBalance(bytes) {
     if (Number.isFinite(x) && Number.isFinite(y) && x > 0 && y > 0 && x < 1 && y < 1) {
       const kelvin = xyToKelvin(x, y);
       if (Number.isFinite(kelvin) && kelvin > 1500 && kelvin < 12000) {
-        return { kelvin: Math.round(kelvin), tint: 0, source: "dng-AsShotWhiteXY" };
+        return { kelvin: Math.round(kelvin), tint: null, source: "dng-AsShotWhiteXY" };
       }
     }
   }
@@ -196,7 +196,7 @@ export function readAsShotWhiteBalance(bytes) {
     if (Number.isFinite(r) && Number.isFinite(g) && Number.isFinite(b) && g > 0) {
       const kelvin = neutralToKelvin(r / g, 1, b / g);
       if (Number.isFinite(kelvin) && kelvin > 1500 && kelvin < 12000) {
-        return { kelvin: Math.round(kelvin), tint: 0, source: "dng-AsShotNeutral" };
+        return { kelvin: Math.round(kelvin), tint: null, source: "dng-AsShotNeutral" };
       }
     }
   }

@@ -53,6 +53,16 @@ export function pickRepresentatives(photos, max = 8) {
 //   stats     → salida de analyzePhotometrics (o null si no hay preview)
 //   profile   → { base_recipe: { [key]: number }, ... }  (de generateSessionProfile)
 //   enabledParams → lista de claves a rellenar (filtro de la UI); si se omite, todas.
+export function buildHybridReference(allStats, mode = "balanced") {
+  const samples = allStats.filter(Boolean).map(stats => computeTechnicalBaseline(stats, mode).values);
+  if (!samples.length) throw new Error("No se pudo medir la exposición de las fotos representativas");
+  return Object.fromEntries(EXPOSURE_TIED_KEYS.map(key => {
+    const sorted = samples.map(sample => sample[key]).filter(Number.isFinite).sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return [key, sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2];
+  }));
+}
+
 export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced", preferences = {}, enabledParams = null, asShotWB = null, skinStats = null) {
   const recipe = (profile && profile.base_recipe) || {};
   const allKeys = enabledParams != null ? enabledParams : Object.keys(RANGES);
@@ -66,7 +76,11 @@ export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced"
     let val;
     if (EXPOSURE_TIED_KEYS.includes(key) && local) {
       // El motor local refina la corrección técnica por foto sobre la dirección base.
-      val = base + (local.values[key] || 0);
+      const reference = profile?.technical_reference?.[key];
+      // El perfil ya corrige la sesión: añadir solo la diferencia respecto a sus representantes.
+      val = Number.isFinite(reference) ? base + (local.values[key] || 0) - reference : base;
+      // No oscurecer una toma claramente subexpuesta por arrastrar un perfil de otra luz.
+      if (key === "Exposure2012" && local.values[key] > 0 && val < 0) val = local.values[key];
     } else {
       // Claves creativas: uniformes para toda la sesión (look coherente).
       val = base;

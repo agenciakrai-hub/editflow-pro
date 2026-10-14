@@ -20,7 +20,7 @@ import { getSession } from "@/lib/rawaistudio/localSession";
 import { getCachedPreview } from "@/modules/proyectos/lib/previewCache";
 import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
 import { requireVisualValues } from "@/lib/ai/visualDevelopResult";
-import { pickRepresentatives, adaptPhotoWithProfile } from "@/lib/rawaistudio/hybridAdaptEngine";
+import { pickRepresentatives, adaptPhotoWithProfile, buildHybridReference } from "@/lib/rawaistudio/hybridAdaptEngine";
 import { useToast } from "@/components/ui/use-toast";
 import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelector";
 import ParameterPanel from "@/components/rawaistudio/ParameterPanel";
@@ -546,14 +546,20 @@ export default function AjustesIA() {
         return;
       }
       const data = await generateSessionProfile({ representatives: repData, preferences });
-      const sessionProfile = data?.profile || null;
+      if (!data?.profile?.base_recipe) throw new Error("El proveedor no devolvió un perfil de sesión válido");
+      const representativeStats = await Promise.all(repsWithPreview.map(async p => {
+        const base64 = p.preview?.base64 || p.preview?.dataUrl?.split(",")[1];
+        if (!base64) return null;
+        return analyzePhotometrics(base64, p.preview?.decodedSource);
+      }));
+      const sessionProfile = { ...data.profile, technical_reference: buildHybridReference(representativeStats, precisionMode) };
       setProfile(sessionProfile);
       // 5 fotos de muestra (muestreo uniforme) con sus valores finales adaptados localmente.
       const samplePhotos = pickRepresentatives(photos, 5);
       const samplesWithPreview = await Promise.all(samplePhotos.map(ensurePreview));
       const sampleOut = [];
       for (const photo of samplesWithPreview) {
-        const base64 = photo.preview?.base64;
+        const base64 = photo.preview?.base64 || photo.preview?.dataUrl?.split(",")[1];
         const photometricStart = performance.now();
         const stats = base64 ? await analyzePhotometrics(base64, photo.preview?.decodedSource) : null;
         timing.photometricMs += performance.now() - photometricStart;
@@ -583,12 +589,14 @@ export default function AjustesIA() {
     setResults([]);
     setProgress({ done: 0, total: photos.length });
     let completed = 0;
+    const hybridErrors = [];
     const processed = await runPool(photos, 4, async (photo) => {
       try {
         const p = await ensurePreview(photo);
         const base64 = p.preview?.base64 || (p.preview?.dataUrl ? p.preview.dataUrl.split(",")[1] : null);
         const photometricStart = performance.now();
-        const stats = base64 ? await analyzePhotometrics(base64, p.preview?.decodedSource) : null;
+        if (!base64) throw new Error("Sin vista previa fiable para calcular los ajustes");
+        const stats = await analyzePhotometrics(base64, p.preview?.decodedSource);
         const photometricMs = performance.now() - photometricStart;
         const adaptationStart = performance.now();
         const { values: rawValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
@@ -611,8 +619,8 @@ export default function AjustesIA() {
         timing.adaptationMs += adaptationMs;
         timing.xmpMs += xmpMs;
         return { filename: photo.file.name, xmp, needsCorrection, allZero, values: aiValues, wb };
-      } catch {
-        // Continúa con la siguiente aunque una falle.
+      } catch (error) {
+        hybridErrors.push(`${photo.file?.name || photo.id}: ${error.message || "No se pudo calcular el revelado"}`);
         return null;
       }
     }, () => {
@@ -620,6 +628,7 @@ export default function AjustesIA() {
       setProgress({ done: completed, total: photos.length });
     });
     const out = processed.filter(Boolean);
+    if (hybridErrors.length) toast({ title: `${hybridErrors.length} fotos sin ajustes`, description: hybridErrors.slice(0, 3).join(" · "), variant: "destructive" });
     setMetrics((previous) => ({ ...(previous || {}), ...timing, totalMs: performance.now() - totalStart, photoCount: out.length }));
     setResults(out);
     setBusy(false);
