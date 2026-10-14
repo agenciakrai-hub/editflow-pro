@@ -179,6 +179,7 @@ async function runSelection(job, marked, onComplete, onError) {
         return {
           id: it.id,
           file: it.file,
+          fingerprint: it.fingerprint,
           preview,
           phash: it.phash || (it.fingerprint?.fingerprint_hash ? BigInt("0x" + it.fingerprint.fingerprint_hash) : null),
           captureTime: it.captureTime ?? it.fingerprint?.capture_time ?? null,

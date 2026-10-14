@@ -1,6 +1,24 @@
 // Una principal por ráfaga y pose; las alternativas válidas quedan para revisión.
 export function applyBurstSelectionPolicy(keep, meta, photos) {
   const photosById = new Map(photos.map(p => [p.id, p]));
+  // RAW+JPEG de la misma exposición son dos archivos, pero no dos poses.
+  // Exige nombre base, carpeta y fecha exacta; no fusiona fotos visualmente parecidas.
+  const frames = new Map();
+  for (const photo of photos) {
+    const name = photo.file?.name || photo.fingerprint?.filename || '';
+    const time = photo.captureTime || photo.fingerprint?.capture_time;
+    if (!name || !time || !meta.has(photo.id)) continue;
+    const path = photo.fingerprint?.relative_path || photo.file?.webkitRelativePath || name;
+    const key = JSON.stringify([path.replace(/\.[^.]+$/, '').toLowerCase(), String(time)]);
+    if (!frames.has(key)) frames.set(key, []);
+    frames.get(key).push({photo, name});
+  }
+  for (const frame of frames.values()) {
+    if (frame.length < 2) continue;
+    const raw = frame.find(p => /\.(raf|dng|cr[23]|nef|arw|orf|rw2)$/i.test(p.name));
+    const pose = meta.get((raw || frame[0]).photo.id)?.poseKey;
+    if (pose) for (const p of frame) meta.get(p.photo.id).poseKey = pose;
+  }
   const groups = new Map();
   const segments = new Map();
   // Orden de captura, independiente del orden en que terminen las peticiones.

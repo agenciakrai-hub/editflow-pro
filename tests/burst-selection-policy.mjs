@@ -30,3 +30,8 @@ new Function('fb','burst','keep','meta','groupIdFor','groupSizeFor',engine.slice
 );
 applyBurstSelectionPolicy(fallbackKeep,fallbackMeta,[{id:'offline'}]);assert.ok(fallbackKeep.has('offline'));
 console.log('PASS: actual provider-error recovery block does not crash and keeps a representative');
+
+const copies=[{id:'jpg',file:{name:'same.jpg'},captureTime:1000},{id:'raw',file:{name:'same.RAF'},captureTime:1000},{id:'next',file:{name:'next.RAF'},captureTime:1100}];
+const copyMeta=new Map([['jpg',{groupId:'burst',poseKey:'left-profile',status:'SELECT',scores:{overall:80}}],['raw',{groupId:'burst',poseKey:'front',status:'SELECT',scores:{overall:85}}],['next',{groupId:'burst',poseKey:'front',status:'SELECT',scores:{overall:90}}]]);
+const copyKeep=new Set();applyBurstSelectionPolicy(copyKeep,copyMeta,copies);assert.deepEqual([...copyKeep],['next']);assert.equal(copyMeta.get('jpg').poseKey,'front');
+console.log('PASS: same-exposure RAW+JPEG cannot invent separate head-turn groups');
