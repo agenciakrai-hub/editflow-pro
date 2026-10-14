@@ -701,7 +701,10 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     const isLastModel = mi === attemptChain.length - 1;
     if (opts._trace) opts._trace.model = model;
     console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${mi + 1}/${fullChain.length})${mi > 0 ? " failover-modelo" : ""}${auto ? " auto-descubierto" : ""}`);
-    const content: any[] = [{ type: "text", text: opts.prompt }];
+    const jsonInstruction = kraiSession && opts.response_json_schema
+      ? "\n\nFORMATO OBLIGATORIO: responde únicamente con un objeto JSON válido que contenga todos los candidatos solicitados. Sin introducción, explicaciones fuera del JSON ni bloques Markdown. No respondas con una confirmación de que vas a analizar: entrega el análisis final en JSON."
+      : "";
+    const content: any[] = [{ type: "text", text: opts.prompt + jsonInstruction }];
     for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
     const body: any = { model, messages: [{ role: "user", content }], stream: false };
     // response_format: cuando el llamador pide un JSON schema, se fuerza al modelo a

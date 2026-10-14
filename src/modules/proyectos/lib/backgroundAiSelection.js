@@ -10,7 +10,7 @@
 // en vivo, o los resultados ya guardados si terminó mientras estaba fuera.
 
 import { selectBursts } from "@/lib/ai/aiGateway";
-import { statusMeta } from "./projectFingerprint";
+import { selectionUpdates } from "./selectionPersistence";
 import { getCachedPreviews } from "./previewCache";
 import {
   listFingerprintsByFolder,
@@ -115,8 +115,17 @@ async function runSelection(job, marked, onComplete, onError) {
       stage: "e2",
       stats: { photo_count: marked.length },
     });
+    if (!j?.id) throw new Error("El servidor no devolvió la identidad del trabajo");
     selJobId = j.id;
-  } catch {}
+    job.historyId = selJobId;
+  } catch (error) {
+    job.status = "failed";
+    job.error = `No se pudo registrar la selección: ${error?.message || "Error"}`;
+    notify(job);
+    if (onError) onError(new Error(job.error));
+    setTimeout(() => { if (activeJobs.get(key) === job) activeJobs.delete(key); }, 120000);
+    return;
+  }
 
   // Marca la carpeta como "selección en curso" para que la página del proyecto
   // refleje el estado aunque el usuario no esté en la página de la carpeta.
@@ -142,9 +151,12 @@ async function runSelection(job, marked, onComplete, onError) {
       chunks.push(sorted.slice(i, i + CHUNK_SIZE));
     }
 
+    const savedFingerprints = await listFingerprintsByFolder(job.folderId);
+    const savedIds = new Set();
     const allKeep = new Set();
     const allMeta = new Map();
     let lastTrace = null;
+    const traceChunks = [];
     let photosDone = 0;
 
     for (let ci = 0; ci < chunks.length; ci++) {
@@ -154,7 +166,7 @@ async function runSelection(job, marked, onComplete, onError) {
       const chunkHashes = chunk.map((it) => it.fingerprint?.fingerprint_hash).filter(Boolean);
       let previewByHash = new Map();
       if (chunkHashes.length) {
-        try { previewByHash = await getCachedPreviews(chunkHashes); } catch {}
+        try { previewByHash = await getCachedPreviews(chunkHashes, { includeHiRes: false }); } catch {}
       }
       const aiItems = chunk.map((it) => {
         const pv = previewByHash.get(it.fingerprint?.fingerprint_hash);
@@ -182,12 +194,27 @@ async function runSelection(job, marked, onComplete, onError) {
           job.done = Math.min(marked.length, photosBefore + Math.round((d / t) * chunk.length));
         }
         notify(job);
+      }, {
+        shouldCancel: () => job.canceled,
+        onBatch: async ({ meta: batchMeta }) => {
+          if (job.canceled) return;
+          const updates = selectionUpdates(batchMeta, marked, savedFingerprints);
+          if (updates.length < batchMeta.size) throw new Error("No se pudo emparejar toda la ráfaga con las fotos guardadas");
+          await bulkUpdateFingerprints(updates);
+          for (const [id, result] of batchMeta) {
+            savedIds.add(id);
+            const selected = result.status === "SELECT" || result.status === "TOP_PICK";
+            job.results.set(id, { status: result.status, rating: selected ? 5 : result.status === "REJECT" ? 0 : 3, aiReview: !selected && result.status !== "REJECT" });
+          }
+          notify(job);
+          await base44.entities.AlbumAISelection.update(selJobId, { stage_progress: { photos_done: savedIds.size } });
+        },
       });
       if (job.canceled) return;
 
       for (const id of keep) allKeep.add(id);
       for (const [id, m] of meta) allMeta.set(id, m);
-      if (trace) lastTrace = trace;
+      if (trace) { lastTrace = trace; traceChunks.push(trace); }
       photosDone += chunk.length;
       job.done = Math.min(marked.length, photosDone);
       notify(job);
@@ -198,7 +225,6 @@ async function runSelection(job, marked, onComplete, onError) {
     // Construye el mapa de resultados: photoId -> { status, rating, aiReview }
     // y fingerprint_hash -> resultado (para auto-guardar en la BD).
     const resultsById = new Map();
-    const resultsByHash = new Map();
     for (const it of marked) {
       const m = allMeta.get(it.id);
       if (!m) continue;
@@ -208,53 +234,25 @@ async function runSelection(job, marked, onComplete, onError) {
       const rating = aiSelected ? 5 : review ? 3 : 0;
       const result = { status, rating, aiReview: review };
       resultsById.set(it.id, result);
-      const hash = it.fingerprint?.fingerprint_hash;
-      if (hash) resultsByHash.set(hash, result);
+
     }
     job.results = resultsById;
+    const updates = selectionUpdates(allMeta, marked, savedFingerprints);
+    if (updates.length < marked.length) throw new Error("La selección terminó sin guardar todas las fotos");
+    // Cobertura excepcional de previews no disponibles y coherencia final del lote.
+    await bulkUpdateFingerprints(updates);
+    const selCount = updates.filter(u => u.rating === 5).length;
+    await updateFolder(job.folderId, { selection_status: selCount > 0 ? "completed" : "pending", last_modified: new Date().toISOString() });
+    await base44.entities.AlbumAISelection.update(selJobId, {
+      status: "completed", stage: "done", stage_progress: { photos_done: savedIds.size },
+      stats: { photo_count: marked.length, provider_used: lastTrace?.provider || null },
+    });
     job.status = "completed";
     notify(job);
 
-    // Actualiza el job en la base de datos.
-    if (selJobId) {
-      try {
-        await base44.entities.AlbumAISelection.update(selJobId, {
-          status: "completed",
-          stage: "done",
-          stats: { photo_count: marked.length, provider_used: lastTrace?.provider || null },
-        });
-      } catch {}
-    }
-
-    // AUTO-GUARDA los resultados en los fingerprints: el usuario no necesita volver
-    // a la página ni pulsar «Guardar» para que la selección IA persista. Empareja
-    // por fingerprint_hash (no por id) para funcionar tanto si las fotos vinieron
-    // de la BD como del backgroundProcessor.
-    try {
-      const fps = await listFingerprintsByFolder(job.folderId);
-      const updates = [];
-      for (const fp of fps) {
-        const result = resultsByHash.get(fp.fingerprint_hash);
-        if (!result) continue;
-        const sm = statusMeta(result.status, result.rating);
-        updates.push({
-          id: fp.id,
-          selection_status: result.status,
-          rating: result.rating,
-          color_label: result.aiReview ? "yellow" : sm.color_label,
-        });
-      }
-      if (updates.length > 0) await bulkUpdateFingerprints(updates);
-      const selCount = updates.filter((u) => u.selection_status === "SELECT" || u.selection_status === "TOP_PICK").length;
-      await updateFolder(job.folderId, {
-        selection_status: selCount > 0 ? "completed" : "pending",
-        last_modified: new Date().toISOString(),
-      }).catch(() => {});
-    } catch {}
-
     // Guarda la traza de la ejecución en el proyecto.
     if (lastTrace && job.projectId) {
-      updateProject(job.projectId, { ai_config_snapshot: { selection_trace: lastTrace } }).catch(() => {});
+      updateProject(job.projectId, { ai_config_snapshot: { selection_trace: { ...lastTrace, photo_count: marked.length, chunks: traceChunks } } }).catch(() => {});
     }
 
     if (onComplete) try { onComplete(snapshotJob(job)); } catch {}
@@ -282,7 +280,7 @@ async function runSelection(job, marked, onComplete, onError) {
   // Limpia el job después de 2 minutos (tiempo suficiente para que el componente
   // lo lea al volver, pero sin retenerlo indefinidamente).
   setTimeout(() => {
-    activeJobs.delete(key);
+    if (activeJobs.get(key) === job) activeJobs.delete(key);
   }, 120000);
 }
 
@@ -296,11 +294,12 @@ export function cancelSelection(projectId, folderId) {
   job.canceled = true;
   job.status = "canceled";
   notify(job);
+  if (job.historyId) base44.entities.AlbumAISelection.update(job.historyId, { status: "canceled", error: "Cancelado por el usuario" }).catch(() => {});
   // Revierte el estado de selección de la carpeta al cancelar.
   updateFolder(job.folderId, {
     selection_status: "pending",
     last_modified: new Date().toISOString(),
   }).catch(() => {});
   // Limpia inmediatamente: no retiene un job cancelado en memoria.
-  setTimeout(() => { activeJobs.delete(key); }, 5000);
+  setTimeout(() => { if (activeJobs.get(key) === job) activeJobs.delete(key); }, 5000);
 }

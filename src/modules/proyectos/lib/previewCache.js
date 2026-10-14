@@ -41,7 +41,7 @@ export async function cachePreviews(entries) {
 }
 
 // hashes: string[] -> Map<hash, { dataUrl, hiResDataUrl }>
-export async function getCachedPreviews(hashes) {
+export async function getCachedPreviews(hashes, { includeHiRes = true } = {}) {
   const db = await openDb();
   const map = new Map();
   await new Promise((resolve, reject) => {
@@ -55,7 +55,7 @@ export async function getCachedPreviews(hashes) {
         // Compatibilidad: la caché v2 guardaba un string suelto (solo dataUrl).
         // La v3 guarda { lo, hi }. Se normalizan ambos al formato esperado.
         if (typeof r.result === "string") map.set(h, { dataUrl: r.result, hiResDataUrl: null });
-        else map.set(h, { dataUrl: r.result.lo, hiResDataUrl: r.result.hi || null });
+        else map.set(h, { dataUrl: r.result.lo, hiResDataUrl: includeHiRes ? (r.result.hi || null) : null });
       };
     }
     tx.oncomplete = resolve;

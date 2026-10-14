@@ -127,7 +127,7 @@ function technicalFallbackForGroup(group) {
 }
 
 // withPreview -> { keep: Set<id>, meta: Map<id, {...}> }
-export async function runAiBurstSelection(withPreview, onProgress) {
+export async function runAiBurstSelection(withPreview, onProgress, { shouldCancel = () => false, onBatch } = {}) {
   const trace = {
     started_at: new Date().toISOString(),
     started_ms: Date.now(),
@@ -164,10 +164,9 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   // por su mérito propio en una sola llamada, reduciendo el nº de llamadas de N (una por
   // foto) a N/INDEPENDENT_BATCH. Se preserva el groupId original de cada singleton para
   // que la cobertura/dedup sigan funcionando por escena.
-  // Singletons agrupados en lotes más grandes: menos llamadas IA (menos HTTP round trips)
-  // manteniendo la calidad del análisis individual (10 imágenes por llamada es seguro
-  // para VLM modernos: Gemini, Qwen, etc.).
-  const INDEPENDENT_BATCH = 10;
+  // Cinco fotos independientes como máximo; una ráfaga por petición HTTP para
+  // acotar la espera y evitar acumular varias respuestas lentas del navegador web.
+  const INDEPENDENT_BATCH = 5;
   const realGroups = groups.filter((g) => g.files.length > 1);
   const singletonGroups = groups.filter((g) => g.files.length === 1);
   const bursts = realGroups.map((g) => ({ id: g.id, files: g.files, independent: false, sceneOf: null }));
@@ -180,9 +179,8 @@ export async function runAiBurstSelection(withPreview, onProgress) {
       sceneOf: new Map(batch.map((g) => [g.files[0].id, g.id])),
     });
   }
-  const totalBursts = bursts.length;
-  let resolved = 0;
-  onProgress?.(resolved, totalBursts);
+  let processedPhotos = withPreview.length - valid.length;
+  onProgress?.(processedPhotos, withPreview.length);
 
   // Instrumentación de concurrencia (solo medición; no cambia el pool ni el orden).
   let activeNow = 0;
@@ -193,7 +191,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
   // petición a rawAiSmartSelect. El backend ya soporta múltiples ráfagas por petición
   // (las procesa con MAX_CONCURRENT_LLM en paralelo). Esto reduce los round trips HTTP
   // (auth, JSON, connection setup) por factor BURSTS_PER_CALL, acelerando el culling.
-  const BURSTS_PER_CALL = 3;
+  const BURSTS_PER_CALL = 1;
   const burstChunks = [];
   for (let i = 0; i < bursts.length; i += BURSTS_PER_CALL) {
     burstChunks.push(bursts.slice(i, i + BURSTS_PER_CALL));
@@ -201,6 +199,7 @@ export async function runAiBurstSelection(withPreview, onProgress) {
 
   trace.stages.ai_analysis = { start_ms: Date.now(), bursts_total: bursts.length };
   await runPool(burstChunks, BATCH_CONCURRENCY, async (chunk) => {
+    if (shouldCancel()) return;
     const chunkStart = Date.now();
     activeNow += 1;
     if (activeNow > maxActive) maxActive = activeNow;
@@ -249,6 +248,15 @@ export async function runAiBurstSelection(withPreview, onProgress) {
       chunkError = e;
     }
     invokeDurationMs = Date.now() - invokeStartMs;
+    if (shouldCancel()) return;
+    if (chunkError) throw new Error(`Selección interrumpida: ${chunkError.message || "El servidor no respondió"}`);
+    for (const burst of chunk) {
+      const group = responseData?.groups?.[burst.id];
+      const ids = new Set((group?.rankings || []).map(r => String(r.id)));
+      if (!group || group._meta?.fallback || burst.files.some(f => !ids.has(String(f.id)))) {
+        throw new Error(`El proveedor no completó la ráfaga de ${burst.files.length} fotos: ${group?._meta?.error || group?._meta?.failover_reason || "respuesta incompleta"}. No se ha aplicado una selección técnica como resultado IA.`);
+      }
+    }
     // Procesa el resultado de cada ráfaga del chunk.
     for (const burst of chunk) {
       const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
@@ -344,12 +352,20 @@ export async function runAiBurstSelection(withPreview, onProgress) {
         gemini: { request_ms: beRequestMs, http_status: beHttpStatus, endpoint: beEndpoint, tokens_in: beTokensIn, tokens_out: beTokensOut },
         parse: { duration_ms: beParseMs },
       });
-      resolved += 1;
-      onProgress?.(resolved, totalBursts);
+      processedPhotos += burst.files.length;
+      onProgress?.(processedPhotos, withPreview.length);
+    }
+    if (onBatch) {
+      const batchPhotos = chunk.flatMap(burst => burst.files);
+      const batchMeta = new Map(batchPhotos.map(photo => [photo.id, { ...meta.get(photo.id) }]));
+      const batchKeep = new Set();
+      applyBurstSelectionPolicy(batchKeep, batchMeta, batchPhotos);
+      await onBatch({ keep: batchKeep, meta: batchMeta });
     }
     activeNow = Math.max(0, activeNow - 1);
     concurrencySamples.push({ t_ms: Date.now() - trace.started_ms, active: activeNow });
   }, () => {});
+  if (shouldCancel()) return { keep: new Set(), meta: new Map(), trace, canceled: true };
   trace.stages.ai_analysis.end_ms = Date.now();
   trace.stages.ai_analysis.duration_ms = trace.stages.ai_analysis.end_ms - trace.stages.ai_analysis.start_ms;
   trace.stages.ai_analysis.max_concurrency = maxActive;

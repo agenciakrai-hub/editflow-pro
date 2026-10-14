@@ -15,8 +15,8 @@ import { runAiBurstSelection } from "@/lib/rawaistudio/smartSelectionEngine";
 // Selección IA (culling por escena). Delega en el motor existente sin modificarlo.
 // withPreview: [{ id, file, preview, phash, captureTime, cameraInfo, technical }]
 // onProgress(done) → { keep: Set<id>, meta: Map<id, {...}> }
-export async function selectBursts(withPreview, onProgress) {
-  return runAiBurstSelection(withPreview, onProgress);
+export async function selectBursts(withPreview, onProgress, options) {
+  return runAiBurstSelection(withPreview, onProgress, options);
 }
 
 // Ajustes IA (revelado). Hoy enruta a rawAiStudioAnalyze (InvokeLLM). La página no

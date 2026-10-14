@@ -176,10 +176,8 @@ export default function NuevoProyectoPage() {
   }, [projectIdParam, folderIdParam, openAttempt]);
 
   // Detecta una selección IA interrumpida al reabrir el proyecto (el usuario cerró
-  // la pestaña o navegó fuera a mitad de proceso). En lugar de mostrar un error de
-  // "cancelado", REANUDA automáticamente la selección desde el último lote
-  // completado. Los resultados de cada lote se guardan en los fingerprints según se
-  // procesan, así que al reanudar solo se procesan las fotos que faltan.
+  // la pestaña o navegó fuera a mitad de proceso). Conserva los resultados guardados
+  // y exige un inicio explícito: nunca vuelve a enviar todas las fotos al abrir.
   const autoResumeFiredRef = useRef(false);
   useEffect(() => {
     if (!projectIdParam || !folderIdParam) return;
@@ -199,49 +197,13 @@ export default function NuevoProyectoPage() {
         );
         if (!alive || !jobs?.length) return;
         const oldJob = jobs[0];
-        const resumeFrom = oldJob.stage_progress?.photos_done || 0;
-        // Marca el job antiguo como reemplazado por la reanudación.
-        try {
-          await base44.entities.AlbumAISelection.update(oldJob.id, {
-            status: "canceled",
-            error: "Reanudado automáticamente",
-          });
-        } catch {}
-        if (!alive) return;
-        // Reanuda la selección desde el último lote completado.
-        const markedCount = itemsRef.current.filter((it) => selectedRef.current.has(it.id)).length;
-        setAiRunning(true);
-        setBusyAction("seleccion");
-        setAiTotal(markedCount);
-        setAiDone(resumeFrom);
-        if (resumeFrom > 0) {
-          toast({ title: "Reanudando selección IA", description: `Continuando desde la foto ${resumeFrom} de ${markedCount}` });
-        }
-        startAiSelection({
-          projectId: projectIdParam,
-          folderId: folderIdParam,
-          items: itemsRef.current,
-          selectedIds: selectedRef.current,
-          resumeFrom,
-          onProgress: (j) => {
-            if (!mountedRef.current) return;
-            setAiDone(j.done);
-            if (typeof j.total === "number") setAiTotal(j.total);
-          },
-          onComplete: (j) => {
-            if (!mountedRef.current) return;
-            applyAiResults(j);
-            setAiRunning(false);
-            setBusyAction(null);
-            toast({ title: "Selección IA completada" });
-          },
-          onError: (e) => {
-            if (!mountedRef.current) return;
-            setAiRunning(false);
-            setBusyAction(null);
-            toast({ title: "No se pudo reanudar la selección IA", description: e?.message, variant: "destructive" });
-          },
+        // No existe aún un checkpoint validado de todas las respuestas y fotos.
+        // No volver a enviar una carpeta entera automáticamente al abrirla.
+        await base44.entities.AlbumAISelection.update(oldJob.id, {
+          status: "failed", error: "Selección interrumpida; requiere reintento explícito",
         });
+        if (alive) toast({ title: "Selección interrumpida", description: "Los resultados guardados se conservan. Puedes iniciar otra selección cuando quieras." });
+
       } catch {}
     })();
     return () => { alive = false; };
@@ -265,6 +227,7 @@ export default function NuevoProyectoPage() {
       if (!mountedRef.current) return;
       setAiDone(job.done);
       if (typeof job.total === "number") setAiTotal(job.total);
+      if (job.results?.size) applyAiResults(job);
       if (job.status === "completed") {
         applyAiResults(job);
         setAiRunning(false);
@@ -563,6 +526,7 @@ export default function NuevoProyectoPage() {
         if (!mountedRef.current) return;
         setAiDone(job.done);
         if (typeof job.total === "number") setAiTotal(job.total);
+        if (job.results?.size) applyAiResults(job);
       },
       onComplete: (job) => {
         if (!mountedRef.current) return;
