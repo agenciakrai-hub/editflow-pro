@@ -21,7 +21,7 @@ import { getSession } from "@/lib/rawaistudio/localSession";
 import { getCachedPreview } from "@/modules/proyectos/lib/previewCache";
 import { developPhotosVisual, generateSessionProfile } from "@/lib/ai/aiGateway";
 import { requireVisualValues } from "@/lib/ai/visualDevelopResult";
-import { pickRepresentatives, adaptPhotoWithProfile, buildHybridReference, needsHybridVisualReview } from "@/lib/rawaistudio/hybridAdaptEngine";
+import { pickRepresentatives, adaptPhotoWithProfile, buildHybridReference, needsHybridVisualReview, hybridValidationKey, validatedHybridSample } from "@/lib/rawaistudio/hybridAdaptEngine";
 import { useToast } from "@/components/ui/use-toast";
 import PrecisionModeSelector from "@/components/rawaistudio/PrecisionModeSelector";
 import ParameterPanel from "@/components/rawaistudio/ParameterPanel";
@@ -553,7 +553,7 @@ export default function AjustesIA() {
         if (!base64) return null;
         return analyzePhotometrics(base64, p.preview?.decodedSource);
       }));
-      const sessionProfile = { ...data.profile, technical_reference: buildHybridReference(representativeStats, precisionMode) };
+      const sessionProfile = { ...data.profile, technical_reference: buildHybridReference(representativeStats, precisionMode), validation_key: hybridValidationKey(precisionMode, preferences, enabledParams, presetTemplateText) };
       setProfile(sessionProfile);
       // 5 fotos de muestra (muestreo uniforme) con sus valores finales adaptados localmente.
       const samplePhotos = pickRepresentatives(photos, 5);
@@ -606,7 +606,11 @@ export default function AjustesIA() {
         const adaptationStart = performance.now();
         let { values: rawValues, wb } = adaptPhotoWithProfile(stats, profile, precisionMode, preferences, enabledParams, photo.asShotWB, photo.skinStats);
         const adaptationMs = performance.now() - adaptationStart;
-        if (needsHybridVisualReview(stats)) {
+        const approved = validatedHybridSample(photo.id, profile, samples, hybridValidationKey(precisionMode, preferences, enabledParams, presetTemplateText));
+        if (approved) {
+          rawValues = approved.values;
+          wb = approved.wb;
+        } else if (needsHybridVisualReview(stats)) {
           const result = await developPhotosVisual({ photos: [{ id: photo.id, preview_base64: base64 }], preferences, enabledParams });
           rawValues = requireVisualValues(result, photo.id, enabledParams.filter(k => k !== "Temperature" && k !== "Tint"));
         }

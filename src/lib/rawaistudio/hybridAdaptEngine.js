@@ -106,3 +106,11 @@ export function needsHybridVisualReview(stats) {
   return !!stats && Number.isFinite(stats.p25) && Number.isFinite(stats.p95) &&
     stats.p25 < 85 && stats.p95 > 225 && stats.p95 - stats.p25 > 145;
 }
+
+export function hybridValidationKey(precisionMode, preferences, enabledParams, presetTemplateText) {
+  return JSON.stringify({ precisionMode, preferences, enabledParams, presetTemplateText });
+}
+export function validatedHybridSample(photoId, profile, samples, key) {
+  if (!profile?.validation_key || profile.validation_key !== key) return null;
+  return samples.find(sample => sample.id === photoId) || null;
+}

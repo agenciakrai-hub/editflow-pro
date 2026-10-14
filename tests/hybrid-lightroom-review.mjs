@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {build} from 'esbuild';
-const r=await build({stdin:{contents:`export {adaptPhotoWithProfile,buildHybridReference,needsHybridVisualReview} from './src/lib/rawaistudio/hybridAdaptEngine.js';export {computeWhiteBalance} from './src/lib/rawaistudio/whiteBalanceEngine.js';export {writeWhiteBalance,patchXmpAttributes,prepareBasicCorrectionTemplate} from './src/lib/rawaistudio/xmpTagPatcher.js';`,resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
+const r=await build({stdin:{contents:`export {adaptPhotoWithProfile,buildHybridReference,needsHybridVisualReview,hybridValidationKey,validatedHybridSample} from './src/lib/rawaistudio/hybridAdaptEngine.js';export {computeWhiteBalance} from './src/lib/rawaistudio/whiteBalanceEngine.js';export {writeWhiteBalance,patchXmpAttributes,prepareBasicCorrectionTemplate} from './src/lib/rawaistudio/xmpTagPatcher.js';`,resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
 const m=await import('data:text/javascript;base64,'+Buffer.from(r.outputFiles[0].text).toString('base64'));
 const stats={p1:10,p5:30,p25:65,p50:80,p75:95,p95:180,p99:220,clipHighlightPct:0,clipShadowPct:0};
 const profile={base_recipe:{Exposure2012:0.4},technical_reference:m.buildHybridReference([stats,stats])};
@@ -36,3 +36,10 @@ const utf=await import('data:text/javascript;base64,'+Buffer.from(b.outputFiles[
 const xml='<crs:CorrectionName>Máscara · edición</crs:CorrectionName>';
 assert.equal(Buffer.from(utf.utf8Base64(xml),'base64').toString('utf8'),xml);
 console.log('PASS: backlight visual review, preset isolates basic settings and masks, preserves style, UTF-8 plugin sidecars');
+
+const key=m.hybridValidationKey('balanced',{},['Exposure2012'],'preset4');
+const approved={id:'L1047705',values:{Exposure2012:0.65},wb:{auto:true,write:true}};
+assert.equal(m.validatedHybridSample('L1047705',{validation_key:key},[approved],key),approved);
+assert.equal(m.validatedHybridSample('L1047705',{validation_key:key},[approved],m.hybridValidationKey('balanced',{Exposure2012:0.2},['Exposure2012'],'preset4')),null);
+assert.equal(m.validatedHybridSample('other',{validation_key:key},[approved],key),null);
+console.log('PASS: confirmed sample reuses reviewed values, configuration changes invalidate cache');
