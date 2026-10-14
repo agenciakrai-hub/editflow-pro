@@ -6,6 +6,7 @@ import { base44 } from "@/api/base44Client";
 import { selectBursts } from "@/lib/ai/aiGateway";
 import { extractRawPreview } from "@/lib/rawaistudio/rawPreviewReader";
 import { computePHash, phashHex } from "@/lib/rawaistudio/perceptualHash";
+import { curatedStatus, curatedLabel } from "./lib/selectionSavePolicy";
 import { cachePreviews } from "./lib/previewCache";
 
 import { statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
@@ -157,7 +158,7 @@ export default function NuevoProyectoPage() {
         const loaded = fps.map((f) => ({
           id: f.id,
           file: { name: f.filename },
-          status: f.selection_status || "REVIEW",
+          status: curatedStatus({ status: f.selection_status, rating: f.rating || 0 }),
           rating: f.rating || 0,
           aiReview: f.color_label === "yellow",
           fingerprint: f,
@@ -371,21 +372,8 @@ export default function NuevoProyectoPage() {
     }
     setSaving(true);
     try {
-      // La SELECCIÓN que se guarda son las fotos MARCADAS (checkbox): al crear el
-      // proyecto están todas marcadas por defecto, así que se guardan todas. Las
-      // marcadas sin curar (REVIEW) suben a SELECT (etiqueta verde, sin forzar estrellas);
-      // la curación manual del botón «A revisar» siempre prevalece si existe.
-      // La marca (checkbox) es LA selección: las marcadas sin curar suben a SELECT;
-      // las DESMARCADAS que estaban en SELECT vuelven a REVIEW (la curación manual
-      // TOP_PICK/REJECT se conserva). Así, al reabrir el proyecto, solo aparecen
-      // como seleccionadas las fotos que el fotógrafo dejó realmente marcadas.
-      const effStatus = (it) => {
-        // La IA envió esta foto a revisión (o el fotógrafo le dio 3 estrellas): se
-        // mantiene en REVIEW (amarillo), nunca se promueve a SELECT aunque siga marcada.
-        if (it.aiReview || it.rating === 3) return "REVIEW";
-        if (selectedIds.has(it.id)) return it.status === "REVIEW" ? "SELECT" : it.status;
-        return it.status === "TOP_PICK" || it.status === "REJECT" ? it.status : "REVIEW";
-      };
+      // Guarda por separado las marcas para procesar y los resultados de curación.
+      const effStatus = curatedStatus;
       const selCount = items.filter(
         (it) => selectedIds.has(it.id) && ["TOP_PICK", "SELECT"].includes(effStatus(it))
       ).length;
@@ -439,6 +427,7 @@ export default function NuevoProyectoPage() {
           // aparecen marcadas/desmarcadas exactamente como se dejaron al guardar.
           marked: selectedIds.has(it.id),
           ...statusMeta(effStatus(it), it.rating || 0),
+          color_label: curatedLabel(it),
           // Revisión (la IA la envió a revisar o tiene 3 estrellas) → XMP con 3 ESTRELLAS +
           // etiqueta AMARILLA (xmp:Rating=3 + xmp:Label="Yellow"), detectable por Lightroom.
           ...(it.aiReview || it.rating === 3 ? { rating: 3, color_label: "yellow" } : {}),
@@ -566,11 +555,7 @@ export default function NuevoProyectoPage() {
     // del módulo de revelado (mismo contrato que DetalleProyectoPage → AjustesIA),
     // así que NO vuelve a pedir la carpeta RAW — el módulo arranca con las fotos
     // del proyecto ya cargadas.
-    const effStatus = (it) => {
-      if (it.aiReview || it.rating === 3) return "REVIEW";
-      if (selectedIds.has(it.id)) return it.status === "REVIEW" ? "SELECT" : it.status;
-      return it.status === "TOP_PICK" || it.status === "REJECT" ? it.status : "REVIEW";
-    };
+    const effStatus = curatedStatus;
     const selectedBase = items.filter((it) => ["TOP_PICK", "SELECT"].includes(effStatus(it)));
     if (!selectedBase.length) {
       toast({ title: "Sin fotos seleccionadas", description: "Marca al menos una foto para llevarla a Editar.", variant: "destructive" });
