@@ -25,7 +25,10 @@ assert.match(autoXmp,/WhiteBalance="Auto"/);assert.doesNotMatch(autoXmp,/crs:(Te
 console.log('PASS: Lightroom RAW automatic WB without guessed Kelvin or stale preset values');
 
 assert.equal(m.needsHybridVisualReview({p25:59,p95:250}),true);
-assert.equal(m.needsHybridVisualReview({p25:110,p95:200}),false);
+assert.equal(m.needsHybridVisualReview({p25:110,p95:200}),true);
+assert.equal(m.needsHybridVisualReview({p25:58,p95:225}),true, 'DSCF0212 must not bypass individual review at the old histogram boundary');
+assert.equal(m.needsHybridVisualReview({p25:120,p95:180}),true, 'a balanced histogram cannot prove subject exposure');
+assert.match(m.hybridValidationKey('balanced',{},[],''), /individual-v2/, 'old heuristic samples must not qualify for reuse');
 const preset='<rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/" crs:Exposure2012="-2" crs:Temperature="2500" crs:Tint="-50" crs:SaturationAdjustmentRed="-11"><crs:MaskGroupBasedCorrections><rdf:Seq><rdf:li><rdf:Description crs:LocalExposure2012="-0.4"/></rdf:li></rdf:Seq></crs:MaskGroupBasedCorrections><crs:ToneCurvePV2012><rdf:Seq><rdf:li>0, 0</rdf:li></rdf:Seq></crs:ToneCurvePV2012></rdf:Description>';
 const clean=m.prepareBasicCorrectionTemplate(preset);
 assert.doesNotMatch(clean,/Exposure2012|Temperature|Tint|MaskGroupBasedCorrections|LocalExposure/);

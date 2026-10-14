@@ -561,6 +561,7 @@ export default function AjustesIA() {
       const sampleOut = [];
       for (const photo of samplesWithPreview) {
         const base64 = photo.preview?.base64 || photo.preview?.dataUrl?.split(",")[1];
+        if (!base64) throw new Error("Sin vista previa fiable para revisar la fotografía");
         const photometricStart = performance.now();
         const stats = base64 ? await analyzePhotometrics(base64, photo.preview?.decodedSource) : null;
         timing.photometricMs += performance.now() - photometricStart;
@@ -584,7 +585,7 @@ export default function AjustesIA() {
   };
 
   // FASE 2 del Revelado Híbrido: tras la validación, aplica el perfil a TODAS las fotos
-  // (adaptación local por foto, sin más llamadas IA) y deja los XMP listos para exportar.
+  // (revisión visual individual, conservando muestras aprobadas) y exporta los XMP.
   const confirmHybridAll = async () => {
     if (!profile) return;
     const totalStart = performance.now();
@@ -828,7 +829,7 @@ export default function AjustesIA() {
                 onClick={() => setMode("hybrid")}
                 className={`flex-1 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${mode === "hybrid" ? "bg-accent text-accent-foreground" : "border border-border text-foreground hover:bg-secondary"}`}
               >
-                Híbrido — IA Económico
+                Híbrido — Revisión por foto
               </button>
             </div>
             <div className="mt-4">
@@ -987,14 +988,13 @@ export default function AjustesIA() {
             )}
             {mode === "hybrid" && (
               <>
-                <p className="mt-4 text-sm font-medium text-foreground">Revelado Híbrido — IA Económico</p>
+                <p className="mt-4 text-sm font-medium text-foreground">Revelado Híbrido — Revisión por foto</p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   La IA que trabaja es SIEMPRE el proveedor activo por herramienta AJUSTES{ajustesProviderName ? ` (${ajustesProviderName})` : ""}: analiza
-                  solo unas pocas fotos representativas (1 llamada) y genera un perfil de sesión con el look coherente.
-                  El motor local adapta ese perfil a cada foto corrigiendo exposición/luces/sombras según su histograma
-                  real. Los contraluces y escenas de alto contraste se revisan individualmente con IA para proteger al sujeto;
-                  esas fotos requieren llamadas adicionales. Selecciona parámetros y
-                  preferencia (0 = sin desplazar).
+                  unas fotos representativas para generar el perfil de sesión y después revisa visualmente cada foto.
+                  Los ajustes básicos se deciden por imagen, considerando al sujeto y el fondo; el preset conserva
+                  solo su estilo. Requiere una consulta IA por foto, además del perfil, y puede tardar más.
+                  Las muestras aprobadas se reutilizan sin volver a consultarlas. Selecciona parámetros y preferencia (0 = sin desplazar).
                 </p>
                 {editStyleMode === "preset" && (
                   <>

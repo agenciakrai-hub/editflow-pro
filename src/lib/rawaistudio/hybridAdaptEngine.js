@@ -100,15 +100,14 @@ export function adaptPhotoWithProfile(stats, profile, precisionMode = "balanced"
   if (!wbEnabled) wb = { ...wb, write: false, reason: "WB desactivado por el usuario" };
   return { values: final, wb: applyEnabledWhiteBalance(wb, allKeys) };
 }
-// Un histograma bimodal no permite saber si el sujeto está en sombra o es una silueta.
-// Esas tomas requieren análisis visual propio, no heredar el perfil medio del lote.
-export function needsHybridVisualReview(stats) {
-  return !!stats && Number.isFinite(stats.p25) && Number.isFinite(stats.p95) &&
-    stats.p25 < 85 && stats.p95 > 225 && stats.p95 - stats.p25 > 145;
+// El histograma global no identifica el sujeto: incluso una escena aparentemente
+// equilibrada puede tener un rostro oscuro. Cada foto necesita revisión visual.
+export function needsHybridVisualReview() {
+  return true;
 }
 
 export function hybridValidationKey(precisionMode, preferences, enabledParams, presetTemplateText) {
-  return JSON.stringify({ precisionMode, preferences, enabledParams, presetTemplateText });
+  return JSON.stringify({ reviewPolicy: "individual-v2", precisionMode, preferences, enabledParams, presetTemplateText });
 }
 export function validatedHybridSample(photoId, profile, samples, key) {
   if (!profile?.validation_key || profile.validation_key !== key) return null;
