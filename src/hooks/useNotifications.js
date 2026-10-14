@@ -18,7 +18,8 @@ import { useToast } from "@/components/ui/use-toast";
 
 const STORAGE_KEY = "editflow_notifications_v1";
 const ACTIVE_STATUSES = ["processing", "pending", "running"];
-const POLL_MS = 4000;
+const POLL_MS = 15000;
+const IDLE_POLL_MS = 60000;
 const MAX_NOTIFICATIONS = 50;
 
 function loadFromStorage() {
@@ -80,13 +81,18 @@ export function useNotifications() {
   const [notifications, setNotifications] = useState(loadFromStorage);
   const [activeCount, setActiveCount] = useState(0);
   const prevJobsRef = useRef(new Map());
+  const pollingRef = useRef(false);
+  const delayRef = useRef(POLL_MS);
+  const cooldownRef = useRef(0);
 
   const loadJobs = useCallback(async () => {
+    if (pollingRef.current || document.visibilityState === "hidden" || Date.now() < cooldownRef.current) return;
+    pollingRef.current = true;
     try {
       const [pp, sel, ex] = await Promise.all([
-        base44.entities.ProjectProcessingJob.list("-updated_date", 50).catch(() => []),
-        base44.entities.AlbumAISelection.list("-updated_date", 50).catch(() => []),
-        base44.entities.ExportJob.list("-updated_date", 50).catch(() => []),
+        base44.entities.ProjectProcessingJob.list("-updated_date", 50),
+        base44.entities.AlbumAISelection.list("-updated_date", 50),
+        base44.entities.ExportJob.list("-updated_date", 50),
       ]);
 
       const allJobs = [
@@ -124,15 +130,26 @@ export function useNotifications() {
 
       const active = allJobs.filter((j) => ACTIVE_STATUSES.includes(j.status)).length;
       setActiveCount(active);
+      delayRef.current = active > 0 ? POLL_MS : IDLE_POLL_MS;
     } catch {
-      // Fallo silencioso: no romper la UI si la API no responde
+      // Conservar el estado anterior y ceder capacidad a las acciones del fotógrafo.
+      delayRef.current = IDLE_POLL_MS;
+      cooldownRef.current = Date.now() + IDLE_POLL_MS;
+    } finally {
+      pollingRef.current = false;
     }
   }, [toast]);
 
   useEffect(() => {
-    loadJobs();
-    const interval = setInterval(loadJobs, POLL_MS);
-    return () => clearInterval(interval);
+    let stopped = false, timer;
+    const tick = async () => {
+      await loadJobs();
+      if (!stopped) timer = setTimeout(tick, delayRef.current);
+    };
+    const onVisible = () => { if (document.visibilityState !== "hidden") loadJobs(); };
+    tick();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, [loadJobs]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;

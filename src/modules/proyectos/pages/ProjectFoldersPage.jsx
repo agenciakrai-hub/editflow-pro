@@ -17,6 +17,7 @@ export default function ProjectFoldersPage() {
   const [project, setProject] = useState(null);
   const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [adding, setAdding] = useState(false);
   const [renaming, setRenaming] = useState(null);
   const [folderName, setFolderName] = useState("");
@@ -36,6 +37,7 @@ export default function ProjectFoldersPage() {
 
   const load = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const p = await getProject(id);
       setProject(p);
@@ -52,7 +54,7 @@ export default function ProjectFoldersPage() {
       }
       setFolders(folders.sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
     } catch (e) {
-      toast({ title: "No se pudo cargar el proyecto", description: e?.message, variant: "destructive" });
+      setLoadError(e?.message || "No se pudo cargar el proyecto");
     }
     setLoading(false);
   };
@@ -269,6 +271,13 @@ export default function ProjectFoldersPage() {
 
   if (loading) {
     return <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Cargando proyecto…</div>;
+  }
+  if (loadError) {
+    return <div role="alert" className="rounded-xl border border-border p-6">
+      <p>No se pudo consultar el proyecto. No se ha borrado su contenido.</p>
+      <p className="mt-2 text-sm text-muted-foreground">{loadError}</p>
+      <button className="mt-4 rounded-md bg-primary px-4 py-2 text-primary-foreground" onClick={load}>Reintentar carga</button>
+    </div>;
   }
   if (!project) {
     return <p className="text-sm text-muted-foreground">Proyecto no encontrado.</p>;
