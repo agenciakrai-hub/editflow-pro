@@ -253,7 +253,7 @@ export async function runAiBurstSelection(withPreview, onProgress, { shouldCance
     for (const burst of chunk) {
       const group = responseData?.groups?.[burst.id];
       const ids = new Set((group?.rankings || []).map(r => String(r.id)));
-      if (!group || group._meta?.fallback || burst.files.some(f => !ids.has(String(f.id)))) {
+      if (!group || group._meta?.fallback || burst.files.some(f => !ids.has(String(f.id))) || group.rankings.some(r => r.analysis_complete !== true)) {
         throw new Error(`El proveedor no completó la ráfaga de ${burst.files.length} fotos: ${group?._meta?.error || group?._meta?.failover_reason || "respuesta incompleta"}. No se ha aplicado una selección técnica como resultado IA.`);
       }
     }

@@ -389,7 +389,7 @@ async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: 
     byId[rid] = buildRankingEntry(rid, r, category);
   }
   for (const id of ids) {
-    if (!byId[id]) byId[id] = buildRankingEntry(id, {}, category);
+    if (!byId[id] || !byId[id].analysis_complete) throw new Error('Análisis visual incompleto: el proveedor no evaluó todas las fotos y sus puntuaciones');
   }
   return {
     byId,
@@ -465,7 +465,7 @@ async function analyzeIndependent(base44: any, key: string, ids: string[], uploa
     byId[rid].rank = 1; // independent: sin ranking comparativo
   }
   for (const id of ids) {
-    if (!byId[id]) byId[id] = buildRankingEntry(id, {}, null);
+    if (!byId[id] || !byId[id].analysis_complete) throw new Error('Análisis individual incompleto: el proveedor no evaluó todas las fotos y sus puntuaciones');
   }
   return {
     byId,
