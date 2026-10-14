@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { FolderOpen, Loader2, Star, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { listProjects } from "@/modules/proyectos/hooks/useProjectStore";
 import { useToast } from "@/components/ui/use-toast";
 
 // Mis Proyectos — lista los proyectos guardados del usuario (solo metadatos, sin previews
@@ -24,6 +25,8 @@ function statusInfo(s) {
 export default function MisProyectos() {
   const { toast } = useToast();
   const [projects, setProjects] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const loadInFlight = useRef(false);
   const [fpByProject, setFpByProject] = useState({});
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState({});
@@ -33,14 +36,17 @@ export default function MisProyectos() {
   // bajo demanda al expandir un proyecto — antes se cargaban TODOS de golpe
   // (5000+ registros), lo que bloqueaba la página durante segundos.
   const load = async () => {
+    if (loadInFlight.current) return;
+    loadInFlight.current = true;
     setLoading(true);
+    setLoadError(null);
     try {
-      const list = await base44.entities.Project.list("-created_date", 50);
+      const list = await listProjects();
       setProjects(Array.isArray(list) ? list : []);
     } catch (e) {
-      setProjects([]);
-      toast({ title: "No se pudieron cargar los proyectos", description: e?.message, variant: "destructive" });
+      setLoadError(e?.message || "No se pudieron cargar los proyectos");
     }
+    loadInFlight.current = false;
     setLoading(false);
   };
 
@@ -104,7 +110,15 @@ export default function MisProyectos() {
         </div>
       )}
 
-      {!loading && projects && projects.length === 0 && (
+      {!loading && loadError && (
+        <div role="alert" className="rounded-xl border border-border bg-card p-6">
+          <p>No se pudieron consultar tus proyectos. Esta pantalla no indica que se hayan borrado.</p>
+          <p className="mt-2 text-sm text-muted-foreground">{loadError}</p>
+          <button onClick={load} className="mt-4 rounded-md bg-primary px-4 py-2 text-primary-foreground">Reintentar carga</button>
+        </div>
+      )}
+
+      {!loading && !loadError && projects && projects.length === 0 && (
         <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
           <FolderOpen className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-3 text-sm text-muted-foreground">Aún no has guardado ningún proyecto.</p>

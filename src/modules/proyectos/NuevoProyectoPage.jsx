@@ -72,6 +72,9 @@ export default function NuevoProyectoPage() {
   const folderIdParam = urlParams.get("folder");
   const modeParam = urlParams.get("mode"); // "seleccion" | "edicion" | null
   const [existing, setExisting] = useState(null);
+  const [opening, setOpening] = useState(!!projectIdParam);
+  const [openError, setOpenError] = useState(null);
+  const [openAttempt, setOpenAttempt] = useState(0);
   // Móvil: fallback cuando showOpenFilePicker no existe.
   const [catalogFile, setCatalogFile] = useState(null);
   const catalogInputRef = useRef(null);
@@ -95,6 +98,8 @@ export default function NuevoProyectoPage() {
     // carpetas del proyecto. Migra proyectos existentes sin carpetas (idempotente).
     let alive = true;
     let unsub = null;
+    setOpening(true);
+    setOpenError(null);
     (async () => {
       try {
         const folders = await ensureFoldersMigrated(projectIdParam);
@@ -162,11 +167,13 @@ export default function NuevoProyectoPage() {
         setItems(loaded);
         setSelectedIds(new Set(loaded.filter((it) => it.fingerprint.marked !== false).map((it) => it.id)));
       } catch (e) {
-        toast({ title: "No se pudo abrir el proyecto", description: e?.message, variant: "destructive" });
+        if (alive) setOpenError(e?.message || "No se pudo abrir el proyecto");
+      } finally {
+        if (alive) setOpening(false);
       }
     })();
     return () => { alive = false; if (unsub) unsub(); };
-  }, [projectIdParam, folderIdParam]);
+  }, [projectIdParam, folderIdParam, openAttempt]);
 
   // Detecta una selección IA interrumpida al reabrir el proyecto (el usuario cerró
   // la pestaña o navegó fuera a mitad de proceso). En lugar de mostrar un error de
@@ -875,7 +882,13 @@ export default function NuevoProyectoPage() {
         </div>
       )}
 
-      {!extracting && items.length === 0 && (
+      {opening && <p>Cargando las fotos guardadas…</p>}
+      {!opening && openError && <div role="alert" className="rounded-xl border border-border p-6">
+        <p>No se pudieron consultar las fotos guardadas. No se ha borrado el trabajo.</p>
+        <p className="mt-2 text-sm text-muted-foreground">{openError}</p>
+        <button className="mt-4 rounded-md bg-primary px-4 py-2 text-primary-foreground" onClick={() => setOpenAttempt(n => n + 1)}>Reintentar carga</button>
+      </div>}
+      {!opening && !openError && !extracting && items.length === 0 && (
         <div className="rounded-xl border border-dashed border-border bg-card p-10 text-center">
           <FolderOpen className="mx-auto h-8 w-8 text-muted-foreground" />
           <p className="mt-3 text-sm text-muted-foreground">

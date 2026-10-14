@@ -14,9 +14,9 @@ import { extractPreviews } from "@/lib/rawaistudio/smartSelectionEngine";
 import { computeFingerprint } from "./projectFingerprint";
 import { saveHandle } from "./idbHandles";
 import { cachePreviews } from "./previewCache";
+import { createProgressWriter } from "./progressWriter";
 import {
-  bulkCreateFingerprints,
-  deleteFingerprintsByFolder,
+  upsertImportedFingerprints,
   updateProject,
 } from "../hooks/useProjectStore";
 import { base44 } from "@/api/base44Client";
@@ -136,19 +136,17 @@ async function runProcessing(folderHandle, files, folderName, folderId, pid, exi
 
     // 3. Crea el ProjectProcessingJob para el Historial.
     let jobId = null;
-    let lastPct = -1;
-    let lastPhase = null;
+    const reportProgress = createProgressWriter(async ({progress, phase, status}) => {
+      if (!jobId) {
+        const j = await base44.entities.ProjectProcessingJob.create({ project_id: pid, folder_id: folderId || "", status, progress, phase });
+        jobId = j.id;
+      } else {
+        await base44.entities.ProjectProcessingJob.update(jobId, { status, progress, phase });
+      }
+    });
     const syncJob = async (progress, phase, status = "processing") => {
-      try {
-        if (!jobId) {
-          const j = await base44.entities.ProjectProcessingJob.create({ project_id: pid, folder_id: folderId || "", status, progress, phase });
-          jobId = j.id;
-        } else if (status !== "processing" || Math.abs(progress - lastPct) >= 4 || phase !== lastPhase) {
-          await base44.entities.ProjectProcessingJob.update(jobId, { status, progress, phase });
-        }
-        lastPct = progress;
-        lastPhase = phase;
-      } catch {}
+      try { await reportProgress(progress, phase, status); }
+      catch (error) { console.warn("No se pudo actualizar el progreso de importación", error?.message); }
     };
 
     // 4. Lee los RAW de la carpeta (RECURSIVO: traverse subdirectorios). Los
@@ -237,21 +235,19 @@ async function runProcessing(folderHandle, files, folderName, folderId, pid, exi
       syncJob(total ? Math.round((done / total) * 100) : 0, "fingerprinting");
     }
 
-    // 7. Completa el job en la base de datos.
-    await syncJob(100, "fingerprinting", "completed");
-    job.status = "completed";
-    job.progress = { done: total, total };
+    // Conserva el trabajo en memoria mientras se guarda; aún no está terminado.
     job.items = withFingerprint;
+    job.phase = "saving";
     notify(job);
 
     // 8. Cachea previews en IndexedDB (para reabrir el proyecto al instante).
-    cachePreviews(
+    await cachePreviews(
       withFingerprint.map((p) => ({
         hash: p.fingerprint?.fingerprint_hash,
         dataUrl: p.preview?.dataUrl,
         hiResDataUrl: p.preview?.hiResDataUrl,
       }))
-    ).catch(() => {});
+    ).catch(error => console.warn("No se pudo guardar la caché local de vistas previas", error?.message));
 
     // 9. Auto-guarda huellas en la base de datos (para que no se pierdan si el
     //    usuario navegó fuera durante el procesado).
@@ -262,8 +258,7 @@ async function runProcessing(folderHandle, files, folderName, folderId, pid, exi
       if (!folderId) {
         throw new Error("No se puede autoguardar sin folderId: la carpeta activa no está identificada.");
       }
-      await deleteFingerprintsByFolder(folderId);
-      await bulkCreateFingerprints(
+      await upsertImportedFingerprints(
         withFingerprint.map((p) => ({
           project_id: pid,
           folder_id: folderId || "",
@@ -280,16 +275,25 @@ async function runProcessing(folderHandle, files, folderName, folderId, pid, exi
           color_label: "none",
         }))
       );
-      await updateProject(pid, { photo_count: withFingerprint.length }).catch(() => {});
+      const savedCount = await base44.entities.ProjectPhotoFingerprint.count({ folder_id: folderId });
+      if (savedCount < withFingerprint.length) throw new Error(`Guardado incompleto: ${savedCount} de ${withFingerprint.length} fotos. Reintenta la importación.`);
+      await updateProject(pid, { photo_count: withFingerprint.length });
       // Actualiza el ProjectFolder con el recuento final y estado de importación.
       if (folderId) {
         await base44.entities.ProjectFolder.update(folderId, {
           photo_count: withFingerprint.length,
           import_status: "completed",
           last_modified: new Date().toISOString(),
-        }).catch(() => {});
+        });
       }
-    } catch {}
+    } catch (error) {
+      await syncJob(100, "saving", "failed");
+      throw error;
+    }
+    await syncJob(100, "saving", "completed");
+    job.status = "completed";
+    job.progress = { done: total, total };
+    notify(job);
 
     if (onComplete) try { onComplete(snapshotJob(job)); } catch {}
 

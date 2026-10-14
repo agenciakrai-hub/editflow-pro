@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {createProgressWriter} from '../src/modules/proyectos/lib/progressWriter.js';
+import {readWithRateLimitRecovery} from '../src/modules/proyectos/lib/readRecovery.js';
+let active=0,max=0,writes=[],release;
+const stalled=new Promise(r=>release=r);
+const report=createProgressWriter(async row=>{max=Math.max(max,++active);writes.push(row);if(writes.length===1)await stalled;active--;},{intervalMs:0});
+const promises=[];
+for(let i=0;i<725;i++) promises.push(report(Math.floor(i/725*100),'fingerprinting'));
+const end=report(100,'saving','completed');release();await end;await Promise.all(promises);
+assert.equal(max,1);assert.equal(writes.length,2);assert.equal(writes.at(-1).status,'completed');
+let calls=0,delays=[];
+const data=await readWithRateLimitRecovery(async()=>{if(++calls<3)throw Object.assign(new Error('Rate limit exceeded'),{status:429});return ['project'];},async ms=>delays.push(ms));
+assert.deepEqual(data,['project']);assert.deepEqual(delays,[2000,4000]);
+calls=0;await assert.rejects(readWithRateLimitRecovery(async()=>{calls++;throw Object.assign(new Error('Rate limit exceeded'),{status:429});},async()=>{}));assert.equal(calls,3);
+calls=0;await assert.rejects(readWithRateLimitRecovery(async()=>{calls++;throw new Error('Unauthorized');},async()=>{}));assert.equal(calls,1);
+console.log('PASS: 725 progress events coalesce to 2 serialized writes; 429 recovery bounded; auth errors not retried');

@@ -1,13 +1,14 @@
 // Acceso a las entidades del módulo de Proyectos. Nunca sube RAW ni .lrcat — solo
 // metadatos, fingerprints y referencias opacas a IndexedDB.
 import { base44 } from "@/api/base44Client";
+import { readWithRateLimitRecovery } from "../lib/readRecovery";
 
 export async function listProjects() {
-  return base44.entities.Project.list("-created_date", 50);
+  return readWithRateLimitRecovery(() => base44.entities.Project.list("-created_date", 50));
 }
 
 export async function getProject(id) {
-  return base44.entities.Project.get(id);
+  return readWithRateLimitRecovery(() => base44.entities.Project.get(id));
 }
 
 export async function createProject(data) {
@@ -47,6 +48,24 @@ export async function bulkCreateFingerprints(rows) {
   return out;
 }
 
+// Importación idempotente: un fallo no elimina las fotos ya guardadas. Los estados
+// de selección existentes se conservan; los nuevos usan los defaults de la entidad.
+export async function upsertImportedFingerprints(rows) {
+  const clean = rows.map(row => {
+    const { selection_status: _status, marked: _marked, rating: _rating, color_label: _label, ...metadata } = row;
+    if (!Number.isFinite(metadata.capture_time)) delete metadata.capture_time;
+    if (!metadata.folder_id || !metadata.project_id || !metadata.filename) {
+      throw new Error("No se puede guardar una foto sin proyecto, carpeta y nombre");
+    }
+    return metadata;
+  });
+  for (let i = 0; i < clean.length; i += BULK_CHUNK) {
+    await base44.entities.ProjectPhotoFingerprint.upsert(clean.slice(i, i + BULK_CHUNK), {
+      key: ["project_id", "folder_id", "relative_path", "filename", "file_size"],
+    });
+  }
+}
+
 export async function bulkUpdateFingerprints(rows) {
   const out = [];
   for (let i = 0; i < rows.length; i += BULK_CHUNK) {
@@ -65,7 +84,7 @@ export async function deleteFingerprintsByProject(projectId) {
 // Cada carpeta es una unidad de trabajo independiente dentro del proyecto: tiene sus
 // propias fotos (fingerprints con folder_id), su propia selección y su propia edición.
 export async function listFolders(projectId) {
-  return base44.entities.ProjectFolder.filter({ project_id: projectId }, "order_index", 200);
+  return readWithRateLimitRecovery(() => base44.entities.ProjectFolder.filter({ project_id: projectId }, "order_index", 200));
 }
 
 export async function createFolder(data) {
@@ -82,7 +101,7 @@ export async function deleteFolder(id) {
 
 // Fingerprints de UNA carpeta concreta (la unidad de trabajo independiente).
 export async function listFingerprintsByFolder(folderId) {
-  return base44.entities.ProjectPhotoFingerprint.filter({ folder_id: folderId }, "-created_date", 5000);
+  return readWithRateLimitRecovery(() => base44.entities.ProjectPhotoFingerprint.filter({ folder_id: folderId }, "-created_date", 5000));
 }
 
 // Borra solo los fingerprints de UNA carpeta (no toca las demás carpetas del proyecto).
