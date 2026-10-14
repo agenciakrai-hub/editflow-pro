@@ -95,15 +95,16 @@ function statusRank(s: string): number {
   return s === 'TOP_PICK' ? 0 : s === 'SELECT' ? 1 : s === 'REVIEW' ? 2 : 3;
 }
 
+const POSE_HEADS = ['front', 'three-quarter-left', 'left-profile', 'three-quarter-right', 'right-profile', 'back', 'unknown'];
 const SELECTION_POLICY = `
-FINAL POLICY (overrides conflicting rules above): Preserve one representative of EVERY burst even if all images are dark, blurred or eyes closed. Choose by open eyes and natural expression, then focus and moment. Other usable alternatives are REVIEW; clearly unusable/redundant frames are REJECT. Identify subject head/body orientation in EACH ranking as pose_key: use a stable descriptive key (front, left-profile, right-profile, back, etc., including subject identity/composition when it changes). A head turn creates a different pose group even if the background and position do not change. Do not label a pose change as a duplicate. For multiple faces include their orientations in a stable order. Use unknown only if orientation cannot be assessed. For singletons retain the photo and report its defects honestly. Never invent visible facial details.`;
+FINAL POLICY (overrides conflicting rules above): Preserve one representative of EVERY burst even if all images are dark, blurred or eyes closed. Choose by open eyes and natural expression, then focus and moment. Other usable alternatives are REVIEW; clearly unusable/redundant frames are REJECT. In EACH ranking return pose_heads: an array of head orientations for the main subjects in stable left-to-right order. Use ONLY front, three-quarter-left, left-profile, three-quarter-right, right-profile, back, unknown. Use [] if there are no people. Head turns change this key, but hair movement, steps, clothing, smiles, blinks and small gaze changes MUST NOT create new poses. Never add descriptive suffixes or subject names to these fixed values. A head turn creates a different pose group even if the background and position do not change. Do not label a pose change as a duplicate. Use unknown only if orientation cannot be assessed. For singletons retain the photo and report its defects honestly. Never invent visible facial details.`;
 
 const VALID_STATUS = ['TOP_PICK', 'SELECT', 'REVIEW', 'REJECT'];
 
 function buildRankingEntry(id: string, r: any, category: string | null = null): any {
   const status = VALID_STATUS.includes(r?.status) ? r.status : 'REVIEW';
   const scores: Record<string, number | null> = {};
-  for (const k of SCORE_KEYS) scores[k] = normScore(r?.[k]);
+  for (const k of SCORE_KEYS) scores[k] = normScore(r?.[k]) ?? normScore(r?.scores?.[k]);
   // Guardia de género: en fotos sin personas (arquitectura/interior/paisaje/producto)
   // las dimensiones faciales son NO aplicables → null, aunque el modelo devuelva 0 o
   // un número. Así no se penaliza una foto sin personas por carecer de métricas faciales
@@ -127,7 +128,9 @@ function buildRankingEntry(id: string, r: any, category: string | null = null): 
     id,
     rank: typeof r?.rank === 'number' ? r.rank : 999,
     status,
-    pose_key: typeof r?.pose_key === 'string' ? r.pose_key.slice(0, 160) : null,
+    pose_key: Array.isArray(r?.pose_heads) && r.pose_heads.every((head: string) => POSE_HEADS.includes(head))
+      ? (r.pose_heads.length ? r.pose_heads.join('|') : 'no-people')
+      : typeof r?.pose_key === 'string' && r.pose_key.split('|').every((head: string) => POSE_HEADS.includes(head)) ? r.pose_key : null,
     reject_reasons: Array.isArray(r?.reject_reasons) ? r.reject_reasons : [],
     note: typeof r?.note === 'string' ? r.note : '',
     scores,
@@ -231,6 +234,7 @@ function rankingItemSchema(): any {
     properties: {
       id: { type: 'string' },
       pose_key: { type: 'string' },
+      pose_heads: { type: 'array', items: { type: 'string', enum: POSE_HEADS } },
       rank: { type: 'number' },
       status: { type: 'string', enum: VALID_STATUS },
       reject_reasons: { type: 'array', items: { type: 'string' } },
@@ -238,7 +242,7 @@ function rankingItemSchema(): any {
       analysis_complete: { type: 'boolean' },
       ...scoreProps(),
     },
-    required: ['id', 'rank', 'status', 'reject_reasons', 'overall', 'confidence'],
+    required: ['id', 'rank', 'status', 'reject_reasons', 'pose_heads', 'overall', 'confidence'],
   };
 }
 
@@ -281,7 +285,7 @@ function buildFinalPrompt(ids: string[], byIdAll: Record<string, any>): string {
     return `Candidate ${i} (id=${id}): prior status=${r.status || 'REVIEW'}, prior scores: ${scoreLine}. prior note: ${r.note || ''}`;
   }).join('\n');
 
-  return `You are an elite professional photo editor doing the FINAL showdown of a wedding culling sequence. The group was large and split into two halves; these ${ids.length} candidates are the strongest from both halves. Do NOT simply compare the prior numeric scores across halves — they came from separate analyses and are NOT directly comparable. Re-analyze each candidate VISUALLY from the attached images on these dimensions (0-100 each): eyes, expression, focus, moment, composition, interaction, subject_quality, exposure, technical, sharpness, color_quality, overall, confidence. OMIT a dimension only if not applicable (no people → omit eyes/expression/interaction); never use 0 for "not applicable".
+  return `You are an elite professional photo editor doing the FINAL showdown of a wedding culling sequence. The group was large and split into two halves; these ${ids.length} candidates are the strongest from both halves. Do NOT simply compare the prior numeric scores across halves — they came from separate analyses and are NOT directly comparable. Re-analyze each candidate VISUALLY from the attached images on these dimensions (0-100 each): ${SCORE_KEYS.join(', ')}. OMIT a dimension only if not applicable (no people → omit eyes/expression/interaction); never use 0 for "not applicable".
 
 Prior context (reference only — re-judge visually, do not trust the numbers across halves):
 ${sections}
@@ -293,7 +297,7 @@ Decide the DEFINITIVE ranking of the whole group. Separate clear decisions from 
 - REJECT: a frame you are confident is NOT worth keeping — clearly inferior to a better finalist, redundant, or a clear combined defect.
 Priority for people: eyes > expression > moment > focus > composition > technical. A sharper but lifeless/blinked frame must NOT beat a slightly softer frame with genuine emotion and a decisive moment. A photo where a KEY face has EYES_CLOSED must NEVER be TOP_PICK or SELECT — REJECT if a clearly better finalist exists, otherwise REVIEW.
 
-Return JSON: finalists (array, one entry per candidate id), each with id, rank (1=best), status, reject_reasons, note, and the scores above. Candidate ids in image order: ${ids.join(', ')}.`;
+Return JSON: finalists (array, one entry per candidate id), each with id, rank (1=best), status, reject_reasons, note, pose_heads and ALL the exact numeric score keys listed above (put them directly in each finalist, using their exact names). Do not nest a finalist inside another group. Candidate ids in image order: ${ids.join(', ')}.`;
 }
 
 // Tercera llamada IA entre finalistas. Devuelve byId de los finalistas re-analizados.
@@ -318,7 +322,7 @@ async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<str
     if (ids.includes(rid)) out[rid] = buildRankingEntry(rid, r, category);
   }
   for (const id of ids) {
-    if (!out[id]) out[id] = buildRankingEntry(id, {}, category);
+    if (!out[id] || !out[id].analysis_complete) throw new Error('Comparación final incompleta: faltan candidatas o puntuaciones requeridas');
   }
   return out;
 }
@@ -572,8 +576,8 @@ export default async function(req: Request): Promise<Response> {
         } else {
           // Grupo grande: dos llamadas comparativas (mitades) + TERCERA llamada de
           // consolidación entre los mejores finalistas de cada mitad (re-análisis visual).
-          // Si la tercera llamada falla o hay <2 finalistas, cae a consolidación
-          // determinista (consolidateHalves) como red de seguridad.
+          // Una comparación final incompleta se informa como fallo: no se guarda
+          // como selección válida. Sin suficientes finalistas se consolidan las mitades.
           iaCalls = 2;
           const mid = Math.ceil(candidateIds.length / 2);
           const h1Ids = candidateIds.slice(0, mid);
@@ -590,7 +594,7 @@ export default async function(req: Request): Promise<Response> {
               iaCalls = 3;
               result = mergeConsolidation(candidateIds, h1, h2, finals);
             } catch (e: any) {
-              result = consolidateHalves(candidateIds, h1, h2);
+              throw new Error(`No se pudo completar la comparación final: ${e?.message || e}`);
             }
           } else {
             result = consolidateHalves(candidateIds, h1, h2);
