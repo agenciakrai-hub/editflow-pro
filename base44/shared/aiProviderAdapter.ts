@@ -590,14 +590,11 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   const marked = (Array.isArray(markedRaw) ? markedRaw : [])
     .map((m: any) => String(m || "").trim())
     .filter(Boolean);
-  let exactModel = "";
-  let boundedDefaults = false;
-  try {
-    const cfg = await getConfig(base44);
-    boundedDefaults = cfg?.model_defaults_policy === "verified-three-v1";
-    const exactRaw = opts.task === "ajustes" ? cfg?.active_model_ajustes : opts.task === "video" ? cfg?.active_model_video : cfg?.active_model_seleccion;
-    exactModel = String(exactRaw || "").trim();
-  } catch {}
+  const resolutionConfig = await getConfig(base44);
+  if (!resolutionConfig) throw new ModelResolutionError("No se pudo comprobar la configuración de modelos. No se ha enviado ninguna imagen; reintenta cuando la lectura esté disponible.");
+  const boundedDefaults = resolutionConfig.model_defaults_policy === "verified-three-v1";
+  const exactRaw = opts.task === "ajustes" ? resolutionConfig.active_model_ajustes : opts.task === "video" ? resolutionConfig.active_model_video : resolutionConfig.active_model_seleccion;
+  const exactModel = String(exactRaw || "").trim();
   // CAPACIDADES desde la fuente única de verdad (available_models_meta, resuelta en
   // ai-providers desde metadatos declarados / prueba empírica). NO se usa el nombre del
   // modelo ni regex. vision: true=compatible, false=verificado NO compatible, null=no
