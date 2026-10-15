@@ -1,3 +1,4 @@
+import { isAlibaba, assertFreeQuota, ALIBABA_FREE_MODELS, ALIBABA_FREE_UNTIL } from '../../shared/alibabaFreeQuota.ts';
 import { defaultsPlan, DEFAULT_PROBE_IMAGE, validProbeAnswer, webSession, recentSelection } from '../../shared/providerDefaults.ts';
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import { secrets } from 'base44:runtime';
@@ -48,6 +49,7 @@ function normalizeEndpoint(raw: string): string {
 // Nombre amigable autodetectado del dominio (openrouter.ai -> Openrouter).
 function nameFromDomain(endpoint: string): string {
   try {
+    if (isAlibaba(endpoint)) return 'Alibaba Cloud · solo cuota gratuita';
     if (new URL(endpoint).hostname === 'generativelanguage.googleapis.com') return 'Google Gemini';
     const host = new URL(endpoint).hostname.replace(/^www\./, '');
     const base = host.split('.')[0] || 'Proveedor';
@@ -86,6 +88,7 @@ async function fetchModels(
     const raw = (data?.data || data?.models || [])
       // /execute accepts engine IDs. Web Target IDs belong to a different API.
       .filter((m: any) => !isKraiGateway(endpoint) || m?.object !== 'web_target')
+      .filter((m:any)=>!isAlibaba(endpoint)||ALIBABA_FREE_MODELS.includes(String(m?.id||m?.name||'').replace(/^models\//,'')))
       .slice(0, MODELS_PAGE_LIMIT);
     const models = raw.map((m: any) => String(m?.id || m?.name || '').trim()).filter(Boolean);
     if (!models.length) {
@@ -194,6 +197,9 @@ function maskProvider(r: any) {
     id: r.id,
     name: r.name,
     endpoint: r.endpoint,
+    free_quota_only: r.free_quota_only===true,
+    free_quota_models: r.free_quota_models||[],
+    free_quota_until: r.free_quota_until||'',
     available_models: Array.isArray(r.available_models) ? r.available_models : [],
     available_models_meta: Array.isArray(r.available_models_meta) ? r.available_models_meta : [],
     seleccion_models: Array.isArray(r.seleccion_models) ? r.seleccion_models : [],
@@ -351,6 +357,7 @@ export default async function(req: Request): Promise<Response> {
         // en /chat/completions), compatible con todo el flujo de proveedores propios.
         const isGemini = new URL(endpoint).hostname === 'generativelanguage.googleapis.com';
         if (isGemini) endpoint = 'https://generativelanguage.googleapis.com/v1beta/openai';
+        if(isAlibaba(endpoint)&&body.free_quota_confirmed!==true) return Response.json({ok:false,reason:'Confirma Free Quota Only antes de añadir Alibaba.'});
         const check = await fetchModels(endpoint, apiKey);
         if (!check.ok) {
           return Response.json({ ok: false, reason: `No se pudo verificar la conexión: ${check.reason}` });
@@ -361,11 +368,12 @@ export default async function(req: Request): Promise<Response> {
         const models = check.models.map((m: string) => m.replace(/^models\//, ''));
         const rawModels = check.raw.map((m: any) => ({ ...m, id: String(m?.id || m?.name || '').replace(/^models\//, '') }));
         // Capacidades resueltas desde metadatos declarados (fuente única de verdad).
-        const meta = await resolveCapabilitiesFull(rawModels, undefined, endpoint, apiKey);
+        const meta = await resolveCapabilitiesFull(rawModels, undefined, endpoint, apiKey, {skipProbe:isAlibaba(endpoint)});
         // Preferencia del proyecto: los motores Gemini se limitan a gemini-2.5-flash.
         const flash = models.includes('gemini-2.5-flash') ? ['gemini-2.5-flash'] : [];
         const rec = await base44.asServiceRole.entities.CustomAiProvider.create({
           name: nameFromDomain(endpoint),
+          ...(isAlibaba(endpoint)?{free_quota_only:true,free_quota_models:ALIBABA_FREE_MODELS,free_quota_until:ALIBABA_FREE_UNTIL}:{}),
           endpoint,
           api_key: apiKey,
           available_models: models,
@@ -420,7 +428,7 @@ export default async function(req: Request): Promise<Response> {
       const updated = await base44.asServiceRole.entities.CustomAiProvider.update(id, {
         api_key: apiKey,
         available_models: models,
-        available_models_meta: await resolveCapabilitiesFull(rawModels, rec.available_models_meta, rec.endpoint, apiKey),
+        available_models_meta: await resolveCapabilitiesFull(rawModels, rec.available_models_meta, rec.endpoint, apiKey, {skipProbe:isAlibaba(rec.endpoint)}),
         last_ok: true,
         last_reason: '',
         last_checked: new Date().toISOString(),
@@ -478,7 +486,7 @@ export default async function(req: Request): Promise<Response> {
         // Cadena A→B→C: re-resuelve caps declaradas (A), cross-ref OpenRouter (B) y
         // sondea automáticamente los modelos que siguen null (C). CONSERVA true/false
         // de modelos ya clasificados (no los re-sondea). force=true los reclasifica todos.
-        patch.available_models_meta = await resolveCapabilitiesFull(rawModels, rec.available_models_meta, rec.endpoint, effectiveKey(rec), { forceReprobe: !!body.force });
+        patch.available_models_meta = await resolveCapabilitiesFull(rawModels, rec.available_models_meta, rec.endpoint, effectiveKey(rec), { forceReprobe: !!body.force, skipProbe:isAlibaba(rec.endpoint) });
       }
       const updated = await base44.asServiceRole.entities.CustomAiProvider.update(id, patch);
       return Response.json({ ok: check.ok, reason: check.reason, provider: maskProvider(updated), total_models: check.models.length });
@@ -513,6 +521,7 @@ export default async function(req: Request): Promise<Response> {
       const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
       if (!rec) return Response.json({ ok: false, reason: 'Proveedor no encontrado' });
       if(defaultProbe&&(!rec.enabled||webSession(rec)||!rec.available_models?.includes(model))) return Response.json({ok:false,reason:'Modelo no disponible para comprobación API.'});
+      assertFreeQuota(rec,model);
       const key = effectiveKey(rec);
       if (!key) return Response.json({ ok: false, reason: 'El proveedor no tiene API key' });
       const base = String(rec.endpoint || '').trim().replace(/\/+$/, '');
