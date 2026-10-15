@@ -4,8 +4,9 @@
 export function decodePreviewImage(base64Jpeg) {
   return new Promise((resolve, reject) => {
     const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("No se pudo decodificar la preview para análisis"));
+    const timer = setTimeout(() => { image.src = ""; reject(new Error("La vista previa no se pudo leer a tiempo")); }, 10000);
+    image.onload = () => { clearTimeout(timer); resolve(image); };
+    image.onerror = () => { clearTimeout(timer); reject(new Error("No se pudo decodificar la preview para análisis")); };
     image.src = `data:image/jpeg;base64,${base64Jpeg}`;
   });
 }
