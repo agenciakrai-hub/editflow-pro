@@ -191,7 +191,6 @@ async function runSelection(job, marked, onComplete, onError) {
     const allMeta = new Map();
     let lastTrace = null;
     const traceChunks = [];
-    let photosDone = 0;
     const deferredServiceErrors = [];
     let originalDirectory;
     async function originalFile(item) {
@@ -266,12 +265,9 @@ async function runSelection(job, marked, onComplete, onError) {
         });
       }
 
-      const photosBefore = photosDone;
-      const { keep, meta, trace, deferred_errors = [] } = await selectBursts(aiItems, (d, t) => {
+      const { keep, meta, trace, deferred_errors = [] } = await selectBursts(aiItems, () => {
         if (job.canceled) return;
-        if (typeof t === "number" && t > 0) {
-          job.done = Math.min(marked.length, photosBefore + Math.round((d / t) * chunk.length));
-        }
+        job.done = savedIds.size;
         notify(job);
       }, {
         shouldCancel: () => job.canceled,
@@ -286,6 +282,7 @@ async function runSelection(job, marked, onComplete, onError) {
             const selected = result.status === "SELECT" || result.status === "TOP_PICK";
             job.results.set(id, { status: result.status, rating: selected ? 5 : result.status === "REJECT" ? 0 : 3, aiReview: !selected && result.status !== "REJECT" });
           }
+          job.done = savedIds.size;
           notify(job);
           await base44.entities.AlbumAISelection.update(selJobId, { stage_progress: checkpointProgress() });
         },
@@ -296,8 +293,7 @@ async function runSelection(job, marked, onComplete, onError) {
       for (const id of keep) allKeep.add(id);
       for (const [id, m] of meta) allMeta.set(id, m);
       if (trace) { lastTrace = trace; traceChunks.push(trace); }
-      photosDone += chunk.length;
-      job.done = Math.min(marked.length, photosDone);
+      job.done = savedIds.size;
       notify(job);
       // Libera las previews de este chunk (permite GC).
       previewByHash = null;
