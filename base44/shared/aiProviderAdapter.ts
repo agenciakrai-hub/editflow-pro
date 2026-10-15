@@ -738,7 +738,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      }, kraiSession ? 100000 : boundedDefaults ? Math.min(isAlibaba(base) ? 65000 : 45000, Math.max(1, deadline-Date.now())) : PROVIDER_TIMEOUT_MS, kraiSession || boundedDefaults ? 1 : 2);
+      }, kraiSession ? 100000 : boundedDefaults ? Math.min(isAlibaba(base) || attemptChain.length === 1 ? 65000 : 45000, Math.max(1, deadline-Date.now())) : PROVIDER_TIMEOUT_MS, kraiSession || boundedDefaults ? 1 : 2);
       const latency = Date.now() - t0;
       if (opts._trace) { opts._trace.request_ms = latency; opts._trace.http_status = res.status; opts._trace.endpoint = endpoint; }
       if (!res.ok) {
