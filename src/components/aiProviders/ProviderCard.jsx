@@ -117,7 +117,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
             <p className="text-sm font-semibold">{provider.name}</p>
             {provider.last_ok ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">
-                <CheckCircle2 className="h-3 w-3" /> Conectado
+                <CheckCircle2 className="h-3 w-3" /> Catálogo accesible
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs text-red-700">
@@ -132,6 +132,7 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
             {provider.endpoint} · API key {provider.masked_key || "—"}
             {provider.builtin_secret && !provider.has_own_key ? ` (secret ${provider.builtin_secret})` : ""}
           </p>
+          <p className="text-xs text-muted-foreground">El catálogo accesible no garantiza que una selección termine. Auditar selección comprueba seis imágenes y la respuesta completa.</p>
           {provider.last_reason && <p className="mt-0.5 text-xs text-red-500">{provider.last_reason}</p>}
         </div>
         <div className="flex shrink-0 items-center gap-2">
