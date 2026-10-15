@@ -716,7 +716,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     const isLastModel = mi === attemptChain.length - 1;
     if (opts._trace) opts._trace.model = model;
     console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${mi + 1}/${fullChain.length})${mi > 0 ? " failover-modelo" : ""}${auto ? " auto-descubierto" : ""}`);
-    const jsonInstruction = kraiSession && opts.response_json_schema
+    const jsonInstruction = (kraiSession || isAlibaba(base)) && opts.response_json_schema
       ? "\n\nFORMATO OBLIGATORIO: responde únicamente con un objeto JSON válido que contenga todos los candidatos solicitados. Sin introducción, explicaciones fuera del JSON ni bloques Markdown. No respondas con una confirmación de que vas a analizar: entrega el análisis final en JSON."
       : "";
     const content: any[] = [{ type: "text", text: opts.prompt + jsonInstruction }];
@@ -729,7 +729,10 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     // response_format: cuando el llamador pide un JSON schema, se fuerza al modelo a
     // devolver JSON (no texto libre). Sin esto, algunos modelos devuelven texto con
     // bloques de razonamiento que parseJsonContent no puede extraer → valores vacíos.
-    if (opts.response_json_schema) {
+    // Alibaba aborts some multi-photo responses inside constrained JSON decoding.
+    // Request JSON in the prompt instead; parsing and per-photo validation remain mandatory.
+    // Other providers retain their existing JSON-mode contract.
+    if (opts.response_json_schema && !isAlibaba(base)) {
       body.response_format = { type: "json_object" };
     }
     const t0 = Date.now();
