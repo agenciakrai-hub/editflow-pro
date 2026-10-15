@@ -51,12 +51,12 @@ export default function AIProviders() {
   useEffect(() => { load(); }, []);
 
   // ---- Proveedores ----
-  const addProvider = async ({ endpoint, api_key }) => {
+  const addProvider = async ({ endpoint, api_key, free_quota_confirmed }) => {
     setAdding(true);
     setAddResult(null);
     let ok = false;
     try {
-      const res = await base44.functions.invoke("ai-providers", { action: "add", endpoint, api_key });
+      const res = await base44.functions.invoke("ai-providers", { action: "add", endpoint, api_key, free_quota_confirmed });
       const data = res?.data ?? res;
       if (data.ok) {
         setProviders((prev) => [data.provider, ...prev]);
