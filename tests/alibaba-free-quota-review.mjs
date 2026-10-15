@@ -4,7 +4,7 @@ const load=async(path,plugins=[])=>{const r=await build({entryPoints:[path],bund
 const {isAlibaba,assertFreeQuota,ALIBABA_FREE_UNTIL}=await load('base44/shared/alibabaFreeQuota.ts');
 const endpoint='https://ws-test.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1';
 const now=Date.parse('2026-10-15T12:00:00Z');
-const rec={name:'Alibaba free',endpoint,api_key:'fixture',enabled:true,free_quota_only:true,free_quota_models:['qwen3.8-max'],free_quota_until:ALIBABA_FREE_UNTIL,seleccion_models:['qwen3.8-max'],available_models_meta:[{id:'qwen3.8-max',caps:{vision:true}}]};
+const rec={name:'Alibaba free',endpoint,api_key:'fixture',enabled:true,free_quota_only:true,free_quota_models:['qwen3.8-max'],free_quota_until:ALIBABA_FREE_UNTIL,video_models:['qwen3.8-max'],seleccion_models:['qwen3.8-max'],available_models_meta:[{id:'qwen3.8-max',caps:{vision:true}}]};
 assert.equal(isAlibaba(endpoint),true);
 assert.equal(isAlibaba('https://ws-test.ap-southeast-1.maas.aliyuncs.com.evil.invalid/v1'),false);
 assert.doesNotThrow(()=>assertFreeQuota(rec,'qwen3.8-max',now));
