@@ -174,7 +174,7 @@ async function runSelection(job, marked, onComplete, onError) {
         const preview = pv?.base64
           ? pv
           : dataUrl
-            ? { dataUrl, base64: dataUrl.split(",")[1] || "", isPlaceholder: false }
+            ? { ...pv, dataUrl, base64: dataUrl.split(",")[1] || "", isPlaceholder: !!pv.isPlaceholder }
             : null;
         return {
           id: it.id,
