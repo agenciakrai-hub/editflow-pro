@@ -414,7 +414,7 @@ export default function AIProviders() {
                 {ajustesModelOptions.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
               <p className="text-xs text-muted-foreground">
-                IA Visual y el modo Híbrido usan SIEMPRE este modelo exacto — sin heurística ni sustituciones. Con «Auto» se usa el mejor de los marcados.
+                IA Visual y el modo Híbrido empiezan con el modelo elegido. Con los modelos por defecto pueden usar hasta dos alternativas comprobadas del mismo proveedor. Las sesiones web no se reintentan automáticamente.
               </p>
             </div>
           )}
