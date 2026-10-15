@@ -1,3 +1,4 @@
+import { isAlibaba, assertFreeQuota } from "./alibabaFreeQuota.ts";
 import { supportsImageCount } from "./providerDefaults.ts";
 // AI Provider Adapter — seam de transporte/proveedor. Sustituye UNICAMENTE la capa
 // de transporte (InvokeLLM vs HTTP a Qwen/NVIDIA). No contiene logica de ranking,
@@ -185,6 +186,7 @@ async function callQwen(cfg: any, opts: InvokeOpts): Promise<any> {
   if (!base) throw new Error("qwen_endpoint no configurado");
   const endpoint = base + "/chat/completions";
   const model = opts.forceModel || cfg?.qwen_model || "qwen3-vl-plus";
+  assertFreeQuota({endpoint:base},model); // Legacy route has no verified free-quota policy.
   if (opts._trace) opts._trace.model = model;
   const urls = Array.isArray(opts.file_urls) ? opts.file_urls.filter(Boolean) : [];
 
@@ -500,6 +502,7 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
         }
         return out;
       } catch (e: any) {
+        if(e?.freeQuotaOnly) throw e;
         const msg = String(e?.message || e).slice(0, 300);
         if (opts._trace) {
           if (!isCustomV) {
@@ -537,7 +540,8 @@ export async function invokeVision(base44: any, opts: InvokeOpts): Promise<any> 
     }
     return out;
   } catch (e: any) {
-    const msg = String(e?.message || e).slice(0, 300);
+    if(e?.freeQuotaOnly) throw e;
+        const msg = String(e?.message || e).slice(0, 300);
     if (opts._trace) {
       if (!isCustom) {
         opts._trace.attempts.push({ provider: active, model: opts._trace.model || null, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0 });
@@ -695,12 +699,14 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   // Abortar inmediatamente con un error claro en vez de probar 273 modelos uno a uno.
   const ACCOUNT_LEVEL_STATUS = new Set([402, 403]);
   let lastErr: any;
-  const compatibleChain = fullChain.filter(({model})=>supportsImageCount(model,urls.length));
+  if(isAlibaba(base)) assertFreeQuota(rec,fullChain[0]?.model||'');
+  const compatibleChain = fullChain.filter(({model})=>supportsImageCount(model,urls.length)&&(!isAlibaba(base)||(rec.free_quota_models||[]).includes(model)));
   if(!compatibleChain.length) throw new Error(`Los modelos seleccionados de ${rec.name} no admiten ${urls.length} imágenes por petición. Elige un modelo compatible con varias fotos.`);
   const attemptChain = kraiSession ? compatibleChain.slice(0, 1) : boundedDefaults ? compatibleChain.slice(0, 3) : compatibleChain;
   const deadline = Date.now() + 85000;
   for (let mi = 0; mi < attemptChain.length; mi++) {
     const { model, auto } = attemptChain[mi];
+    assertFreeQuota(rec,model);
     if (boundedDefaults && !kraiSession && Date.now() >= deadline) break;
     const isLastModel = mi === attemptChain.length - 1;
     if (opts._trace) opts._trace.model = model;
@@ -760,12 +766,14 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       }
       return parsed;
     } catch (e: any) {
-      const msg = String(e?.message || e).slice(0, 300);
+      if(e?.freeQuotaOnly) throw e;
+        const msg = String(e?.message || e).slice(0, 300);
       if (opts._trace) opts._trace.attempts.push({ provider: `custom:${customId}`, model, ok: false, error: msg, http_status: e?.httpStatus ?? null, latency_ms: Date.now() - t0, auto_discovered: auto });
       console.log(`[aiProvider] modelo ${model} fallo: ${msg}${isLastModel ? " (sin mas modelos en este proveedor)" : ""}`);
       lastErr = e;
       // Never repeat an ambiguous request against a shared browser session.
       if (kraiSession) throw e;
+      if(isAlibaba(base)){e.freeQuotaOnly=true;throw e;}
       // ABORT early en errores a nivel de cuenta (402/403): todos los modelos del mismo
       // proveedor fallarán igual. No tiene sentido probar los 273 modelos restantes.
       if (ACCOUNT_LEVEL_STATUS.has(e?.httpStatus) || (boundedDefaults && [401,429].includes(e?.httpStatus))) {
@@ -783,9 +791,11 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
 // (para probar antes de guardar) o el id de un proveedor ya almacenado. NUNCA devuelve la API Key.
 export async function testCustomConnection(base44: any, creds: { endpoint?: string; model?: string; api_key?: string; id?: string }): Promise<any> {
   let endpoint = "", model = "", apiKey = "", name = "custom";
+  let freeRecord:any=null;
   if (creds.id) {
     const rec = await base44.asServiceRole.entities.CustomAiProvider.get(creds.id).catch(() => null);
     if (!rec) return { provider: "custom", ok: false, reason: "Proveedor no encontrado", key_present: false, via_invoke_llm: false };
+    freeRecord=rec;
     endpoint = String(rec.endpoint || "").trim().replace(/\/+$/, "") + "/chat/completions";
     model = String(rec.model || "").trim();
     apiKey = String(rec.api_key || "");
@@ -799,6 +809,7 @@ export async function testCustomConnection(base44: any, creds: { endpoint?: stri
   if (!apiKey) return { provider: "custom", ok: false, reason: "API key requerida", key_present: false, model, endpoint, via_invoke_llm: false };
   if (!endpoint) return { provider: "custom", ok: false, reason: "Endpoint requerido", key_present: true, model, endpoint: "", via_invoke_llm: false };
   if (!model) return { provider: "custom", ok: false, reason: "Modelo requerido", key_present: true, model: "", endpoint, via_invoke_llm: false };
+  assertFreeQuota(freeRecord||{endpoint},model);
   const t0 = Date.now();
   try {
     const res = await fetchWithTimeout(endpoint, {
