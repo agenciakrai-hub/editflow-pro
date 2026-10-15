@@ -1,10 +1,11 @@
+import { isAlibaba, freeQuotaAllowed } from './alibabaFreeQuota.ts';
 // Preferencias de trabajo, no clasificación de capacidades. El catálogo confirmado
 // y la prueba visual siguen siendo obligatorios; nunca se inventan identificadores.
 const PREFERENCES = [
  'gemini-3.8-flash','qwen3.8-flash','gemini-3.6-flash','claude-sonnet-5','gemini-3.5-flash-lite',
  'gemma-4-31b-it','gemma-3-12b-it','llama-3.2-11b-vision-instruct','gemma-3-4b-it',
  'nemotron-3-nano-omni-30b-a3b-reasoning','deepseek-v4.1-flash','glm-5.3-flash','kimi-k2.6','llama-3.2-90b-vision-instruct','kimi-k3','gemini-3.1-flash-lite','gemini-2.5-flash',
- 'gemini-2.5-pro','gemini-2.5-flash-lite','gemini','krai-gemini','chatgpt-kiko','krai-chatgpt','krai-auto'
+ 'qwen3.8-max','gemini-2.5-pro','gemini-2.5-flash-lite','gemini','krai-gemini','chatgpt-kiko','krai-chatgpt','krai-auto'
 ];
 const SPECIALIZED = /(?:embed|guard|safety|calibration|ising|lyria|tts|transcrib|robotic|realtime|live|parse|deplot|code|reward|detector|audio|image|diffusion|:batch|:free|preview|experimental|(?:^|[-/])exp(?:$|[-/]))/i;
 export const TASKS = ['seleccion','ajustes','album','video'];
@@ -15,7 +16,7 @@ function priority(id: string) {const stem=id.split('/').at(-1)||id;const i=PREFE
 export function candidateModels(p: any): string[] {
  const meta=new Map((p.available_models_meta||[]).map((m:any)=>[m.id,m]));
  return [...new Set<string>((p.available_models||[]).map(String))].filter(id=>{
-  const m:any=meta.get(id);return (m?.caps?.vision===true||(!webSession(p)&&m?.probe_status==='error'&&m?.caps?.vision!==false))&&!SPECIALIZED.test(id)&&!id.startsWith('~')&&priority(id)<1000;
+  const m:any=meta.get(id);if(isAlibaba(p.endpoint)&&!freeQuotaAllowed(p,id))return false;return ((isAlibaba(p.endpoint)&&freeQuotaAllowed(p,id))||m?.caps?.vision===true||(!webSession(p)&&m?.probe_status==='error'&&m?.caps?.vision!==false))&&!SPECIALIZED.test(id)&&!id.startsWith('~')&&priority(id)<1000;
  }).sort((a,b)=>priority(a)-priority(b)||a.localeCompare(b));
 }
 export function healthyModel(p:any,id:string,now=Date.now()) {
