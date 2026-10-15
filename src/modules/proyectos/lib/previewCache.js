@@ -33,7 +33,7 @@ export async function cachePreviews(entries) {
   await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
     for (const e of entries) {
-      if (e.hash && e.dataUrl) tx.objectStore(STORE).put({ lo: e.dataUrl, hi: e.hiResDataUrl || null }, e.hash);
+      if (e.hash && e.dataUrl) tx.objectStore(STORE).put({ lo: e.dataUrl, hi: e.hiResDataUrl || null, isPlaceholder: !!e.isPlaceholder, width: e.width || null, height: e.height || null }, e.hash);
     }
     tx.oncomplete = resolve;
     tx.onerror = () => reject(tx.error);
@@ -55,7 +55,7 @@ export async function getCachedPreviews(hashes, { includeHiRes = true } = {}) {
         // Compatibilidad: la caché v2 guardaba un string suelto (solo dataUrl).
         // La v3 guarda { lo, hi }. Se normalizan ambos al formato esperado.
         if (typeof r.result === "string") map.set(h, { dataUrl: r.result, hiResDataUrl: null });
-        else map.set(h, { dataUrl: r.result.lo, hiResDataUrl: includeHiRes ? (r.result.hi || null) : null });
+        else map.set(h, { dataUrl: r.result.lo, hiResDataUrl: includeHiRes ? (r.result.hi || null) : null, isPlaceholder: !!r.result.isPlaceholder, width: r.result.width, height: r.result.height });
       };
     }
     tx.oncomplete = resolve;
@@ -76,7 +76,7 @@ export async function getCachedPreview(hash) {
     r.onsuccess = () => {
       if (!r.result) return resolve(null);
       if (typeof r.result === "string") resolve({ dataUrl: r.result, hiResDataUrl: null });
-      else resolve({ dataUrl: r.result.lo, hiResDataUrl: r.result.hi || null });
+      else resolve({ dataUrl: r.result.lo, hiResDataUrl: r.result.hi || null, isPlaceholder: !!r.result.isPlaceholder, width: r.result.width, height: r.result.height });
     };
     tx.onerror = () => reject(tx.error);
   });
