@@ -274,7 +274,7 @@ Return JSON: finalists (array, one entry per candidate id), each with id, rank (
 // Tercera llamada IA entre finalistas. Devuelve byId de los finalistas re-analizados.
 async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>, category: string | null = null, trace?: any, overrides: any = {}): Promise<Record<string, any>> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
-  const prompt = buildFinalPrompt(ids, byIdAll) + SELECTION_POLICY;
+  const prompt = buildFinalPrompt(ids, byIdAll) + SELECTION_POLICY + '\nReturn face_visibility per finalist: visible, not_visible, no_people or uncertain. Only unassessable facial dimensions may be null; all non-facial scores, overall and confidence are required.';
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
     ...overrides,
@@ -379,36 +379,7 @@ async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: 
 const INDEPENDENT_MAX = 6;
 
 function buildIndependentPrompt(ids: string[]): string {
-  return `You are an elite professional photo editor assessing ${ids.length} photos INDIVIDUALLY. These photos come from DIFFERENT moments and scenes — do NOT compare or rank them against each other. Judge each one on its own merits.
-
-STEP 1 — For each photo, classify its genre (portrait, wedding, event, group, architecture, interior, landscape, product, lifestyle, documentary).
-
-STEP 2 — For each photo, analyze independently across ALL dimensions. Each score is 0-100, or null when NOT APPLICABLE (no people → face_quality, eye_quality, expression = null). NEVER return 0 to mean "not applicable" — return null. Return 0 only for a genuinely evaluated, critically bad dimension:
-- technical: file integrity, noise, artifacts, capture problems
-- sharpness: global sharpness
-- focus: is the SUBJECT in sharp focus? Distinguish artistic background blur from accidental subject blur.
-- face_quality: if people present, face visibility/quality. No people → null.
-- eye_quality: eyes open vs closed for every visible face. No people → null.
-- expression: natural/emotive vs awkward. No people → null.
-- composition: balance, framing, lines, distracting elements, awkward crops
-- exposure: tonal distribution, clipping, severe over/underexposure
-- color_quality: white balance, color cast, skin tones
-- subject_quality: clarity/presence of the main subject
-- moment_quality: decisive moment, emotion, interaction (people/events); stillness/cleanliness for architecture/landscape
-- distraction_penalty: HIGHER = cleaner (100 = no distractions, 0 = very distracting). Inverted scale.
-- overall: your composite judgment WEIGHTED BY GENRE
-- confidence: 0-100 how sure you are of THIS photo's assessment. Use >=70 for decisions you are confident about (clear SELECT or clear REJECT), <60 for genuine uncertainty (REVIEW).
-
-STEP 3 — Decide INDEPENDENTLY for each photo (no comparison, no single-TOP_PICK limit):
-- TOP_PICK: an exceptional, clearly deliverable frame.
-- SELECT: a clearly good, deliverable frame you are confident about.
-- REVIEW: ONLY when you are genuinely uncertain (borderline faces/exposure, low confidence in either direction). Do NOT default to REVIEW a photo you are confident is bad.
-- REJECT: a frame you are confident is clearly not worth keeping — a clear combined technical defect, or clearly not deliverable. Use reject_reasons from: CRITICAL_BLUR, FOCUS_FAILURE, EYES_CLOSED, POOR_EXPRESSION, POOR_COMPOSITION, SEVERE_EXPOSURE_FAILURE, OBSTRUCTED_SUBJECT, CORRUPT, CLEARLY_NOT_DELIVERABLE.
-Multiple photos can be TOP_PICK or SELECT; none need to be. Set rank to 1 for every photo.
-
-Candidate photo ids: ${ids.join(', ')}. The images are attached in the same order.
-
-Return JSON: keep_ids (all SELECT+TOP_PICK ids), category (dominant genre or null), reason (short), and rankings (one object per candidate with id, rank (always 1), status, reject_reasons, note, analysis_complete, and the ${SCORE_KEYS.join(', ')} scores).`;
+  return buildPrompt(ids, true) + `\nINDEPENDENT SINGLETONS: these images are NOT one burst and must NOT be compared. Each id is the only representative of its own scene: keep EVERY id, rank=1 for each, status=SELECT with its honest defects and confidence. Never reject an image as a duplicate of another scene. Return face_visibility and the exact complete score contract above for EVERY id.\n`;
 }
 
 async function analyzeIndependent(base44: any, key: string, ids: string[], uploaded: Record<string, string>, trace?: any, overrides: any = {}): Promise<any> {
