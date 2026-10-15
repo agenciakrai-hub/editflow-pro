@@ -11,7 +11,10 @@
 
 import { selectBursts } from "@/lib/ai/aiGateway";
 import { selectionUpdates } from "./selectionPersistence";
-import { getCachedPreviews } from "./previewCache";
+import { getCachedPreviews, getCachedPreview, cachePreviews } from "./previewCache";
+import { fileIdentity, pendingSelectionItems } from "./selectionResume";
+import { prepareSelectionPreview } from "@/lib/rawaistudio/selectionPreviewValidation";
+import { extractRawPreview } from "@/lib/rawaistudio/rawPreviewReader";
 import {
   listFingerprintsByFolder,
   bulkUpdateFingerprints,
@@ -65,7 +68,7 @@ function notify(job) {
 // Inicia la selección IA en segundo plano. Devuelve el job inmediatamente (sin await).
 // El procesado corre en segundo plano; los callbacks notifican progreso, completado
 // y error. Si ya hay un job running para la carpeta, solo añade el callback.
-export function startAiSelection({ projectId, folderId, items, selectedIds, onComplete, onProgress, onError }) {
+export function startAiSelection({ projectId, folderId, items, selectedIds, resumeFrom = null, onComplete, onProgress, onError }) {
   const key = `${projectId}:${folderId}`;
   const existing = activeJobs.get(key);
   if (existing && existing.status === "running") {
@@ -86,6 +89,7 @@ export function startAiSelection({ projectId, folderId, items, selectedIds, onCo
     canceled: false,
     subscribers: new Set(),
     items: marked,
+    resumeFrom,
   };
   if (onProgress) job.subscribers.add(onProgress);
   activeJobs.set(key, job);
@@ -97,6 +101,34 @@ export function startAiSelection({ projectId, folderId, items, selectedIds, onCo
 async function runSelection(job, marked, onComplete, onError) {
   const key = `${job.projectId}:${job.folderId}`;
   let selJobId = null;
+  let savedFingerprints;
+  let savedFingerprintIds = new Set(job.resumeFrom?.stage_progress?.completed_fingerprint_ids || []);
+  let targetFingerprintIds = [];
+  try {
+    savedFingerprints = await listFingerprintsByFolder(job.folderId);
+    if (job.resumeFrom) {
+      const fresh = await base44.entities.AlbumAISelection.get(job.resumeFrom.id);
+      if (!["failed", "canceled"].includes(fresh.status)) throw new Error("El trabajo anterior no está detenido");
+      marked = pendingSelectionItems(job.items, savedFingerprints, fresh);
+      savedFingerprintIds = new Set(fresh.stage_progress?.completed_fingerprint_ids || []);
+      targetFingerprintIds = fresh.stage_progress?.target_fingerprint_ids || savedFingerprints.map(fp => fp.id);
+    } else {
+      const byKey = new Map(savedFingerprints.map(fp => [fileIdentity(fp), fp.id]));
+      targetFingerprintIds = marked.map(it => byKey.get(fileIdentity(it)));
+      if (targetFingerprintIds.some(id => !id)) throw new Error("No se pudo identificar cada archivo guardado");
+    }
+    if (!marked.length) throw new Error("No quedan fotos pendientes en este trabajo");
+    job.total = marked.length;
+    notify(job);
+  } catch (error) {
+    job.status = "failed"; job.error = error.message; notify(job);
+    onError?.(error); activeJobs.delete(key); return;
+  }
+  const checkpointProgress = () => ({
+    photos_done: savedFingerprintIds.size,
+    completed_fingerprint_ids: [...savedFingerprintIds],
+    target_fingerprint_ids: targetFingerprintIds,
+  });
 
   // Cancela jobs "running" anteriores de esta carpeta en la base de datos.
   try {
@@ -113,7 +145,8 @@ async function runSelection(job, marked, onComplete, onError) {
       folder_id: job.folderId,
       status: "running",
       stage: "e2",
-      stats: { photo_count: marked.length },
+      stats: { photo_count: targetFingerprintIds.length, resumed_from: job.resumeFrom?.id || null, pending_at_start: marked.length },
+      stage_progress: checkpointProgress(),
     });
     if (!j?.id) throw new Error("El servidor no devolvió la identidad del trabajo");
     selJobId = j.id;
@@ -151,7 +184,6 @@ async function runSelection(job, marked, onComplete, onError) {
       chunks.push(sorted.slice(i, i + CHUNK_SIZE));
     }
 
-    const savedFingerprints = await listFingerprintsByFolder(job.folderId);
     const savedIds = new Set();
     const allKeep = new Set();
     const allMeta = new Map();
@@ -168,15 +200,26 @@ async function runSelection(job, marked, onComplete, onError) {
       if (chunkHashes.length) {
         try { previewByHash = await getCachedPreviews(chunkHashes, { includeHiRes: false }); } catch {}
       }
-      const aiItems = chunk.map((it) => {
+      const aiItems = [];
+      for (const it of chunk) {
         const pv = previewByHash.get(it.fingerprint?.fingerprint_hash);
         const dataUrl = pv?.dataUrl;
-        const preview = pv?.base64
+        let preview = pv?.base64
           ? pv
           : dataUrl
             ? { ...pv, dataUrl, base64: dataUrl.split(",")[1] || "", isPlaceholder: !!pv.isPlaceholder }
             : null;
-        return {
+        // Recover only unreadable thumbnails, without loading all high-res images.
+        let prepared = await prepareSelectionPreview(preview, it.file, extractRawPreview);
+        if (!prepared && it.fingerprint?.fingerprint_hash) {
+          const full = await getCachedPreview(it.fingerprint.fingerprint_hash);
+          prepared = await prepareSelectionPreview(full, it.file, extractRawPreview);
+        }
+        if (prepared) {
+          if (prepared.dataUrl !== preview?.dataUrl) await cachePreviews([{ hash: it.fingerprint.fingerprint_hash, ...prepared }]);
+          preview = prepared;
+        }
+        aiItems.push({
           id: it.id,
           file: it.file,
           fingerprint: it.fingerprint,
@@ -185,8 +228,8 @@ async function runSelection(job, marked, onComplete, onError) {
           captureTime: it.captureTime ?? it.fingerprint?.capture_time ?? null,
           cameraInfo: it.cameraInfo || { make: it.fingerprint?.camera_make, model: it.fingerprint?.camera_model },
           technical: it.technical || { sharpness: 0, exposureScore: 0.5, corrupt: false },
-        };
-      });
+        });
+      }
 
       const photosBefore = photosDone;
       const { keep, meta, trace } = await selectBursts(aiItems, (d, t) => {
@@ -202,13 +245,14 @@ async function runSelection(job, marked, onComplete, onError) {
           const updates = selectionUpdates(batchMeta, marked, savedFingerprints);
           if (updates.length < batchMeta.size) throw new Error("No se pudo emparejar toda la ráfaga con las fotos guardadas");
           await bulkUpdateFingerprints(updates);
+          for (const update of updates) savedFingerprintIds.add(update.id);
           for (const [id, result] of batchMeta) {
             savedIds.add(id);
             const selected = result.status === "SELECT" || result.status === "TOP_PICK";
             job.results.set(id, { status: result.status, rating: selected ? 5 : result.status === "REJECT" ? 0 : 3, aiReview: !selected && result.status !== "REJECT" });
           }
           notify(job);
-          await base44.entities.AlbumAISelection.update(selJobId, { stage_progress: { photos_done: savedIds.size } });
+          await base44.entities.AlbumAISelection.update(selJobId, { stage_progress: checkpointProgress() });
         },
       });
       if (job.canceled) return;
@@ -245,8 +289,8 @@ async function runSelection(job, marked, onComplete, onError) {
     const selCount = updates.filter(u => u.rating === 5).length;
     await updateFolder(job.folderId, { selection_status: selCount > 0 ? "completed" : "pending", last_modified: new Date().toISOString() });
     await base44.entities.AlbumAISelection.update(selJobId, {
-      status: "completed", stage: "done", stage_progress: { photos_done: savedIds.size },
-      stats: { photo_count: marked.length, provider_used: lastTrace?.provider || null },
+      status: "completed", stage: "done", stage_progress: checkpointProgress(),
+      stats: { photo_count: targetFingerprintIds.length, resumed_from: job.resumeFrom?.id || null, provider_used: lastTrace?.provider || null },
     });
     job.status = "completed";
     notify(job);
@@ -266,7 +310,8 @@ async function runSelection(job, marked, onComplete, onError) {
       try {
         await base44.entities.AlbumAISelection.update(selJobId, {
           status: "failed",
-          stats: { photo_count: marked.length, ...(e?.selectionDiagnostics || {}) },
+          stage_progress: checkpointProgress(),
+          stats: { photo_count: targetFingerprintIds.length, resumed_from: job.resumeFrom?.id || null, ...(e?.selectionDiagnostics || {}) },
           error: String(e?.message || "Error").slice(0, 500),
         });
       } catch {}
