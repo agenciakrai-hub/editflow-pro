@@ -1,0 +1,9 @@
+import assert from 'node:assert/strict';import {build} from 'esbuild';
+const r=await build({entryPoints:['base44/shared/aiProviderAdapter.ts'],bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'runtime',setup(b){b.onResolve({filter:/^base44:runtime$/},()=>({path:'runtime',namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},()=>({contents:`export const secrets={get:()=>''};`,loader:'js'}));}}]});
+const {invokeVision}=await import('data:text/javascript;base64,'+Buffer.from(r.outputFiles[0].text).toString('base64'));
+const rec={name:'Fixture API',enabled:true,api_key:'fixture',endpoint:'https://test.invalid/v1',seleccion_models:['first','second','third'],available_models_meta:['first','second','third','unmarked'].map(id=>({id,caps:{vision:true}}))};
+const cfg={model_defaults_policy:'verified-three-v1'};const b={asServiceRole:{entities:{CustomAiProvider:{get:async()=>rec},AiProviderConfig:{list:async()=>[cfg]}}}};
+const saved=globalThis.fetch;
+try{for(const mode of ['fail','quota','recover']){const calls=[];globalThis.fetch=async(_u,o)=>{calls.push(JSON.parse(o.body).model);const status=mode==='quota'?429:mode==='recover'&&calls.length===3?200:500;return new Response(status===200?JSON.stringify({choices:[{message:{content:'{"ok":true}'}}]}):'unavailable',{status});};const call=()=>invokeVision(b,{task:'seleccion',forceProvider:'custom:api',prompt:'test',file_urls:['data:image/png;base64,abc'],response_json_schema:{type:'object'}});if(mode==='recover')assert.deepEqual(await call(),{ok:true});else await assert.rejects(call());assert.deepEqual(calls,mode==='quota'?['first']:['first','second','third']);}}
+finally{globalThis.fetch=saved;}
+console.log('PASS actual runtime: <=3 selected models, no repeated request or unmarked discovery, account quota stops, third-model recovery works');

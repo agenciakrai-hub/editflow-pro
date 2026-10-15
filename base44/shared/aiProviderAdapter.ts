@@ -591,8 +591,10 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     .map((m: any) => String(m || "").trim())
     .filter(Boolean);
   let exactModel = "";
+  let boundedDefaults = false;
   try {
     const cfg = await getConfig(base44);
+    boundedDefaults = cfg?.model_defaults_policy === "verified-three-v1";
     const exactRaw = opts.task === "ajustes" ? cfg?.active_model_ajustes : opts.task === "video" ? cfg?.active_model_video : cfg?.active_model_seleccion;
     exactModel = String(exactRaw || "").trim();
   } catch {}
@@ -647,7 +649,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   // Cadena secundaria (auto-descubrimiento): modelos verificados vision-capable del
   // proveedor que NO están marcados para esta tarea. Solo se intentan si la primaria falla.
   const markedSet = new Set(marked);
-  const autoChain: string[] = skipAuto ? [] : metaList
+  const autoChain: string[] = skipAuto || boundedDefaults ? [] : metaList
     .filter((e: any) => e?.caps?.vision === true && !markedSet.has(String(e?.id || "")))
     .map((e: any) => String(e?.id || ""))
     .filter(Boolean);
@@ -695,9 +697,11 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   // Abortar inmediatamente con un error claro en vez de probar 273 modelos uno a uno.
   const ACCOUNT_LEVEL_STATUS = new Set([402, 403]);
   let lastErr: any;
-  const attemptChain = kraiSession ? fullChain.slice(0, 1) : fullChain;
+  const attemptChain = kraiSession ? fullChain.slice(0, 1) : boundedDefaults ? fullChain.slice(0, 3) : fullChain;
+  const deadline = Date.now() + 85000;
   for (let mi = 0; mi < attemptChain.length; mi++) {
-    const { model, auto } = fullChain[mi];
+    const { model, auto } = attemptChain[mi];
+    if (boundedDefaults && !kraiSession && Date.now() >= deadline) break;
     const isLastModel = mi === attemptChain.length - 1;
     if (opts._trace) opts._trace.model = model;
     console.log(`[aiProvider] task=${opts.task} provider=${rec.name} model=${model} (${mi + 1}/${fullChain.length})${mi > 0 ? " failover-modelo" : ""}${auto ? " auto-descubierto" : ""}`);
@@ -719,7 +723,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      }, kraiSession ? 100000 : PROVIDER_TIMEOUT_MS, kraiSession ? 1 : 2);
+      }, kraiSession ? 100000 : boundedDefaults ? Math.min(30000, Math.max(1, deadline-Date.now())) : PROVIDER_TIMEOUT_MS, kraiSession || boundedDefaults ? 1 : 2);
       const latency = Date.now() - t0;
       if (opts._trace) { opts._trace.request_ms = latency; opts._trace.http_status = res.status; opts._trace.endpoint = endpoint; }
       if (!res.ok) {
@@ -764,7 +768,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       if (kraiSession) throw e;
       // ABORT early en errores a nivel de cuenta (402/403): todos los modelos del mismo
       // proveedor fallarán igual. No tiene sentido probar los 273 modelos restantes.
-      if (ACCOUNT_LEVEL_STATUS.has(e?.httpStatus)) {
+      if (ACCOUNT_LEVEL_STATUS.has(e?.httpStatus) || (boundedDefaults && [401,429].includes(e?.httpStatus))) {
         const accountErr: any = new Error(`[${rec.name}] ${msg}`);
         accountErr.httpStatus = e.httpStatus;
         accountErr.accountLevel = true;

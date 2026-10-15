@@ -42,7 +42,7 @@
     "gemini_model": {
       "type": "string",
       "default": "gemini-2.5-flash",
-      "description": "Modelo multimodal de Gemini. \u00danico modelo admitido: gemini-2.5-flash."
+      "description": "Modelo multimodal de Gemini. Único modelo admitido: gemini-2.5-flash."
     },
     "base44_enabled": {
       "type": "boolean",
@@ -60,20 +60,20 @@
     },
     "active_model_seleccion": {
       "type": "string",
-      "description": "Modelo EXACTO para Selecci\u00f3n IA dentro del proveedor activo (custom:<id>): los motores lo usan SIEMPRE, sin heur\u00edstica. Debe pertenecer a la lista marcada (seleccion_models) del proveedor activo. Vac\u00edo = autom\u00e1tico (mejor modelo marcado)."
+      "description": "Modelo EXACTO para Selección IA dentro del proveedor activo (custom:<id>): los motores lo usan SIEMPRE, sin heurística. Debe pertenecer a la lista marcada (seleccion_models) del proveedor activo. Vacío = automático (mejor modelo marcado)."
     },
     "active_model_ajustes": {
       "type": "string",
-      "description": "Modelo EXACTO para Ajustes IA (IA Visual e H\u00edbrido) dentro del proveedor activo (custom:<id>): ambos modos lo usan SIEMPRE, sin heur\u00edstica ni sustituciones. Debe pertenecer a la lista marcada (ajustes_models) del proveedor activo. Vac\u00edo = autom\u00e1tico (mejor modelo marcado)."
+      "description": "Modelo EXACTO para Ajustes IA (IA Visual e Híbrido) dentro del proveedor activo (custom:<id>): ambos modos lo usan SIEMPRE, sin heurística ni sustituciones. Debe pertenecer a la lista marcada (ajustes_models) del proveedor activo. Vacío = automático (mejor modelo marcado)."
     },
     "active_album": {
       "type": "string",
       "default": "",
-      "description": "Proveedor activo para la herramienta \u00c1LBUM (selecci\u00f3n de fotos + maquetaci\u00f3n de lienzos de EditFlow Album AI). Vac\u00edo = cadena por defecto de Album AI (gemini_paid \u2192 qwen \u2192 nvidia). Tambi\u00e9n: gemini_paid, qwen, nvidia o custom:<id> de CustomAiProvider. El activo se usa PRIMERO; si falla, la cadena de Album AI contin\u00faa (failover)."
+      "description": "Proveedor activo para la herramienta ÁLBUM (selección de fotos + maquetación de lienzos de EditFlow Album AI). Vacío = cadena por defecto de Album AI (gemini_paid → qwen → nvidia). También: gemini_paid, qwen, nvidia o custom:<id> de CustomAiProvider. El activo se usa PRIMERO; si falla, la cadena de Album AI continúa (failover)."
     },
     "active_model_album": {
       "type": "string",
-      "description": "Modelo EXACTO para \u00c1lbum dentro del proveedor activo: el motor lo usa SIEMPRE para el proveedor activo. Para proveedores propios debe pertenecer a album_models del proveedor. Vac\u00edo = autom\u00e1tico (mejor modelo marcado o modelo por defecto del proveedor)."
+      "description": "Modelo EXACTO para Álbum dentro del proveedor activo: el motor lo usa SIEMPRE para el proveedor activo. Para proveedores propios debe pertenecer a album_models del proveedor. Vacío = automático (mejor modelo marcado o modelo por defecto del proveedor)."
     },
     "active_video_chain": {
       "type": "array",
@@ -81,16 +81,20 @@
         "type": "string"
       },
       "default": [],
-      "description": "Cadena ordenada de proveedores para V\u00eddeo (EMOTIVE FILM IA). Cada entrada es un valor de proveedor (custom:<id>, qwen, nvidia, gemini, base44). El motor intenta el PRIMERO; si falla (todos sus modelos), salta al SIGUIENTE. Por defecto se seleccionan 3 proveedores. Vac\u00edo = usa el proveedor activo de Selecci\u00f3n IA como fallback."
+      "description": "Cadena ordenada de proveedores para Vídeo (EMOTIVE FILM IA). Cada entrada es un valor de proveedor (custom:<id>, qwen, nvidia, gemini, base44). El motor intenta el PRIMERO; si falla (todos sus modelos), salta al SIGUIENTE. Por defecto se seleccionan 3 proveedores. Vacío = usa el proveedor activo de Selección IA como fallback."
     },
     "active_model_video": {
       "type": "string",
-      "description": "Modelo EXACTO para V\u00eddeo dentro del proveedor PRIMARIO de la cadena (el primero de active_video_chain). Debe pertenecer a la lista marcada (video_models) de ese proveedor. Vac\u00edo = autom\u00e1tico (mejor modelo marcado de v\u00eddeo). Los dem\u00e1s proveedores de la cadena usan auto."
+      "description": "Modelo EXACTO para Vídeo dentro del proveedor PRIMARIO de la cadena (el primero de active_video_chain). Debe pertenecer a la lista marcada (video_models) de ese proveedor. Vacío = automático (mejor modelo marcado de vídeo). Los demás proveedores de la cadena usan auto."
     },
     "builtin_migrated": {
       "type": "boolean",
       "default": false,
       "description": "true tras migrar los proveedores integrados (Gemini/Qwen/NVIDIA) a filas de CustomAiProvider. Evita recrearlos si el administrador los borra."
+    },
+    "model_defaults_policy": {
+      "type": "string",
+      "description": "verified-three-v1 limita la recuperación automática a tres modelos marcados, sin descubrir modelos adicionales y con presupuesto total acotado."
     }
   },
   "required": [

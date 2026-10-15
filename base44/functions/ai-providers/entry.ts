@@ -1,3 +1,4 @@
+import { defaultsPlan, DEFAULT_PROBE_IMAGE, validProbeAnswer, webSession } from '../../shared/providerDefaults.ts';
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import { secrets } from 'base44:runtime';
 import {
@@ -307,6 +308,32 @@ export default async function(req: Request): Promise<Response> {
     // ------------------------------------------------------------------
     // Proveedores propios (CustomAiProvider).
     // ------------------------------------------------------------------
+    if (action === 'get-defaults' || action === 'apply-defaults') {
+      const providers:any[]=await base44.asServiceRole.entities.CustomAiProvider.list('-updated_date',100);
+      const plan=defaultsPlan(providers);
+      if(action==='get-defaults') return Response.json({ok:true,plan});
+      if(!plan.ready) return Response.json({ok:false,reason:'Ningún proveedor API tiene una prueba visual reciente satisfactoria. Se conserva la configuración anterior.'});
+      const running=await base44.asServiceRole.entities.AlbumAISelection.filter({status:'running'},'-updated_date',1);
+      if(running?.length) return Response.json({ok:false,reason:'Hay una selección en curso. Espera a que termine antes de cambiar sus modelos.'});
+      const oldConfig=await getConfigRecord(base44);
+      const changed:any[]=[];
+      try {
+        for(const row of plan.rows) {
+          const before=providers.find(p=>p.id===row.id);
+          // Una sesión web sin prueba no se convierte en proveedor automático masivo.
+          // Sus opciones manuales existentes se conservan si no hay candidatos.
+          changed.push({id:before.id,...Object.fromEntries(['seleccion','ajustes','album','video','edicion'].map(t=>[t+'_models',[...(before[t+'_models']||[])]]))});
+          await base44.asServiceRole.entities.CustomAiProvider.update(row.id,row.patch);
+        }
+        const config=oldConfig?await base44.asServiceRole.entities.AiProviderConfig.update(oldConfig.id,plan.config):await base44.asServiceRole.entities.AiProviderConfig.create(plan.config);
+        return Response.json({ok:true,plan,config});
+      } catch(e:any) {
+        let restored=true;
+        for(const before of changed.reverse()) try {await base44.asServiceRole.entities.CustomAiProvider.update(before.id,Object.fromEntries(['seleccion','ajustes','album','video','edicion'].map(t=>[t+'_models',before[t+'_models']||[]])));}catch{restored=false;}
+        return Response.json({ok:false,reason:restored?'No se pudo guardar. Se han recuperado las listas anteriores.':'No se pudo completar la configuración. Revisa las listas de modelos antes de usarla.'});
+      }
+    }
+
     if (action === 'list') {
       // Migra (una sola vez) los proveedores integrados a filas unificadas.
       await ensureBuiltinRows(base44);
@@ -474,32 +501,35 @@ export default async function(req: Request): Promise<Response> {
     //     (vision=null, no verificado) para evitar falsos negativos.
     // Persiste el resultado en available_models_meta (caché: no se re-prueba hasta que
     // el usuario pulse "Probar de nuevo" o cambie el endpoint/key).
-    if (action === 'probe-vision') {
+    if (action === 'probe-vision' || action === 'probe-default') {
+      const defaultProbe=action==='probe-default';
       const id = String(body.id || '');
       const model = String(body.model || '').trim();
-      const image = String(body.image || '').trim();
+      const image = defaultProbe?DEFAULT_PROBE_IMAGE:String(body.image || '').trim();
       if (!id || !model) return Response.json({ ok: false, reason: 'Faltan id de proveedor o modelo' });
       if (!image || !/^data:image\/[a-z+]+;base64,/i.test(image)) {
         return Response.json({ ok: false, reason: 'Se requiere una imagen de prueba (data URL JPEG)' });
       }
       const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(() => null);
       if (!rec) return Response.json({ ok: false, reason: 'Proveedor no encontrado' });
+      if(defaultProbe&&(!rec.enabled||webSession(rec)||!rec.available_models?.includes(model))) return Response.json({ok:false,reason:'Modelo no disponible para comprobación API.'});
       const key = effectiveKey(rec);
       if (!key) return Response.json({ ok: false, reason: 'El proveedor no tiene API key' });
       const base = String(rec.endpoint || '').trim().replace(/\/+$/, '');
       if (!base) return Response.json({ ok: false, reason: 'El proveedor no tiene endpoint' });
       const endpoint = base + '/chat/completions';
       const content = [
-        { type: 'text', text: 'Describe brevemente esta imagen en una frase corta.' },
+        { type: 'text', text: defaultProbe?'Inspect the attached image. Return only JSON with the dominant color in each quadrant, using English color names: top_left, top_right, bottom_left, bottom_right. Do not guess if the image is unavailable.':'Describe brevemente esta imagen en una frase corta.' },
         { type: 'image_url', image_url: { url: image } },
       ];
       let probeStatus: 'ok' | 'rejected' | 'error' = 'error';
       let vision: boolean | null = null;
       let reason = '';
+      let probeHttp:number|null=null;
       const t0 = Date.now();
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 60000);
+        const timer = setTimeout(() => controller.abort(), defaultProbe?25000:60000);
         let res: Response;
         try {
           res = await fetch(endpoint, {
@@ -509,13 +539,14 @@ export default async function(req: Request): Promise<Response> {
             signal: controller.signal,
           });
         } finally { clearTimeout(timer); }
+        probeHttp=res.status;
         const txt = await res.text().catch(() => '');
         if (res.ok) {
           let data: any = null;
           try { data = JSON.parse(txt); } catch {}
           const out = String(data?.choices?.[0]?.message?.content || '').trim();
-          if (out) { probeStatus = 'ok'; vision = true; reason = `OK: ${out.slice(0, 140)}`; }
-          else { probeStatus = 'error'; vision = null; reason = 'Respuesta vacía del modelo'; }
+          if (out && (!defaultProbe||validProbeAnswer(out))) { probeStatus = 'ok'; vision = true; reason = defaultProbe?'Imagen y cuatro posiciones reconocidas correctamente.':`OK: ${out.slice(0, 140)}`; }
+          else { probeStatus = 'error'; vision = null; reason = defaultProbe?'La respuesta no demuestra que el modelo haya visto la imagen.':'Respuesta vacía del modelo'; }
         } else {
           const low = txt.toLowerCase();
           const rejectsImage = (res.status === 400 || res.status === 422 || res.status === 415) &&
@@ -548,9 +579,10 @@ export default async function(req: Request): Promise<Response> {
       await base44.asServiceRole.entities.CustomAiProvider.update(id, { available_models_meta: meta });
       return Response.json({
         ok: vision === true,
+        http_status:probeHttp,
         vision,
         status: probeStatus,
-        reason,
+        reason:reason.replaceAll(key,'[oculta]'),
         latency_ms: Date.now() - t0,
         model,
         provider: id,

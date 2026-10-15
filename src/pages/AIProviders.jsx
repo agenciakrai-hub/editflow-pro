@@ -16,6 +16,9 @@ export default function AIProviders() {
   const [saving, setSaving] = useState(false);
   const [providers, setProviders] = useState([]);
   const [active, setActive] = useState({ active_seleccion: "base44", active_ajustes: "", active_model_seleccion: "", active_model_ajustes: "", active_album: "", active_model_album: "", active_video_chain: [], active_model_video: "" });
+  const [defaultsBusy, setDefaultsBusy] = useState(false);
+  const [defaultsProgress, setDefaultsProgress] = useState("");
+  const [defaultsReport, setDefaultsReport] = useState(null);
   const [adding, setAdding] = useState(false);
   const [addResult, setAddResult] = useState(null);
   const [busyAction, setBusyAction] = useState(null);
@@ -162,6 +165,41 @@ export default function AIProviders() {
     setSaving(false);
   };
 
+  const selectDefaults = async () => {
+    setDefaultsBusy(true); setDefaultsReport(null);
+    const checks=[];
+    try {
+      setDefaultsProgress("Revisando los modelos disponibles…");
+      const prepared=await base44.functions.invoke("ai-providers",{action:"get-defaults"});
+      const plan=prepared?.data?.plan;
+      if(!plan) throw new Error("No se pudo obtener el catálogo actual.");
+      for(const row of plan.rows){
+        if(row.web_session) continue;
+        let confirmed=0;
+        for(const model of row.candidates){
+          if(confirmed===3) break;
+          setDefaultsProgress(`Comprobando ${row.name}: ${model} (${confirmed}/3 confirmados)…`);
+          const response=await base44.functions.invoke("ai-providers",{action:"probe-default",id:row.id,model});
+          const result=response?.data??response;
+          checks.push({provider:row.name,model,ok:!!result.ok,reason:result.reason});
+          if(result.ok) confirmed++;
+          // Una cuota o falta de permisos afecta a toda la cuenta: no insistir.
+          if([401,402,403,429].includes(result.http_status)) break;
+        }
+      }
+      setDefaultsProgress("Guardando los modelos comprobados…");
+      const response=await base44.functions.invoke("ai-providers",{action:"apply-defaults"});
+      const result=response?.data??response;
+      setDefaultsReport({...result,checks});
+      if(!result.ok) throw new Error(result.reason||"No se pudo aplicar la configuración.");
+      await load();
+      toast({title:"Modelos por defecto guardados",description:"Se han elegido modelos API con prueba visual satisfactoria. Las sesiones web quedan como opciones manuales."});
+    } catch(e) {
+      setDefaultsReport(previous=>previous||{ok:false,checks,reason:e.message});
+      toast({title:"Revisión de modelos",description:e.message,variant:"destructive"});
+    } finally {setDefaultsBusy(false);setDefaultsProgress("");}
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -277,6 +315,28 @@ export default function AIProviders() {
         </p>
       </div>
 
+      <section className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <button onClick={selectDefaults} disabled={defaultsBusy||saving||!!busyAction}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40">
+          {defaultsBusy?<Loader2 className="h-4 w-4 animate-spin"/>:<Sparkles className="h-4 w-4"/>}
+          Selección de modelos por defecto
+        </button>
+        <p className="text-xs text-muted-foreground">Comprueba y guarda hasta tres modelos compatibles por proveedor para Selección, Ajustes, Álbum y planificación de vídeo. Prioriza API y modelos estables; la edición de JPG solo se configura donde la app la admite. Las pruebas usan una imagen sintética y pueden consumir una pequeña cantidad de uso de API.</p>
+        <p className="text-xs text-muted-foreground">No garantiza ausencia de fallos. Si un proveedor tiene menos de tres modelos compatibles, utiliza los disponibles. No genera vídeos ni modifica tus fotografías.</p>
+        {defaultsProgress&&<p role="status" className="text-sm">{defaultsProgress}</p>}
+        {defaultsReport&&<div className="space-y-3" aria-label="Resultado de modelos por defecto">
+          <p className="text-sm font-medium">{defaultsReport.ok?"Configuración guardada":defaultsReport.reason}</p>
+          {defaultsReport.plan?.rows?.map(row=><div key={row.id} className="rounded-md border p-3 text-sm">
+            <p className="font-semibold">{row.name}{row.web_session?" · sesión web (uso manual)":" · API"}</p>
+            <p>Selección / Ajustes / Álbum / Planificación de vídeo: {row.patch.seleccion_models.join(" · ")||"Sin modelos comprobados"}</p>
+            <p>Edición de JPG: {row.patch.edicion_models.join(" · ")||"No disponible mediante esta conexión"}</p>
+          </div>)}
+          {defaultsReport.checks?.some(c=>!c.ok)&&<details><summary className="cursor-pointer text-sm">Modelos no confirmados</summary>
+            {defaultsReport.checks.filter(c=>!c.ok).map((c,i)=><p key={i} className="text-xs">{c.provider} · {c.model}: {c.reason}</p>)}
+          </details>}
+        </div>}
+      </section>
+      <fieldset disabled={defaultsBusy} className="space-y-6 min-w-0">
       <AddProviderForm onAdd={addProvider} adding={adding} result={addResult} />
 
       <section className="space-y-4">
@@ -289,7 +349,7 @@ export default function AIProviders() {
         </div>
         {providers.map((p) => (
           <ProviderCard
-            key={p.id}
+            key={`${p.id}:${JSON.stringify([p.seleccion_models,p.ajustes_models,p.album_models,p.video_models,p.edicion_models])}`}
             provider={p}
             busyAction={busyAction}
             onSaveModels={saveModels}
@@ -454,6 +514,7 @@ export default function AIProviders() {
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Guardar
         </button>
       </div>
+      </fieldset>
     </div>
   );
 }
