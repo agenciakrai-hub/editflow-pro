@@ -22,6 +22,7 @@ import { readCaptureTimeFromBytes } from "./captureTime";
 import { readCameraMetadataFromBytes, readAsShotWhiteBalance } from "./cameraMetadata";
 import { analyzeSkinTone } from "./skinToneAnalysis";
 import { decodePreviewImage } from "./previewDecodeCache";
+import { prepareSelectionPreview } from "./selectionPreviewValidation";
 
 // Concurrencia aumentada para acelerar el culling: más previews en paralelo (importación)
 // y más ráfagas analizadas simultáneamente (selección IA). Los VLM modernos y el backend
@@ -136,6 +137,19 @@ export async function runAiBurstSelection(withPreview, onProgress, { shouldCance
     bursts: [],
   };
   trace.stages.grouping = { start_ms: Date.now() };
+  // Common preflight for every provider. Never upscale a placeholder or label it AI.
+  const unreadable = [];
+  for (const photo of withPreview) {
+    if (shouldCancel()) return { keep: new Set(), meta: new Map(), trace };
+    const prepared = await prepareSelectionPreview(photo.preview, photo.file, extractRawPreview);
+    if (prepared) photo.preview = prepared;
+    else unreadable.push(photo.file?.name || photo.fingerprint?.filename || photo.id);
+  }
+  if (unreadable.length) {
+    const error = new Error(`Hay ${unreadable.length} vistas previas ilegibles en este bloque (${unreadable.slice(0, 3).join(", ")}). Usa «Reparar vistas previas» con la carpeta original. Las selecciones ya guardadas se conservan; no se han enviado estas imágenes a ningún proveedor.`);
+    error.selectionDiagnostics = { failure_stage: "preview_preflight", unreadable_count: unreadable.length };
+    throw error;
+  }
   const valid = withPreview.filter((p) => p.preview && !p.preview.isPlaceholder);
   const groups = groupIntoScenes(valid);
   trace.stages.grouping.end_ms = Date.now();
