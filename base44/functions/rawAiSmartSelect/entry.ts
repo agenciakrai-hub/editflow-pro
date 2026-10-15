@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import { uploadPreviewBatch } from '../../shared/rawAiStudioEngine.ts';
 import { runWithConcurrency } from '../../shared/concurrency.ts';
 import { invokeVision } from '../../shared/aiProviderAdapter.ts';
+import { DEFAULT_PROBE_IMAGE, webSession } from '../../shared/providerDefaults.ts';
 
 // RAW AI Studio — POST /rawAiSmartSelect
 //
@@ -116,7 +117,9 @@ function buildRankingEntry(id: string, r: any, category: string | null = null): 
   // missing_dimensions incluye las N/A (null). analysis_complete solo exige que todas
   // las dimensiones APLICABLES al tipo de foto hayan sido evaluadas.
   const missing = SCORE_KEYS.filter((k) => scores[k] === null);
-  const applicableMissing = applicableDims(category).filter((k) => scores[k] === null);
+  const faceVisibility = ['visible','not_visible','no_people','uncertain'].includes(r?.face_visibility) ? r.face_visibility : null;
+  const unavailableFaces = faceVisibility && faceVisibility !== 'visible';
+  const applicableMissing = applicableDims(category).filter((k) => scores[k] === null && !(unavailableFaces && PERSON_DIMS.includes(k as any)));
   const conf = typeof scores.confidence === 'number' ? scores.confidence : null;
   let confidence_tier = "UNCERTAIN_REVIEW";
   if (status === "TOP_PICK" || status === "SELECT") {
@@ -128,6 +131,7 @@ function buildRankingEntry(id: string, r: any, category: string | null = null): 
     id,
     rank: typeof r?.rank === 'number' ? r.rank : 999,
     status,
+    face_visibility: faceVisibility,
     pose_key: Array.isArray(r?.pose_heads) && r.pose_heads.every((head: string) => POSE_HEADS.includes(head))
       ? (r.pose_heads.length ? r.pose_heads.join('|') : 'no-people')
       : typeof r?.pose_key === 'string' && r.pose_key.split('|').every((head: string) => POSE_HEADS.includes(head)) ? r.pose_key : null,
@@ -183,49 +187,15 @@ function technicalFallback(candidateIds: string[], technicals: Record<string, an
 
 // Construye el prompt comparativo para un subconjunto (grupo entero o mitad).
 function buildPrompt(ids: string[], isSingleton: boolean): string {
-  const idList = ids.join(', ');
-  const singletonRule = isSingleton
-    ? `\nSINGLETON: this group has a SINGLE photo. There is no comparison to make — assess it on its own merits. It can be TOP_PICK/SELECT if clearly good, REVIEW if genuinely doubtful, or REJECT if clearly unusable (critical blur + missed focus, severe exposure failure, corrupt) or clearly not worth delivering. Do NOT force a SELECT just because it is alone, and do NOT default to REVIEW a photo you are confident is bad — REJECT it.`
-    : `\nGUARANTEE for multi-photo groups: rank every candidate (rank 1 = best). At most ONE TOP_PICK. If at least one photo is clearly deliverable, mark the best as TOP_PICK or SELECT. If ALL are genuinely rejectable (clearly inferior or clearly defective), return only REJECT — do not fabricate a SELECT. When in doubt between two near-equal frames, prefer the one with better eyes/expression/moment over the one with marginally higher sharpness.`;
+  return `You are a professional wedding and event photo editor. Compare these ${ids.length} photos as a burst. Images are attached in exactly this order: ${ids.join(', ')}.
 
-  return `You are an elite professional photo editor doing precise, conservative culling of a ${ids.length}-photo sequence (same scene, same people, taken seconds apart). This is NOT a per-photo yes/no — you must COMPARE the photos within this group and rank them.
+Return ONE JSON object at the root: {keep_ids, category, reason, rankings}.
+category: portrait, wedding, event, group, architecture, interior, landscape, product, lifestyle or documentary.
+rankings MUST contain exactly one object for EACH supplied id, in image order. Each object must contain id, rank (1=best), status (TOP_PICK/SELECT/REVIEW/REJECT), reject_reasons (array), note (one short sentence), pose_heads, face_visibility and ALL numeric score keys: ${SCORE_KEYS.join(', ')}. Put the scores directly on each ranking, not in a separate object. Scores are 0-100; distraction_penalty is 100 for no distractions. Always provide every non-facial score, overall and confidence. Use null for face_quality, eye_quality and expression ONLY if faces cannot be assessed; set face_visibility to visible, not_visible, no_people or uncertain accordingly. Do not invent hidden eyes or expressions.
 
-STEP 1 — Classify the group's genre (one of): portrait, wedding, event, group, architecture, interior, landscape, product, lifestyle, documentary.
+Priority: open eyes of the main subjects and natural expression, then subject focus, moment, composition and exposure. Artistic background blur is not subject defocus. Preserve a representative even if the whole burst is dark or blurred; report the defects honestly. For groups choose the best visible combination of eyes and expressions. Choose ONE strongest frame as TOP_PICK; other usable alternatives are REVIEW, clearly inferior duplicates/combined defects REJECT. A blink should lose to a comparable open-eye frame. Head turns create different poses; do not discard a new head pose as a duplicate. All-black frames still get a ranking and honest low scores. ${isSingleton ? 'This is a singleton: retain it and describe its defects.' : ''}
 
-STEP 2 — Apply the genre's PRIORITY POLICY to weight dimensions (do not use rigid weights; let the genre shift emphasis):
-- portrait / wedding: eyes > expression > focus on subject > moment > composition > technical. A slightly less sharp frame with open eyes, genuine emotion and a decisive moment MUST beat a sharper but lifeless/blinked frame.
-- group: eyes of the principal people > expression > focus > composition > moment. For ≤7 people every key face must have open eyes; for 8+ one minor closed eye is acceptable.
-- event: moment > expression > interaction > focus > composition.
-- architecture / interior: composition > geometry > verticals > exposure > sharpness > absence of distractions. No people → face/eye/expression are NOT APPLICABLE.
-- landscape: composition > light/moment > exposure > sharpness > distractions.
-
-STEP 3 — For EACH candidate, analyze independently across ALL dimensions. Each score is 0-100, or null when the dimension is NOT APPLICABLE (e.g. a landscape/interior/product with no people → face_quality, eye_quality, expression = null). NEVER return 0 to mean "not applicable" — return null. Return 0 only for a genuinely evaluated, critically bad dimension:
-- technical: file integrity, noise, artifacts, capture problems
-- sharpness: global sharpness
-- focus: is the SUBJECT (face/person/key element) in sharp focus? Distinguish artistic background blur from accidental subject blur — deliberate bokeh must NOT lower focus.
-- face_quality: if people present, face visibility/quality. If NO people in the frame → return null.
-- eye_quality: eyes open vs closed/blinking for EVERY visible face. No people → return null.
-- expression: natural/emotive vs awkward/strained. No people → return null.
-- composition: balance, framing, lines, geometry, distracting elements, awkward crops
-- exposure: tonal distribution, clipping, severe over/underexposure
-- color_quality: white balance neutrality, color cast, skin tones
-- subject_quality: clarity/presence of the main subject
-- moment_quality: decisive moment, emotion, interaction (people/events); for architecture/landscape reflects stillness/cleanliness
-- distraction_penalty: HIGHER = cleaner (100 = no distractions, 0 = very distracting). Inverted scale.
-- overall: your composite judgment WEIGHTED BY GENRE per STEP 2. The globally sharpest frame does NOT have to win.
-- confidence: 0-100 how sure you are of THIS photo's assessment. Use >=70 for decisions you are confident about (clear SELECT or clear REJECT), <60 for genuine uncertainty (REVIEW).
-
-STEP 4 — Decide COMPARATIVELY (relative ranking inside this group). Separate clear decisions from doubtful ones using your confidence:
-- TOP_PICK: the single strongest frame (best faces + moment + composition). At most ONE.
-- SELECT: a clearly good, deliverable frame you are confident about.
-- REJECT: a frame you are confident is NOT worth keeping. This is NOT limited to technical defects — REJECT whenever you are confident the photo is clearly inferior or redundant within this group: clearly worse expression/moment/eyes than a clearly better alternative in the same burst, a near-duplicate that adds nothing, OR a clear combined technical defect. Use structured reject_reasons from: CRITICAL_BLUR, FOCUS_FAILURE, EYES_CLOSED, DUPLICATE, LOWER_RANK_IN_BURST, POOR_EXPRESSION, POOR_COMPOSITION, SEVERE_EXPOSURE_FAILURE, OBSTRUCTED_SUBJECT, CORRUPT, CLEARLY_INFERIOR_IN_BURST, REDUNDANT_IN_BURST.
-- REVIEW: ONLY when you are genuinely uncertain — a near-tie where two frames are close enough that the choice is subjective, a recoverable borderline (slight focus/expression doubt) that is not clearly rejectable, or low confidence in either direction. REVIEW means "the photographer should decide". Do NOT use REVIEW as the default for everything you did not SELECT: if you are confident a frame is clearly worse, REJECT it.
-- A photo where a KEY face has EYES_CLOSED (mid-blink, fully shut) must NEVER be TOP_PICK or SELECT — REJECT it if a clearly better alternative exists in the burst, otherwise REVIEW. Include EYES_CLOSED in reject_reasons.
-${singletonRule}
-
-Candidate photo ids: ${idList}. The images are attached in the same order.
-
-Return JSON for this group with: keep_ids (the SELECT+TOP_PICK ids, best first — may be empty ONLY if every photo is REJECT), category (the genre string), reason (short explanation citing faces/eyes/expression and why the TOP_PICK won over the others), and rankings (one object per candidate with id, rank, status, reject_reasons array, the ${SCORE_KEYS.join(', ')} scores, analysis_complete boolean, and a short note).`;
+pose_heads: fixed orientations per main subject in stable left-to-right order, using front, three-quarter-left, left-profile, three-quarter-right, right-profile, back, unknown; [] if no people. Small gaze changes, smiles, blinks, hair and clothing do not create new poses. Return concise JSON only; no markdown or chain of thought.`;
 }
 
 function rankingItemSchema(): any {
@@ -233,6 +203,7 @@ function rankingItemSchema(): any {
     type: 'object',
     properties: {
       id: { type: 'string' },
+      face_visibility: { type: 'string', enum: ['visible','not_visible','no_people','uncertain'] },
       pose_key: { type: 'string' },
       pose_heads: { type: 'array', items: { type: 'string', enum: POSE_HEADS } },
       rank: { type: 'number' },
@@ -301,11 +272,12 @@ Return JSON: finalists (array, one entry per candidate id), each with id, rank (
 }
 
 // Tercera llamada IA entre finalistas. Devuelve byId de los finalistas re-analizados.
-async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>, category: string | null = null, trace?: any): Promise<Record<string, any>> {
+async function analyzeFinalists(base44: any, ids: string[], uploaded: Record<string, string>, byIdAll: Record<string, any>, category: string | null = null, trace?: any, overrides: any = {}): Promise<Record<string, any>> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildFinalPrompt(ids, byIdAll) + SELECTION_POLICY;
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
+    ...overrides,
     prompt,
     file_urls: fileUrls,
     response_json_schema: {
@@ -358,11 +330,12 @@ function mergeConsolidation(candidateIds: string[], h1: any, h2: any, finals: Re
 }
 
 // Llama a la IA para un subconjunto de candidatos y devuelve byId + meta del subgrupo.
-async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: Record<string, string>, isSingleton: boolean, trace?: any): Promise<any> {
+async function analyzeSubset(base44: any, key: string, ids: string[], uploaded: Record<string, string>, isSingleton: boolean, trace?: any, overrides: any = {}): Promise<any> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildPrompt(ids, isSingleton) + SELECTION_POLICY;
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
+    ...overrides,
     prompt,
     file_urls: fileUrls,
     response_json_schema: {
@@ -438,11 +411,12 @@ Candidate photo ids: ${ids.join(', ')}. The images are attached in the same orde
 Return JSON: keep_ids (all SELECT+TOP_PICK ids), category (dominant genre or null), reason (short), and rankings (one object per candidate with id, rank (always 1), status, reject_reasons, note, analysis_complete, and the ${SCORE_KEYS.join(', ')} scores).`;
 }
 
-async function analyzeIndependent(base44: any, key: string, ids: string[], uploaded: Record<string, string>, trace?: any): Promise<any> {
+async function analyzeIndependent(base44: any, key: string, ids: string[], uploaded: Record<string, string>, trace?: any, overrides: any = {}): Promise<any> {
   const fileUrls = ids.map((id) => uploaded[id]).filter(Boolean);
   const prompt = buildIndependentPrompt(ids) + SELECTION_POLICY;
   const result: any = await invokeVision(base44, {
     task: 'seleccion',
+    ...overrides,
     prompt,
     file_urls: fileUrls,
     response_json_schema: {
@@ -516,7 +490,19 @@ export default async function(req: Request): Promise<Response> {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
-    const bursts = Array.isArray(body?.bursts) ? body.bursts : [];
+    let bursts = Array.isArray(body?.bursts) ? body.bursts : [];
+    let overrides: any = {};
+    const audit = body?.action === 'audit-selection';
+    if (audit) {
+      if (user.role !== 'admin') return Response.json({error:'Forbidden'}, {status:403});
+      const rec: any = await base44.asServiceRole.entities.CustomAiProvider.get(String(body.id || '')).catch(()=>null);
+      const model = String(body.model || '');
+      if (!rec?.enabled || webSession(rec) || !rec.seleccion_models?.includes(model) || !(rec.available_models_meta || []).some((m:any)=>m.id===model && m.caps?.vision===true)) {
+        return Response.json({error:'La auditoría requiere un modelo API activo, marcado y verificado. Las sesiones web se revisan por separado.'}, {status:400});
+      }
+      overrides = { forceProvider: `custom:${rec.id}`, forceModel: model };
+      bursts = [{ burst_id:'audit-six', photos:Array.from({length:6},(_,i)=>({id:`audit-${i+1}`,preview_base64:DEFAULT_PROBE_IMAGE.split(',')[1]})) }];
+    }
     if (!bursts.length) return Response.json({ groups: {} });
 
     const groups: Record<string, any> = {};
@@ -541,6 +527,7 @@ export default async function(req: Request): Promise<Response> {
       let finalistIds: string[] = [];
       let finalRan = false;
       const trace: any = {};
+      const burstStarted = Date.now();
 
       try {
         const tUpload0 = Date.now();
@@ -556,7 +543,7 @@ export default async function(req: Request): Promise<Response> {
           // Lote de singletons: cada foto juzgada por mérito propio, sin límite de un
           // único TOP_PICK (varias pueden ser TOP_PICK/SELECT independientemente).
           iaCalls = 1;
-          const sub = await analyzeIndependent(base44, `group_0`, candidateIds, uploaded, trace);
+          const sub = await analyzeIndependent(base44, `group_0`, candidateIds, uploaded, trace, overrides);
           result = {
             keep_ids: sub.keep_ids,
             category: sub.category,
@@ -566,7 +553,7 @@ export default async function(req: Request): Promise<Response> {
         } else if (candidateIds.length <= MAX_IMAGES_PER_CALL) {
           iaCalls = 1;
           const isSingleton = candidateIds.length === 1;
-          const sub = await analyzeSubset(base44, `group_0`, candidateIds, uploaded, isSingleton, trace);
+          const sub = await analyzeSubset(base44, `group_0`, candidateIds, uploaded, isSingleton, trace, overrides);
           result = {
             keep_ids: sub.keep_ids,
             category: sub.category,
@@ -582,14 +569,14 @@ export default async function(req: Request): Promise<Response> {
           const mid = Math.ceil(candidateIds.length / 2);
           const h1Ids = candidateIds.slice(0, mid);
           const h2Ids = candidateIds.slice(mid);
-          const h1 = await analyzeSubset(base44, `group_0`, h1Ids, uploaded, false, trace);
-          const h2 = await analyzeSubset(base44, `group_1`, h2Ids, uploaded, false, trace);
+          const h1 = await analyzeSubset(base44, `group_0`, h1Ids, uploaded, false, trace, overrides);
+          const h2 = await analyzeSubset(base44, `group_1`, h2Ids, uploaded, false, trace, overrides);
           const f1 = pickFinalists(h1Ids, h1.byId, FINALISTS_PER_HALF);
           const f2 = pickFinalists(h2Ids, h2.byId, FINALISTS_PER_HALF);
           finalistIds = [...f1, ...f2];
           if (finalistIds.length >= 2) {
             try {
-              const finals = await analyzeFinalists(base44, finalistIds, uploaded, { ...h1.byId, ...h2.byId }, h1.category || h2.category || null, trace);
+              const finals = await analyzeFinalists(base44, finalistIds, uploaded, { ...h1.byId, ...h2.byId }, h1.category || h2.category || null, trace, overrides);
               finalRan = true;
               iaCalls = 3;
               result = mergeConsolidation(candidateIds, h1, h2, finals);
@@ -634,6 +621,7 @@ export default async function(req: Request): Promise<Response> {
           reason: result.reason,
           rankings,
           _meta: {
+            total_ms: Date.now() - burstStarted,
             ia_calls: iaCalls, finalist_ids: finalistIds, final_ran: finalRan, fallback: false,
             provider: trace.provider || null, model: trace.model || null,
             active_provider: trace.active_provider ?? null,
@@ -657,7 +645,7 @@ export default async function(req: Request): Promise<Response> {
         // Fallback técnico conservador (no simula decisión IA). Se registra el motivo
         // para que la traza/logs permitan auditar POR QUÉ falló la IA del burst.
         console.log(`[rawAiSmartSelect] burst=${burstId} fallo de IA: ${String(e?.message || e)}`);
-        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { ia_calls: 0, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null, active_provider: trace.active_provider ?? null, configured_model: trace.configured_model ?? null, final_provider: null, final_model: null, provider_failover: false, failover_reason: String(e?.message || e).slice(0, 300), attempts: Array.isArray(trace.attempts) ? trace.attempts : [], upload_ms: null, request_ms: null, base64_convert_ms: null, parse_ms: null, http_status: null, tokens_in: null, tokens_out: null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
+        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { total_ms: Date.now() - burstStarted, ia_calls: iaCalls, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null, active_provider: trace.active_provider ?? null, configured_model: trace.configured_model ?? null, final_provider: null, final_model: null, provider_failover: false, failover_reason: String(e?.message || e).slice(0, 300), attempts: Array.isArray(trace.attempts) ? trace.attempts : [], upload_ms: null, request_ms: null, base64_convert_ms: null, parse_ms: null, http_status: null, tokens_in: null, tokens_out: null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
       }
     });
 
