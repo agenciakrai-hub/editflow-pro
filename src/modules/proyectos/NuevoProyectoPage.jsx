@@ -7,7 +7,9 @@ import { selectBursts } from "@/lib/ai/aiGateway";
 import { extractRawPreview } from "@/lib/rawaistudio/rawPreviewReader";
 import { computePHash, phashHex } from "@/lib/rawaistudio/perceptualHash";
 import { curatedStatus, curatedLabel } from "./lib/selectionSavePolicy";
-import { cachePreviews } from "./lib/previewCache";
+import { cachePreviews, getCachedPreview } from "./lib/previewCache";
+import { pendingSelectionItems } from "./lib/selectionResume";
+import { prepareSelectionPreview } from "@/lib/rawaistudio/selectionPreviewValidation";
 
 import { statusMeta, SELECTION_CYCLE } from "./lib/projectFingerprint";
 import { saveHandle } from "./lib/idbHandles";
@@ -43,6 +45,8 @@ export default function NuevoProyectoPage() {
   const [aiRunning, setAiRunning] = useState(false);
   const [aiDone, setAiDone] = useState(0);
   const [aiTotal, setAiTotal] = useState(0);
+  const [resumeCheckpoint, setResumeCheckpoint] = useState(null);
+  const [resumeLoading, setResumeLoading] = useState(true);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [phase, setPhase] = useState("extracting");
   // Selección múltiple para eliminar + densidad del grid.
@@ -76,6 +80,20 @@ export default function NuevoProyectoPage() {
   const [opening, setOpening] = useState(!!projectIdParam);
   const [openError, setOpenError] = useState(null);
   const [openAttempt, setOpenAttempt] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    if (!projectIdParam || !folderIdParam) { setResumeLoading(false); return; }
+    setResumeLoading(true);
+    base44.entities.AlbumAISelection.filter({ project_id: projectIdParam, folder_id: folderIdParam }, "-created_date", 1)
+      .then(jobs => {
+        const latest = jobs[0];
+        if (alive) setResumeCheckpoint(
+          ["failed", "canceled"].includes(latest?.status) && latest?.stage_progress?.completed_fingerprint_ids?.length ? latest : null
+        );
+      }).catch(() => { if (alive) setResumeCheckpoint(null); })
+      .finally(() => { if (alive) setResumeLoading(false); });
+    return () => { alive = false; };
+  }, [projectIdParam, folderIdParam, aiRunning]);
   // Móvil: fallback cuando showOpenFilePicker no existe.
   const [catalogFile, setCatalogFile] = useState(null);
   const catalogInputRef = useRef(null);
@@ -487,7 +505,16 @@ export default function NuevoProyectoPage() {
   };
 
   const runAiSelection = async () => {
-    const marked = items.filter((it) => selectedIds.has(it.id));
+    if (resumeLoading) { toast({ title: "Comprobando selecciones guardadas. Espera un momento." }); return; }
+    let marked = items.filter((it) => selectedIds.has(it.id));
+    if (resumeCheckpoint) {
+      try {
+        const saved = await listFingerprintsByFolder(existing?.folderId || folderIdParam);
+        marked = pendingSelectionItems(items, saved, resumeCheckpoint);
+      } catch (error) {
+        toast({ title: "No se pudo preparar la continuación", description: error.message, variant: "destructive" }); return;
+      }
+    }
     if (!marked.length) {
       toast({ title: "Marca al menos una foto para la selección IA", variant: "destructive" });
       return;
@@ -510,7 +537,8 @@ export default function NuevoProyectoPage() {
       projectId: selectionProjectId,
       folderId: selectionFolderId,
       items,
-      selectedIds,
+      selectedIds: resumeCheckpoint ? new Set(items.map(it => it.id)) : selectedIds,
+      resumeFrom: resumeCheckpoint,
       onProgress: (job) => {
         if (!mountedRef.current) return;
         setAiDone(job.done);
@@ -642,22 +670,27 @@ export default function NuevoProyectoPage() {
       const replacements = new Map();
       const fingerprintUpdates = [];
       for (const file of files) {
-        const matches = saved.filter(fp => fp.filename === file.name);
+        const matches = saved.filter(fp => fp.filename === file.name && Number(fp.file_size) === file.size);
+        if (matches.length > 1) { failed++; continue; }
         if (!matches.length) continue;
         try {
+          const cached = await getCachedPreview(matches[0].fingerprint_hash);
+          // Leave good previews and every saved selection untouched.
+          if (await prepareSelectionPreview(cached, null, null)) continue;
           const preview = await extractRawPreview(file, 800, { hiResMaxEdge: 2400 });
+          if (!await prepareSelectionPreview(preview, null, null)) throw new Error("Vista previa original ilegible");
           const hash = phashHex(await computePHash(preview.dataUrl, preview.decodedSource));
           if (!hash) throw new Error("No se pudo identificar la vista previa");
           await cachePreviews([{ hash, dataUrl: preview.dataUrl, hiResDataUrl: preview.hiResDataUrl }]);
           // Actualizar solo la huella visual: preservar selección, estrellas y etiquetas.
           fingerprintUpdates.push(...matches.map(fp => ({ id: fp.id, fingerprint_hash: hash })));
-          replacements.set(file.name, hash);
+          replacements.set(file.name, { hash, file });
           repaired++; setRepairDone(repaired);
         } catch (e) { failed++; console.warn("Preview repair:", file.name, e?.message); }
       }
       if (fingerprintUpdates.length) await bulkUpdateFingerprints(fingerprintUpdates);
       setItems(previous => previous.map(it => replacements.has(it.file.name) ? {
-        ...it, preview: null, fingerprint: { ...it.fingerprint, fingerprint_hash: replacements.get(it.file.name) },
+        ...it, file: replacements.get(it.file.name).file, preview: null, fingerprint: { ...it.fingerprint, fingerprint_hash: replacements.get(it.file.name).hash },
       } : it));
       setPreviewRevision(value => value + 1);
       toast({ title: repaired ? "Vistas previas reparadas" : "No se repararon vistas previas", duration: 60000, description: `${repaired} reparadas · ${failed} con error. La selección y las estrellas se conservan.` });
@@ -790,6 +823,14 @@ export default function NuevoProyectoPage() {
           <button disabled={repairing || aiRunning || saving} onClick={() => repairInput.current?.click()} className="mb-3 rounded-md border border-border px-3 py-2 text-sm disabled:opacity-50">
             {repairing ? `Reparando vistas previas… ${repairDone}` : "Reparar vistas previas"}
           </button>
+          {resumeCheckpoint && !aiRunning && (
+            <div role="status" className="mb-3 rounded-md border border-border p-3 text-sm">
+              <p>{resumeCheckpoint.stage_progress.completed_fingerprint_ids.length} fotos ya guardadas. La continuación conserva sus resultados y solo analiza las pendientes.</p>
+              <button disabled={repairing || saving || resumeLoading} onClick={runAiSelection} className="mt-2 rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50">
+                Continuar selección pendiente
+              </button>
+            </div>
+          )}
         <ProjectPhotoWorkspace key={previewRevision}
           items={items.map((it) => ({
             id: it.id,
