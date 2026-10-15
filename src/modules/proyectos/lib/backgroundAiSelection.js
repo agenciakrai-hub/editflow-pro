@@ -266,6 +266,7 @@ async function runSelection(job, marked, onComplete, onError) {
       try {
         await base44.entities.AlbumAISelection.update(selJobId, {
           status: "failed",
+          stats: { photo_count: marked.length, ...(e?.selectionDiagnostics || {}) },
           error: String(e?.message || "Error").slice(0, 500),
         });
       } catch {}
