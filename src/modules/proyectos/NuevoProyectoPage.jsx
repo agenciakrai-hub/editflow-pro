@@ -47,6 +47,7 @@ export default function NuevoProyectoPage() {
   const [aiTotal, setAiTotal] = useState(0);
   const [resumeCheckpoint, setResumeCheckpoint] = useState(null);
   const [resumeLoading, setResumeLoading] = useState(true);
+  const [resumeError, setResumeError] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [phase, setPhase] = useState("extracting");
   // Selección múltiple para eliminar + densidad del grid.
@@ -83,14 +84,14 @@ export default function NuevoProyectoPage() {
   useEffect(() => {
     let alive = true;
     if (!projectIdParam || !folderIdParam) { setResumeLoading(false); return; }
-    setResumeLoading(true);
+    setResumeLoading(true); setResumeError(false);
     base44.entities.AlbumAISelection.filter({ project_id: projectIdParam, folder_id: folderIdParam }, "-created_date", 1)
       .then(jobs => {
         const latest = jobs[0];
         if (alive) setResumeCheckpoint(
           ["failed", "canceled"].includes(latest?.status) && latest?.stage_progress?.completed_fingerprint_ids?.length ? latest : null
         );
-      }).catch(() => { if (alive) setResumeCheckpoint(null); })
+      }).catch(() => { if (alive) setResumeError(true); })
       .finally(() => { if (alive) setResumeLoading(false); });
     return () => { alive = false; };
   }, [projectIdParam, folderIdParam, aiRunning]);
@@ -505,6 +506,7 @@ export default function NuevoProyectoPage() {
   };
 
   const runAiSelection = async () => {
+    if (resumeError) { toast({ title: "No se pudo comprobar el trabajo anterior. Recarga antes de iniciar otra selección.", variant: "destructive" }); return; }
     if (resumeLoading) { toast({ title: "Comprobando selecciones guardadas. Espera un momento." }); return; }
     let marked = items.filter((it) => selectedIds.has(it.id));
     if (resumeCheckpoint) {
