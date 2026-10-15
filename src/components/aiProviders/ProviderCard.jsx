@@ -31,7 +31,7 @@ const COL_LABELS = {
   album: "Álbum",
 };
 
-export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey }) {
+export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey, onProbeModel }) {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState("todos");
   const [selDraft, setSelDraft] = useState(provider.seleccion_models || []);
@@ -216,6 +216,14 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
                 <div key={m} className="flex items-center gap-2 px-3 py-2">
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-mono text-xs">{m}</p>
+                    {provider.free_quota_only && provider.free_quota_models?.includes(m) && (
+                      <button type="button" onClick={() => onProbeModel?.(provider.id, m)}
+                        disabled={!!busyAction || !provider.enabled}
+                        className="mt-1 rounded-md border px-2 py-1 text-xs disabled:opacity-40"
+                        title="Una prueba con imagen sintética, solo en este modelo. Se aplica la protección de cuota gratuita.">
+                        {busy("probe") ? "Comprobando…" : "Probar capacidad"}
+                      </button>
+                    )}
                     {vState === true && (
                       <span className="text-[10px] text-emerald-600">Visión verificada</span>
                     )}
