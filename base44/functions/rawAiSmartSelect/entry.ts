@@ -70,7 +70,7 @@ function scoreProps() {
     // devuelva null para TODO. En su lugar, el backend fuerza a null las dimensiones
     // faciales en géneros sin personas (guardia isPeopleGenre en buildRankingEntry).
     props[k] = {
-      type: 'number',
+      type: ['number', 'null'],
       description: `${k} 0-100. OMIT this field (do not return 0) when it is not applicable${isPerson ? ' — e.g. no people in the frame' : ''} or you cannot evaluate it.`,
     };
   }
@@ -645,7 +645,7 @@ export default async function(req: Request): Promise<Response> {
         // Fallback técnico conservador (no simula decisión IA). Se registra el motivo
         // para que la traza/logs permitan auditar POR QUÉ falló la IA del burst.
         console.log(`[rawAiSmartSelect] burst=${burstId} fallo de IA: ${String(e?.message || e)}`);
-        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { total_ms: Date.now() - burstStarted, ia_calls: iaCalls, finalist_ids: [], final_ran: false, fallback: true, provider: null, model: null, active_provider: trace.active_provider ?? null, configured_model: trace.configured_model ?? null, final_provider: null, final_model: null, provider_failover: false, failover_reason: String(e?.message || e).slice(0, 300), attempts: Array.isArray(trace.attempts) ? trace.attempts : [], upload_ms: null, request_ms: null, base64_convert_ms: null, parse_ms: null, http_status: null, tokens_in: null, tokens_out: null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
+        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { total_ms: Date.now() - burstStarted, ia_calls: iaCalls, finalist_ids: [], final_ran: false, fallback: true, provider: trace.provider || trace.active_provider || null, model: trace.model || null, active_provider: trace.active_provider ?? null, configured_model: trace.configured_model ?? null, final_provider: null, final_model: null, provider_failover: false, failover_reason: String(e?.message || e).slice(0, 300), attempts: Array.isArray(trace.attempts) ? trace.attempts : [], upload_ms: null, request_ms: trace.request_ms ?? null, base64_convert_ms: trace.base64_convert_ms ?? null, parse_ms: trace.parse_ms ?? null, http_status: trace.http_status ?? null, tokens_in: trace.tokens_in ?? null, tokens_out: trace.tokens_out ?? null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
       }
     });
 
