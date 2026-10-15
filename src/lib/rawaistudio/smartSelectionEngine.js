@@ -254,7 +254,15 @@ export async function runAiBurstSelection(withPreview, onProgress, { shouldCance
       const group = responseData?.groups?.[burst.id];
       const ids = new Set((group?.rankings || []).map(r => String(r.id)));
       if (!group || group._meta?.fallback || burst.files.some(f => !ids.has(String(f.id))) || group.rankings.some(r => r.analysis_complete !== true)) {
-        throw new Error(`El proveedor no completó la ráfaga de ${burst.files.length} fotos: ${group?._meta?.error || group?._meta?.failover_reason || "respuesta incompleta"}. No se ha aplicado una selección técnica como resultado IA.`);
+        const failure = new Error(`El proveedor no completó la ráfaga de ${burst.files.length} fotos: ${group?._meta?.error || group?._meta?.failover_reason || "respuesta incompleta"}. No se ha aplicado una selección técnica como resultado IA.`);
+        failure.selectionDiagnostics = {
+          provider_used: group?._meta?.active_provider || group?._meta?.provider || null,
+          model_used: group?._meta?.model || group?._meta?.configured_model || null,
+          burst_size: burst.files.length, http_status: group?._meta?.http_status ?? null,
+          total_ms: group?._meta?.total_ms ?? invokeDurationMs,
+          attempts: (group?._meta?.attempts || []).map(a => ({model:a.model,ok:a.ok,http_status:a.http_status,latency_ms:a.latency_ms})),
+        };
+        throw failure;
       }
     }
     // Procesa el resultado de cada ráfaga del chunk.
