@@ -339,7 +339,12 @@ async function callProvider(base44: any, provider: string, opts: InvokeOpts): Pr
   if (typeof provider === "string" && provider.startsWith("custom:")) {
     const id = provider.slice("custom:".length);
     console.log(`[aiProvider] task=${opts.task} provider=custom:${id}`);
-    return callCustom(base44, id, opts);
+    try { return await callCustom(base44, id, opts); }
+    catch(e:any) {
+      const policy=await base44.asServiceRole.entities.CustomAiProvider.get(id).catch(()=>null);
+      if(policy&&isAlibaba(policy.endpoint)) e.freeQuotaOnly=true;
+      throw e;
+    }
   }
   if (provider === "qwen") {
     const cfg = await getConfig(base44);
