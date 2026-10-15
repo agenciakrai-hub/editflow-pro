@@ -19,6 +19,7 @@ export default function AIProviders() {
   const [defaultsBusy, setDefaultsBusy] = useState(false);
   const [defaultsProgress, setDefaultsProgress] = useState("");
   const [defaultsReport, setDefaultsReport] = useState(null);
+  const [auditReports, setAuditReports] = useState([]);
   const [adding, setAdding] = useState(false);
   const [addResult, setAddResult] = useState(null);
   const [busyAction, setBusyAction] = useState(null);
@@ -113,6 +114,21 @@ export default function AIProviders() {
       await load();
     } catch (e) {
       toast({ title: "No se pudo verificar el modelo", description: e.message, variant: "destructive" });
+    } finally { setBusyAction(null); }
+  };
+
+  const auditSelection = async (provider, model) => {
+    if (busyAction) return;
+    setBusyAction({ id: provider.id, action: "audit" });
+    const started = Date.now();
+    try {
+      const response = await base44.functions.invoke("rawAiSmartSelect", { action: "audit-selection", id: provider.id, model });
+      const data = response?.data ?? response;
+      const group = data?.groups?.["audit-six"];
+      const complete = !group?._meta?.fallback && group?.rankings?.length === 6 && group.rankings.every(r => r.analysis_complete);
+      setAuditReports(prev => [...prev, { provider: provider.name, model, ok: !!complete, duration: Date.now()-started, request: group?._meta?.request_ms, tokens: group?._meta?.tokens_out, reason: complete ? "6/6 imágenes evaluadas con el motor de selección." : group?._meta?.error || data.error || "Resultado incompleto" }]);
+    } catch (e) {
+      setAuditReports(prev => [...prev, { provider: provider.name, model, ok: false, duration: Date.now()-started, reason: e.message }]);
     } finally { setBusyAction(null); }
   };
 
@@ -349,6 +365,14 @@ export default function AIProviders() {
           </details>}
         </div>}
       </section>
+      {auditReports.length > 0 && <section aria-label="Auditoría de selección" className="rounded-xl border p-4 space-y-2">
+        <h2 className="font-semibold">Auditoría del motor de selección · seis imágenes sintéticas</h2>
+        <p className="text-xs">Comprueba transporte, tiempo y análisis completo. No mide la precisión con rostros reales ni inicia un proyecto.</p>
+        {auditReports.map((r,i) => <div key={i} className="rounded-md border p-3 text-sm">
+          <p>{r.provider} · {r.model} · {r.ok ? "CORRECTO" : "FALLO"} · {(r.duration/1000).toFixed(1)} s{r.tokens ? ` · ${r.tokens} tokens de salida` : ""}</p>
+          <p>{r.reason}</p>
+        </div>)}
+      </section>}
       <fieldset disabled={defaultsBusy} className="space-y-6 min-w-0">
       <AddProviderForm onAdd={addProvider} adding={adding} result={addResult} />
 
@@ -368,6 +392,7 @@ export default function AIProviders() {
             onSaveModels={saveModels}
             onRetest={retestProvider}
             onProbeModel={probeModel}
+            onAuditSelection={auditSelection}
             onToggle={toggleProvider}
             onDelete={deleteProvider}
             onUpdateKey={updateKey}
