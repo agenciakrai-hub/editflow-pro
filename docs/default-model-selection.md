@@ -11,3 +11,5 @@ La política verified-three-v1 limita la recuperación API a tres modelos marcad
 Comprueba trabajos con actividad reciente antes de guardar, sin cancelar ni eliminar registros antiguos. Si falla una escritura, intenta recuperar las listas anteriores. Si no existe ninguna API comprobada, conserva la configuración previa y explica el motivo.
 
 Pruebas: provider-defaults-review.mjs, provider-defaults-action-review.mjs y provider-defaults-runtime-review.mjs.
+
+Los modelos Llama 3.2 Vision de NVIDIA solo admiten una imagen por petición. Se excluyen de selección de ráfagas, álbum y planificación de vídeo; pueden usarse para ajustes individuales. El transporte comprueba también el número real de imágenes antes de llamar a la API. Referencia: https://docs.nvidia.com/nim/vision-language-models/1.7.0/release-notes.html

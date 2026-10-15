@@ -178,7 +178,7 @@ export default function AIProviders() {
         let confirmed=0;
         for(const model of row.candidates){
           if(confirmed===3) break;
-          if(row.patch.seleccion_models.includes(model)){confirmed++;continue;}
+          if((row.confirmed_models||row.patch.ajustes_models).includes(model)){confirmed++;continue;}
           setDefaultsProgress(`Comprobando ${row.name}: ${model} (${confirmed}/3 confirmados)…`);
           const response=await base44.functions.invoke("ai-providers",{action:"probe-default",id:row.id,model});
           const result=response?.data??response;
@@ -329,7 +329,7 @@ export default function AIProviders() {
           <p className="text-sm font-medium">{defaultsReport.ok?"Configuración guardada":defaultsReport.reason}</p>
           {defaultsReport.plan?.rows?.map(row=><div key={row.id} className="rounded-md border p-3 text-sm">
             <p className="font-semibold">{row.name}{row.web_session?" · sesión web (uso manual)":" · API"}</p>
-            <p>Selección / Ajustes / Álbum / Planificación de vídeo: {row.patch.seleccion_models.join(" · ")||"Sin modelos comprobados"}</p>
+            {[["seleccion","Selección"],["ajustes","Ajustes"],["album","Álbum"],["video","Planificación de vídeo"]].map(([key,label])=><p key={key}>{label}: {row.patch[key+"_models"].join(" · ")||"Sin modelos comprobados"}</p>)}
             <p>Edición de JPG: {row.patch.edicion_models.join(" · ")||"No disponible mediante esta conexión"}</p>
           </div>)}
           {defaultsReport.checks?.some(c=>!c.ok)&&<details><summary className="cursor-pointer text-sm">Modelos no confirmados</summary>

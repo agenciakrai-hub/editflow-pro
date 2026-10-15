@@ -1,3 +1,4 @@
+import { supportsImageCount } from "./providerDefaults.ts";
 // AI Provider Adapter — seam de transporte/proveedor. Sustituye UNICAMENTE la capa
 // de transporte (InvokeLLM vs HTTP a Qwen/NVIDIA). No contiene logica de ranking,
 // prompts, schemas, dedup ni concurrencia — todo eso sigue en los motores.
@@ -694,7 +695,9 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
   // Abortar inmediatamente con un error claro en vez de probar 273 modelos uno a uno.
   const ACCOUNT_LEVEL_STATUS = new Set([402, 403]);
   let lastErr: any;
-  const attemptChain = kraiSession ? fullChain.slice(0, 1) : boundedDefaults ? fullChain.slice(0, 3) : fullChain;
+  const compatibleChain = fullChain.filter(({model})=>supportsImageCount(model,urls.length));
+  if(!compatibleChain.length) throw new Error(`Los modelos seleccionados de ${rec.name} no admiten ${urls.length} imágenes por petición. Elige un modelo compatible con varias fotos.`);
+  const attemptChain = kraiSession ? compatibleChain.slice(0, 1) : boundedDefaults ? compatibleChain.slice(0, 3) : compatibleChain;
   const deadline = Date.now() + 85000;
   for (let mi = 0; mi < attemptChain.length; mi++) {
     const { model, auto } = attemptChain[mi];

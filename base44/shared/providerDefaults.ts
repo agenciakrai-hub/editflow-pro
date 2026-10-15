@@ -23,15 +23,18 @@ export function healthyModel(p:any,id:string,now=Date.now()) {
  const age=now-Date.parse(m?.probed_at||'');
  return m?.caps?.vision===true&&m.probe_status==='ok'&&Number.isFinite(age)&&age>=0&&age<3600000;
 }
+export function supportsImageCount(id:string,count:number) {
+ return count<=1||!/^(?:meta\/)?llama-3\.2-(?:11b|90b)-vision-instruct$/.test(id);
+}
 export function defaultsPlan(providers:any[],now=Date.now()) {
  const rows=providers.filter(p=>p.enabled!==false).map(p=>{
   const candidates=p.last_ok===true?candidateModels(p):[];
   const usable=webSession(p)?candidates:candidates.filter(id=>healthyModel(p,id,now));
   const models=usable.slice(0,3);
-  const patch:any=Object.fromEntries(TASKS.map(t=>[t+'_models',models]));
+  const patch:any=Object.fromEntries(TASKS.map(t=>[t+'_models',t==='ajustes'?models:models.filter(id=>supportsImageCount(id,2))]));
   // El transporte de edición de fotografía implementado en esta app es KRAI /execute.
   patch.edicion_models=/\/api\/gateway\/v1\/?$/.test(new URL(p.endpoint).pathname)?(p.available_models_meta||[]).filter((m:any)=>m.caps?.image_edit===true&&(p.available_models||[]).includes(m.id)).map((m:any)=>m.id).sort((a:string,b:string)=>(a==='gemini-image'?-1:0)-(b==='gemini-image'?-1:0)||a.localeCompare(b)).slice(0,3):[];
-  return {id:p.id,name:p.name,web_session:webSession(p),unavailable:p.last_ok!==true,candidates:candidates.slice(0,9),patch};
+  return {id:p.id,name:p.name,web_session:webSession(p),unavailable:p.last_ok!==true,confirmed_models:models,candidates:candidates.slice(0,9),patch};
  });
  const direct=rows.filter(r=>!r.web_session&&r.patch.seleccion_models.length).sort((a,b)=>{
   const pa=providers.find(p=>p.id===a.id),pb=providers.find(p=>p.id===b.id);
