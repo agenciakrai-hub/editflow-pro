@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { build } from "esbuild";
+import { pathToFileURL } from "node:url";
+await build({entryPoints:["src/lib/rawaistudio/selectionPreviewValidation.js"],bundle:true,platform:"node",format:"esm",outfile:"/tmp/selection-preview-validation.mjs"});
+const {prepareSelectionPreview:prepare} = await import(pathToFileURL("/tmp/selection-preview-validation.mjs"));
+const url = value => "data:image/jpeg;base64," + value;
+const decode = async value => {
+ if (value === "broken") throw new Error("decode failed");
+ return {naturalWidth:value === "one" ? 1 : 800,naturalHeight:value === "one" ? 1 : 600};
+};
+assert.equal(await prepare({dataUrl:url("one"),width:800,height:600,isPlaceholder:false},null,null,decode),null);
+assert.equal(await prepare({dataUrl:url("broken")},null,null,decode),null);
+assert.equal((await prepare({dataUrl:url("valid")},null,null,decode)).width,800);
+assert.equal((await prepare({dataUrl:url("one"),hiResDataUrl:url("valid")},null,null,decode)).base64,"valid");
+let extractionCalls = 0;
+const extracted = await prepare({dataUrl:url("one")},{arrayBuffer(){}},async()=>{extractionCalls++;return {dataUrl:url("valid")};},decode);
+assert.equal(extractionCalls,1);
+assert.equal(extracted.base64,"valid");
+assert.equal(await prepare({isPlaceholder:true,dataUrl:url("valid")},{name:"metadata only"},null,decode),null);
+console.log("PASS: legacy 1px, corrupt preview, real dimensions, high-resolution recovery, original recovery, metadata-only file");
