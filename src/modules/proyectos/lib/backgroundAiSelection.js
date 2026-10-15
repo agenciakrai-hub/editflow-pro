@@ -192,6 +192,7 @@ async function runSelection(job, marked, onComplete, onError) {
     let lastTrace = null;
     const traceChunks = [];
     let photosDone = 0;
+    const deferredServiceErrors = [];
     let originalDirectory;
     async function originalFile(item) {
       if (originalDirectory === undefined) {
@@ -266,7 +267,7 @@ async function runSelection(job, marked, onComplete, onError) {
       }
 
       const photosBefore = photosDone;
-      const { keep, meta, trace } = await selectBursts(aiItems, (d, t) => {
+      const { keep, meta, trace, deferred_errors = [] } = await selectBursts(aiItems, (d, t) => {
         if (job.canceled) return;
         if (typeof t === "number" && t > 0) {
           job.done = Math.min(marked.length, photosBefore + Math.round((d / t) * chunk.length));
@@ -291,6 +292,7 @@ async function runSelection(job, marked, onComplete, onError) {
       });
       if (job.canceled) return;
 
+      deferredServiceErrors.push(...deferred_errors);
       for (const id of keep) allKeep.add(id);
       for (const [id, m] of meta) allMeta.set(id, m);
       if (trace) { lastTrace = trace; traceChunks.push(trace); }
@@ -301,6 +303,12 @@ async function runSelection(job, marked, onComplete, onError) {
       previewByHash = null;
     }
 
+    if (deferredServiceErrors.length) {
+      const pendingCount = targetFingerprintIds.length - savedFingerprintIds.size;
+      const error = new Error(`Se guardaron ${savedFingerprintIds.size} fotos; quedan ${pendingCount} pendientes por fallos del proveedor. Usa «Continuar selección pendiente». ${deferredServiceErrors[0].message}`);
+      error.selectionDiagnostics = { ...deferredServiceErrors[0].selectionDiagnostics, deferred_bursts: deferredServiceErrors.length, pending_count: pendingCount };
+      throw error;
+    }
     // Construye el mapa de resultados: photoId -> { status, rating, aiReview }
     // y fingerprint_hash -> resultado (para auto-guardar en la BD).
     const resultsById = new Map();
