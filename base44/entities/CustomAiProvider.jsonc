@@ -133,6 +133,20 @@
     "last_checked": {
       "type": "string",
       "format": "date-time"
+    },
+    "free_quota_only": {
+      "type": "boolean",
+      "default": false
+    },
+    "free_quota_models": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "free_quota_until": {
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": [
