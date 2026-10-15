@@ -10,3 +10,6 @@ console.log('PASS defaults: confirmed capabilities, specialized exclusions, fres
 
 assert.equal(recentSelection({updated_date:new Date(now-1000).toISOString()},now),true);assert.equal(recentSelection({updated_date:new Date(now-86400000).toISOString()},now),false);assert.equal(recentSelection({},now),true);
 assert.equal(validProbeAnswer('{"Top Left":"red","Top Right":"lime","Bottom Left":"blue","Bottom Right":"yellow"}'),true);
+
+assert.equal(validProbeAnswer('Here is the result: {"top_left":"red","top_right":"green","bottom_left":"blue","bottom_right":"yellow"}'),true);
+assert.equal(validProbeAnswer('{"top_left":"red","top_right":"green","bottom_left":"blue"'),false);

@@ -30,7 +30,7 @@ export function defaultsPlan(providers:any[],now=Date.now()) {
   const models=usable.slice(0,3);
   const patch:any=Object.fromEntries(TASKS.map(t=>[t+'_models',models]));
   // El transporte de edición de fotografía implementado en esta app es KRAI /execute.
-  patch.edicion_models=/\/api\/gateway\/v1\/?$/.test(new URL(p.endpoint).pathname)?(p.available_models_meta||[]).filter((m:any)=>m.caps?.image_edit===true&&(p.available_models||[]).includes(m.id)).map((m:any)=>m.id).slice(0,3):[];
+  patch.edicion_models=/\/api\/gateway\/v1\/?$/.test(new URL(p.endpoint).pathname)?(p.available_models_meta||[]).filter((m:any)=>m.caps?.image_edit===true&&(p.available_models||[]).includes(m.id)).map((m:any)=>m.id).sort((a:string,b:string)=>(a==='gemini-image'?-1:0)-(b==='gemini-image'?-1:0)||a.localeCompare(b)).slice(0,3):[];
   return {id:p.id,name:p.name,web_session:webSession(p),unavailable:p.last_ok!==true,candidates:candidates.slice(0,9),patch};
  });
  const direct=rows.filter(r=>!r.web_session&&r.patch.seleccion_models.length).sort((a,b)=>{
@@ -47,7 +47,10 @@ export function defaultsPlan(providers:any[],now=Date.now()) {
 export const DEFAULT_PROBE_IMAGE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAADr0lEQVR4nO3TsQ0AMAzDsPz/dHuGBhPgbi+6d0eofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofQKh/AKH+AYT6BxDqH0CofwCh/gGE+gcQ6h9AqH8Aof4BhPoHEOofjKv31713hAQggGkCEMA0AQhgmgAEME0AApgmAAFME4AApglAANMEIIBpAhDANAEIYJoABDBNAAKYJgABTBOAAKYJQADTBCCAaQIQwDQBCGCaAAQwTQACmCYAAUwTgACmCUAA0wQggGkCEMA0AQhgmgAEME0AApgmAAFME4AApglAANMEIIBpAhDANAEIYJoABDBNAAKYJgABTBOAAKYJQADTBCCAaQIQwDQBCGCaAAQwTQACmCYAAUwTgACmCUAA0wQggGkCEMA0AQhgmgAEME0AApgmAAFME4AApglAANMEIIBpAhDANAEIYJoABDBNAAKYJgABTBOAAKYJQADTBCCAaQIQwDQBCGCaAAQwTQACmCYAAUwTgACmCUAA0wQggGkCEMA0AQhgmgAEME0AApgmAAFME4AApglAANMEIIBpAhDANAEIYJoABDBNAAKYJgABTBOAAKYJQADTBCCAaQIQwDQBCGCaAAQwTQACmCYAAUwTgACmCUAA0wQggGkCEMA0AQhgmgAEME0AApgmAAFME4AApglAANMEIIBpAhDANAEIYJoABDBNAAKYJgABTBOAAKYJQADTBCCAaQIQwDQBCGCaAAQwTQACmCYAAUwTgACmCUAA0wQggGkCEMA0AQhgmgAEME0AApgmAAFME4AApn2J4NKjH7VvkAAAAABJRU5ErkJggg==";
 export function validProbeAnswer(text:string): boolean {
  try {
-  const value=JSON.parse(text.replace(/```(?:json)?/g,'').trim());
+  const clean=text.replace(/```(?:json)?/g,'').trim();
+  const start=clean.indexOf('{'),end=clean.lastIndexOf('}');
+  if(start<0||end<=start) return false;
+  const value=JSON.parse(clean.slice(start,end+1));
   const positions=Object.fromEntries(Object.entries(value).map(([k,v])=>[k.toLowerCase().replace(/[^a-z]/g,''),String(v).trim().toLowerCase()]));
   const values=['topleft','topright','bottomleft','bottomright'].map(k=>positions[k]);
   return values.every((v,i)=>[['red','#ff0000'],['green','lime','lime green','#00ff00'],['blue','#0000ff'],['yellow','#ffff00']][i].includes(v));
