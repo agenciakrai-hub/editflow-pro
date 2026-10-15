@@ -104,6 +104,18 @@ export default function AIProviders() {
     setBusyAction(null);
   };
 
+  const probeModel = async (id, model) => {
+    setBusyAction({ id, action: "probe" });
+    try {
+      const response = await base44.functions.invoke("ai-providers", { action: "probe-default", id, model });
+      const result = response?.data ?? response;
+      toast({ title: result.ok ? "Visión verificada" : "No se pudo verificar el modelo", description: result.reason, variant: result.ok ? "default" : "destructive" });
+      await load();
+    } catch (e) {
+      toast({ title: "No se pudo verificar el modelo", description: e.message, variant: "destructive" });
+    } finally { setBusyAction(null); }
+  };
+
   const toggleProvider = async (id, enabled) => {
     try {
       await base44.functions.invoke("ai-providers", { action: "toggle", id, enabled });
@@ -355,6 +367,7 @@ export default function AIProviders() {
             busyAction={busyAction}
             onSaveModels={saveModels}
             onRetest={retestProvider}
+            onProbeModel={probeModel}
             onToggle={toggleProvider}
             onDelete={deleteProvider}
             onUpdateKey={updateKey}
