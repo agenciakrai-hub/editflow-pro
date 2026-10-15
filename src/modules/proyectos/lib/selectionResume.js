@@ -9,6 +9,9 @@ export function pendingSelectionItems(items, fingerprints, checkpoint) {
  if (!completed.size || (!Array.isArray(targets) && checkpoint?.stage_progress?.resume_scope !== "folder"))
    throw new Error("El trabajo no tiene un punto de continuación verificable");
  const targetSet = Array.isArray(targets) ? new Set(targets) : null;
+ const known = new Set(fingerprints.map(fp => fp.id));
+ if ([...completed].some(id => !known.has(id)) || (targetSet && [...targetSet].some(id => !known.has(id))))
+   throw new Error("El punto de continuación no corresponde a los archivos de esta carpeta");
  const byKey = new Map(fingerprints.map(fp => [fileIdentity(fp), fp.id]));
  const pending = [];
  for (const item of items) {
