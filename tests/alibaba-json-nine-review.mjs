@@ -8,7 +8,7 @@ const r=await build({entryPoints:['base44/functions/rawAiSmartSelect/entry.ts'],
 }}]});
 const {default:handler}=await import('data:text/javascript;base64,'+Buffer.from(r.outputFiles[0].text).toString('base64'));
 let role='admin';
-const rec={free_quota_only:true,free_quota_models:['test-model'],free_quota_until:'2026-10-30T16:00:00Z',id:'test',name:'Fixture',enabled:true,endpoint:'https://api.invalid/v1',api_key:'test',seleccion_models:['test-model'],available_models_meta:[{id:'test-model',caps:{vision:true}}]};
+const rec={free_quota_only:true,free_quota_models:['qwen3.8-max'],free_quota_until:'2026-10-30T16:00:00Z',id:'test',name:'Fixture',enabled:true,endpoint:'https://api.invalid/v1',api_key:'test',seleccion_models:['qwen3.8-max'],available_models_meta:[{id:'qwen3.8-max',caps:{vision:true}}]};
 globalThis.fixtureClient={auth:{me:async()=>({role})},asServiceRole:{entities:{CustomAiProvider:{get:async()=>rec},AiProviderConfig:{list:async()=>[{active_seleccion:'custom:test',model_defaults_policy:'verified-three-v1'}]}}}};
 const original=globalThis.fetch;
 const keys=['technical','sharpness','focus','face_quality','eye_quality','expression','composition','exposure','color_quality','subject_quality','moment_quality','distraction_penalty','overall','confidence'];
