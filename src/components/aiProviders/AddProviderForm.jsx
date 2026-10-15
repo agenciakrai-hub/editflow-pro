@@ -7,11 +7,13 @@ import { CheckCircle2, Loader2, Plus } from "lucide-react";
 export default function AddProviderForm({ onAdd, adding, result }) {
   const [endpoint, setEndpoint] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [freeConfirmed,setFreeConfirmed]=useState(false);
+  const alibaba=(()=>{try{return /(?:^|\.)aliyuncs\.com$/.test(new URL(endpoint).hostname);}catch{return false;}})();
 
   const submit = async (e) => {
     e.preventDefault();
     if (!endpoint.trim() || !apiKey.trim()) return;
-    const ok = await onAdd({ endpoint: endpoint.trim(), api_key: apiKey.trim() });
+    const ok = await onAdd({ endpoint: endpoint.trim(), api_key: apiKey.trim(), free_quota_confirmed:alibaba&&freeConfirmed });
     if (ok) {
       setEndpoint("");
       setApiKey("");
@@ -50,9 +52,10 @@ export default function AddProviderForm({ onAdd, adding, result }) {
           />
         </div>
       </div>
+      {alibaba&&<label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={freeConfirmed} onChange={e=>setFreeConfirmed(e.target.checked)}/><span>Confirmo que Free Quota Only está activado en Alibaba para qwen3.8-max. Solo se usará ese modelo hasta el inicio del 31 de octubre de 2026 en Singapur; después quedará bloqueado. No es una API gratuita ilimitada.</span></label>}
       <button
         type="submit"
-        disabled={adding || !endpoint.trim() || !apiKey.trim()}
+        disabled={adding || !endpoint.trim() || !apiKey.trim() || (alibaba&&!freeConfirmed)}
         className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
       >
         {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Añadir y verificar
