@@ -178,6 +178,7 @@ export default function AIProviders() {
         let confirmed=0;
         for(const model of row.candidates){
           if(confirmed===3) break;
+          if(row.patch.seleccion_models.includes(model)){confirmed++;continue;}
           setDefaultsProgress(`Comprobando ${row.name}: ${model} (${confirmed}/3 confirmados)…`);
           const response=await base44.functions.invoke("ai-providers",{action:"probe-default",id:row.id,model});
           const result=response?.data??response;

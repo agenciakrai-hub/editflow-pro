@@ -1,4 +1,4 @@
-import { defaultsPlan, DEFAULT_PROBE_IMAGE, validProbeAnswer, webSession } from '../../shared/providerDefaults.ts';
+import { defaultsPlan, DEFAULT_PROBE_IMAGE, validProbeAnswer, webSession, recentSelection } from '../../shared/providerDefaults.ts';
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import { secrets } from 'base44:runtime';
 import {
@@ -314,7 +314,7 @@ export default async function(req: Request): Promise<Response> {
       if(action==='get-defaults') return Response.json({ok:true,plan});
       if(!plan.ready) return Response.json({ok:false,reason:'Ningún proveedor API tiene una prueba visual reciente satisfactoria. Se conserva la configuración anterior.'});
       const running=await base44.asServiceRole.entities.AlbumAISelection.filter({status:'running'},'-updated_date',1);
-      if(running?.length) return Response.json({ok:false,reason:'Hay una selección en curso. Espera a que termine antes de cambiar sus modelos.'});
+      if(running?.some((job:any)=>recentSelection(job))) return Response.json({ok:false,reason:'Hay una selección en curso. Espera a que termine antes de cambiar sus modelos.'});
       const oldConfig=await getConfigRecord(base44);
       const changed:any[]=[];
       try {
@@ -535,7 +535,7 @@ export default async function(req: Request): Promise<Response> {
           res = await fetch(endpoint, {
             method: 'POST',
             headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ model, messages: [{ role: 'user', content }], stream: false, max_tokens: 256 }),
+            body: JSON.stringify({ model, messages: [{ role: 'user', content }], stream: false, max_tokens: defaultProbe?512:256 }),
             signal: controller.signal,
           });
         } finally { clearTimeout(timer); }
@@ -546,12 +546,12 @@ export default async function(req: Request): Promise<Response> {
           try { data = JSON.parse(txt); } catch {}
           const out = String(data?.choices?.[0]?.message?.content || '').trim();
           if (out && (!defaultProbe||validProbeAnswer(out))) { probeStatus = 'ok'; vision = true; reason = defaultProbe?'Imagen y cuatro posiciones reconocidas correctamente.':`OK: ${out.slice(0, 140)}`; }
-          else { probeStatus = 'error'; vision = null; reason = defaultProbe?'La respuesta no demuestra que el modelo haya visto la imagen.':'Respuesta vacía del modelo'; }
+          else { probeStatus = 'error'; vision = null; reason = defaultProbe?`No se pudo confirmar la imagen. ${out.slice(0,140)}`:'Respuesta vacía del modelo'; }
         } else {
           const low = txt.toLowerCase();
           const rejectsImage = (res.status === 400 || res.status === 422 || res.status === 415) &&
             /image|vision|multimodal|not support|unsupported|modal|does not|no admite|no acepta/.test(low);
-          if (rejectsImage) {
+          if (rejectsImage || (defaultProbe && [404,410].includes(res.status))) {
             probeStatus = 'rejected'; vision = false; reason = `HTTP ${res.status}: ${txt.slice(0, 200)}`;
           } else {
             probeStatus = 'error'; vision = null; reason = `HTTP ${res.status}: ${txt.slice(0, 200)}`;
@@ -570,13 +570,15 @@ export default async function(req: Request): Promise<Response> {
       const prevCaps = idx >= 0 ? (meta[idx].caps || {}) : {};
       const entry: any = {
         id: model,
-        caps: { vision, image_edit: prevCaps.image_edit ?? null, video: prevCaps.video ?? null },
-        source: vision === null ? 'unverified' : 'verified',
+        caps: { vision:probeStatus==='error'?(prevCaps.vision??null):vision, image_edit: prevCaps.image_edit ?? null, video: prevCaps.video ?? null },
+        source: probeStatus==='error'?(idx>=0?meta[idx].source:'unverified'):'verified',
         probed_at: new Date().toISOString(),
         probe_status: probeStatus,
       };
       if (idx >= 0) meta[idx] = entry; else meta.push(entry);
-      await base44.asServiceRole.entities.CustomAiProvider.update(id, { available_models_meta: meta });
+      await base44.asServiceRole.entities.CustomAiProvider.update(id, { available_models_meta: meta,
+        ...(defaultProbe&&[401,402,403,429].includes(probeHttp||0)?{last_ok:false,last_reason:`HTTP ${probeHttp}: ${reason.replaceAll(key,'[oculta]').slice(0,250)}`,last_checked:new Date().toISOString()}:{}),
+      });
       return Response.json({
         ok: vision === true,
         http_status:probeHttp,
