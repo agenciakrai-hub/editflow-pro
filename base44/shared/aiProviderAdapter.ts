@@ -721,7 +721,11 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       : "";
     const content: any[] = [{ type: "text", text: opts.prompt + jsonInstruction }];
     for (const u of urls) content.push({ type: "image_url", image_url: { url: u } });
-    const body: any = { model, messages: [{ role: "user", content }], stream: false };
+    const body: any = { model, messages: [{ role: "user", content }], stream: false,
+      max_tokens: opts.task === "seleccion" ? Math.min(8192, 1024 + 512 * urls.length) : 8192 };
+    // Alibaba enables thinking by default; culling needs the final bounded JSON.
+    // Keep this vendor parameter scoped to the verified Alibaba endpoint.
+    if (isAlibaba(base)) body.enable_thinking = false;
     // response_format: cuando el llamador pide un JSON schema, se fuerza al modelo a
     // devolver JSON (no texto libre). Sin esto, algunos modelos devuelven texto con
     // bloques de razonamiento que parseJsonContent no puede extraer → valores vacíos.
@@ -734,7 +738,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      }, kraiSession ? 100000 : boundedDefaults ? Math.min(30000, Math.max(1, deadline-Date.now())) : PROVIDER_TIMEOUT_MS, kraiSession || boundedDefaults ? 1 : 2);
+      }, kraiSession ? 100000 : boundedDefaults ? Math.min(isAlibaba(base) ? 65000 : 45000, Math.max(1, deadline-Date.now())) : PROVIDER_TIMEOUT_MS, kraiSession || boundedDefaults ? 1 : 2);
       const latency = Date.now() - t0;
       if (opts._trace) { opts._trace.request_ms = latency; opts._trace.http_status = res.status; opts._trace.endpoint = endpoint; }
       if (!res.ok) {
@@ -747,6 +751,11 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
       if (opts._trace) {
         opts._trace.tokens_in = data?.usage?.prompt_tokens ?? null;
         opts._trace.tokens_out = data?.usage?.completion_tokens ?? null;
+      }
+      if (data?.choices?.[0]?.finish_reason === "length") {
+        const truncated: any = new Error("El proveedor agotó el límite de respuesta antes de completar el JSON. No se ha guardado una clasificación incompleta.");
+        truncated.outputTruncated = true;
+        throw truncated;
       }
       const contentOut = data?.choices?.[0]?.message?.content;
       const tParse = Date.now();
