@@ -15,6 +15,8 @@ import { getCachedPreviews, getCachedPreview, cachePreviews } from "./previewCac
 import { fileIdentity, pendingSelectionItems } from "./selectionResume";
 import { prepareSelectionPreview } from "@/lib/rawaistudio/selectionPreviewValidation";
 import { extractRawPreview } from "@/lib/rawaistudio/rawPreviewReader";
+import { computePHash, phashHex } from "@/lib/rawaistudio/perceptualHash";
+import { getHandleRecord } from "./idbHandles";
 import {
   listFingerprintsByFolder,
   bulkUpdateFingerprints,
@@ -190,6 +192,27 @@ async function runSelection(job, marked, onComplete, onError) {
     let lastTrace = null;
     const traceChunks = [];
     let photosDone = 0;
+    let originalDirectory;
+    async function originalFile(item) {
+      if (originalDirectory === undefined) {
+        originalDirectory = null;
+        try {
+          const folder = await base44.entities.ProjectFolder.get(job.folderId);
+          const record = await getHandleRecord(folder.raw_folder_handle_ref);
+          if (await record?.handle?.queryPermission?.({ mode: "read" }) === "granted") originalDirectory = record.handle;
+        } catch { /* Folder picker remains available when permission is absent. */ }
+      }
+      if (!originalDirectory) return null;
+      try {
+        const parts = (item.fingerprint?.relative_path || item.file?.name || "").split("/").filter(Boolean);
+        if (parts[0] === originalDirectory.name) parts.shift();
+        if (!parts.length || parts.some(part => part === ".." || part === ".")) return null;
+        let directory = originalDirectory;
+        for (const part of parts.slice(0, -1)) directory = await directory.getDirectoryHandle(part);
+        const file = await (await directory.getFileHandle(parts.at(-1))).getFile();
+        return file.size === Number(item.fingerprint?.file_size) ? file : null;
+      } catch { return null; }
+    }
 
     for (let ci = 0; ci < chunks.length; ci++) {
       if (job.canceled) return;
@@ -215,8 +238,19 @@ async function runSelection(job, marked, onComplete, onError) {
           const full = await getCachedPreview(it.fingerprint.fingerprint_hash);
           prepared = await prepareSelectionPreview(full, it.file, extractRawPreview);
         }
+        if (!prepared) {
+          const original = await originalFile(it);
+          if (original) prepared = await prepareSelectionPreview(null, original, extractRawPreview);
+        }
         if (prepared) {
-          if (prepared.dataUrl !== preview?.dataUrl) await cachePreviews([{ hash: it.fingerprint.fingerprint_hash, ...prepared }]);
+          if (prepared.dataUrl !== preview?.dataUrl) {
+            const hash = phashHex(await computePHash(prepared.dataUrl));
+            const fp = savedFingerprints.find(fp => fileIdentity(fp) === fileIdentity(it));
+            if (!hash || !fp) throw new Error("No se pudo guardar la vista previa reparada");
+            await cachePreviews([{ hash, ...prepared }]);
+            await bulkUpdateFingerprints([{ id: fp.id, fingerprint_hash: hash }]);
+            it.fingerprint = { ...it.fingerprint, fingerprint_hash: hash };
+          }
           preview = prepared;
         }
         aiItems.push({
