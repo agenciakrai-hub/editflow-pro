@@ -23,6 +23,7 @@ import { readCameraMetadataFromBytes, readAsShotWhiteBalance } from "./cameraMet
 import { analyzeSkinTone } from "./skinToneAnalysis";
 import { decodePreviewImage } from "./previewDecodeCache";
 import { prepareSelectionPreview } from "./selectionPreviewValidation";
+import { invokeSelectionWithRecovery, transientSelectionFailure } from "./selectionServiceRecovery";
 
 // Concurrencia aumentada para acelerar el culling: más previews en paralelo (importación)
 // y más ráfagas analizadas simultáneamente (selección IA). Los VLM modernos y el backend
@@ -193,6 +194,8 @@ export async function runAiBurstSelection(withPreview, onProgress, { shouldCance
       sceneOf: new Map(batch.map((g) => [g.files[0].id, g.id])),
     });
   }
+  const deferredErrors = [];
+  let consecutiveServiceFailures = 0;
   let processedPhotos = withPreview.length - valid.length;
   onProgress?.(processedPhotos, withPreview.length);
 
@@ -256,8 +259,8 @@ export async function runAiBurstSelection(withPreview, onProgress, { shouldCance
     let chunkError = null;
     let responseData = null;
     try {
-      const { data } = await base44.functions.invoke("rawAiSmartSelect", { bursts: burstsPayload });
-      responseData = data;
+      const response = await invokeSelectionWithRecovery(payload => base44.functions.invoke("rawAiSmartSelect", payload), { bursts: burstsPayload }, { shouldCancel });
+      responseData = response?.data;
     } catch (e) {
       chunkError = e;
     }
@@ -276,9 +279,21 @@ export async function runAiBurstSelection(withPreview, onProgress, { shouldCance
           total_ms: group?._meta?.total_ms ?? invokeDurationMs,
           attempts: (group?._meta?.attempts || []).map(a => ({model:a.model,ok:a.ok,http_status:a.http_status,latency_ms:a.latency_ms})),
         };
+        if (transientSelectionFailure({ groups: { [burst.id]: group } })) {
+          consecutiveServiceFailures++;
+          deferredErrors.push(failure);
+          activeNow = Math.max(0, activeNow - 1);
+          // A provider outage must not produce thousands of failing requests.
+          if (consecutiveServiceFailures >= 3) {
+            failure.message = "El proveedor sigue sin responder tras varios reintentos. Se han conservado las fotos guardadas. " + failure.message;
+            throw failure;
+          }
+          return; // Keep this burst pending; let other bursts run.
+        }
         throw failure;
       }
     }
+    consecutiveServiceFailures = 0;
     // Procesa el resultado de cada ráfaga del chunk.
     for (const burst of chunk) {
       const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
@@ -393,6 +408,8 @@ export async function runAiBurstSelection(withPreview, onProgress, { shouldCance
   trace.stages.ai_analysis.max_concurrency = maxActive;
   trace.stages.ai_analysis.concurrency_limit = BATCH_CONCURRENCY;
   trace.stages.ai_analysis.concurrency_samples = concurrencySamples;
+
+  if (deferredErrors.length) return { keep, meta, trace, deferred_errors: deferredErrors };
 
   // DEDUP entre grupos: pHash detecta candidatos; la IA compara visualmente (momento,
   // expresión, composición, sujeto) y solo rebaja si es un duplicado REAL. Diferencia
