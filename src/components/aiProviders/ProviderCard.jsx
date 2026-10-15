@@ -31,7 +31,7 @@ const COL_LABELS = {
   album: "Álbum",
 };
 
-export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey, onProbeModel }) {
+export default function ProviderCard({ provider, busyAction, onSaveModels, onRetest, onToggle, onDelete, onUpdateKey, onProbeModel, onAuditSelection }) {
   const [search, setSearch] = useState("");
   const [tab, setTab] = useState("todos");
   const [selDraft, setSelDraft] = useState(provider.seleccion_models || []);
@@ -222,6 +222,13 @@ export default function ProviderCard({ provider, busyAction, onSaveModels, onRet
                         className="mt-1 rounded-md border px-2 py-1 text-xs disabled:opacity-40"
                         title="Una prueba con imagen sintética, solo en este modelo. Se aplica la protección de cuota gratuita.">
                         {busy("probe") ? "Comprobando…" : "Probar capacidad"}
+                      </button>
+                    )}
+                    {vState === true && provider.seleccion_models?.includes(m) && !/\/api\/gateway\/v1|\.hstgr\.cloud/i.test(provider.endpoint || "") && (
+                      <button type="button" onClick={() => onAuditSelection?.(provider, m)} disabled={!!busyAction || !provider.enabled}
+                        title="Una llamada del motor real con seis imágenes sintéticas. Puede consumir una pequeña cuota de API. No cambia la selección de tus fotos."
+                        className="mt-1 ml-1 rounded-md border px-2 py-1 text-xs disabled:opacity-40">
+                        {busy("audit") ? "Auditando…" : "Auditar selección"}
                       </button>
                     )}
                     {vState === true && (
