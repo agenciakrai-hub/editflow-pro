@@ -12,7 +12,10 @@ export function selectionUpdates(meta, items, fingerprints) {
     const result = meta.get(id);
     if (!result) continue;
     const selected = result.status === 'SELECT' || result.status === 'TOP_PICK';
-    updates.push({id:fp.id,selection_status:result.status,rating:selected?5:result.status==='REJECT'?0:3,color_label:selected?'green':result.status==='REJECT'?'red':'yellow'});
+    const winner = [...meta.entries()].find(([,m])=>m.groupId===result.groupId && m.status==="TOP_PICK");
+    const winnerFp = winner && fingerprints.find(other=>byFile.get(key(other))===winner[0]);
+    const comparison = result.comparisonComplete ? {version:"burst-winner-v2",burst_id:result.groupId,winner_id:winnerFp?.id || null,reason:result.reason,group_size:result.groupSize} : undefined;
+    updates.push({selection_comparison:comparison,id:fp.id,selection_status:result.status,rating:selected?5:result.status==='REJECT'?0:3,color_label:selected?'green':result.status==='REJECT'?'red':'yellow'});
   }
   return updates;
 }
