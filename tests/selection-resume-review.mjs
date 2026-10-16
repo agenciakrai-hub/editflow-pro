@@ -3,7 +3,7 @@ import { build } from "esbuild";
 const fingerprints = Array.from({length:2705},(_,i)=>({id:"fp"+i,filename:"photo"+i+".NEF",relative_path:"photo"+i+".NEF",file_size:i+100,fingerprint_hash:"01"}));
 const items = fingerprints.map((fp,i)=>({id:"local"+i,file:{name:fp.filename,size:fp.file_size},fingerprint:fp}));
 const completed = fingerprints.slice(0,151).map(fp=>fp.id);
-const checkpoint = {id:"failedJob",status:"failed",stage_progress:{photos_done:151,completed_fingerprint_ids:completed,resume_scope:"folder"}};
+const checkpoint = {id:"failedJob",status:"failed",stage_progress:{selection_version:"burst-winner-v2",burst_plan:fingerprints.map(fp=>({id:"burst-"+fp.id,photo_ids:[fp.id]})),photos_done:151,completed_fingerprint_ids:completed,resume_scope:"folder"}};
 globalThis.fixture = {fingerprints,checkpoint,received:[],writes:[],history:[]};
 const mods = {
  "@/api/base44Client": `export const base44={entities:{AlbumAISelection:{get:async()=>globalThis.fixture.checkpoint,updateMany:async()=>{},create:async value=>{globalThis.fixture.history.push(value);return {id:"resumedJob"};},update:async(id,value)=>{globalThis.fixture.history.push(value);}},ProjectFolder:{get:async()=>({})}}};`,
