@@ -739,7 +739,9 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     // Request JSON in the prompt instead; parsing and per-photo validation remain mandatory.
     // Other providers retain their existing JSON-mode contract.
     if (opts.response_json_schema && !isAlibaba(base)) {
-      body.response_format = { type: "json_object" };
+      body.response_format = new URL(base).hostname === "integrate.api.nvidia.com" && model === "google/diffusiongemma-26b-a4b-it"
+        ? { type: "json_schema", json_schema: { name: "selection_result", schema: opts.response_json_schema } }
+        : { type: "json_object" };
     }
     const t0 = Date.now();
     try {
