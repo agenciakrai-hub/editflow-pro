@@ -26,7 +26,7 @@ export function groupIntoScenes(items, {gapMs=8000, phashThreshold=16, maxSpanMs
  for (const item of sorted) {
    const time = timeOf(item), hash = hashOf(item);
    const prev = current?.files.at(-1);
-   const dt = time !== null && current?.lastTime !== null ? Math.abs(time-current.lastTime) : null;
+   const dt = current && time !== null && current.lastTime !== null ? Math.abs(time-current.lastTime) : null;
    const d = current ? phashDistance(hash,current.lastPhash) : -1;
    const anchorD = current ? phashDistance(hash,current.anchorHash) : -1;
    const seq = sequence(item), prevSeq = prev ? sequence(prev) : null;
