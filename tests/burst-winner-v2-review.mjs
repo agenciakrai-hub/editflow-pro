@@ -5,9 +5,16 @@ import {groupIntoScenes,packSceneChunks} from "../src/lib/rawaistudio/groupIntoS
 import {applyBurstSelectionPolicy} from "../src/lib/rawaistudio/selectionPolicy.js";
 const photo=(i,t=100000+i*1000,h=1n)=>({id:"p"+i,file:{name:"IMG_"+String(i).padStart(4,"0")+".NEF"},captureTime:t,phash:h});
 const photos=Array.from({length:10},(_,i)=>photo(i));
+
+const actualPair = [
+{id:"actual1",fingerprint:{filename:"_1AJ3431.NEF",capture_time:1786216227000,fingerprint_hash:"01010108a3f3fffd",camera_model:"NIKON D610"}},
+{id:"actual2",fingerprint:{filename:"_1AJ3432.NEF",capture_time:1786216242000,fingerprint_hash:"01010118e3fbffff",camera_model:"NIKON D610"}}
+];
+assert.equal(groupIntoScenes(actualPair).length,1,"Real 15-second near-duplicate pair must be one burst");
+
 const groups=groupIntoScenes(photos);assert.equal(groups.length,1);
 assert.equal(groupIntoScenes([photo(1),photo(2,102000,0xffffffffffffffffn)]).length,2);
-assert.equal(groupIntoScenes([photo(1),photo(2,120000)]).length,2);
+assert.equal(groupIntoScenes([photo(1),photo(2,140000)]).length,2);
 assert.equal(groupIntoScenes([photo(1,null),photo(2,null)]).length,1);
 assert.equal(groupIntoScenes([photo(1,null,null),photo(2,null,null)]).length,2);
 const many=Array.from({length:205},(_,i)=>({id:"g"+i,files:[photo(i,i*60000)]}));
