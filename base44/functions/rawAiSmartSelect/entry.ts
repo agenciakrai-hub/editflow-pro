@@ -2,6 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.40';
 import { uploadPreviewBatch } from '../../shared/rawAiStudioEngine.ts';
 import { runWithConcurrency } from '../../shared/concurrency.ts';
 import { invokeVision } from '../../shared/aiProviderAdapter.ts';
+import { compareBurstWinner } from '../../shared/burstWinner.js';
 import { DEFAULT_PROBE_IMAGE, webSession } from '../../shared/providerDefaults.ts';
 
 // RAW AI Studio — POST /rawAiSmartSelect
@@ -509,6 +510,32 @@ export default async function(req: Request): Promise<Response> {
         );
         const uploadMs = Date.now() - tUpload0;
 
+        if (body?.decision_contract === 'burst-winner-v2') {
+          const result = await compareBurstWinner(candidateIds, async (ids: string[]) => {
+            iaCalls++;
+            return await invokeVision(base44, {
+              task: 'seleccion', ...overrides,
+              prompt: `Compare ALL attached photos of ONE photographic burst. Image order and exact identifiers: ${ids.join(', ')}.
+Choose exactly ONE best frame. Prioritize open eyes and natural expressions of main subjects, then focus, moment and composition. Compare the visible images, not filenames. Head turns and small pose changes do not create extra winners. If every frame has defects choose the best relative alternative and explain those defects honestly. Never invent hidden facial details.
+Return only JSON: {"winner_id":"one exact supplied identifier","compared_ids":["ALL exact identifiers in image order"],"reason":"short comparative reason in Spanish"}. Do not return scores, multiple winners, markdown or extra groups.`,
+              file_urls: ids.map(id => uploaded[id]),
+              response_json_schema: {type:'object', properties:{
+                winner_id:{type:'string',enum:ids}, compared_ids:{type:'array',items:{type:'string',enum:ids},minItems:ids.length,maxItems:ids.length},
+                reason:{type:'string'}
+              },required:['winner_id','compared_ids','reason']},
+              _trace: trace,
+            });
+          });
+          groups[burstId] = {...result, _meta:{
+            fallback:false, decision_contract:'burst-winner-v2', ia_calls:iaCalls,
+            total_ms:Date.now()-burstStarted, http_status:trace.http_status,
+            provider:trace.provider || trace.active_provider, model:trace.model,
+            active_provider:trace.active_provider, configured_model:trace.configured_model,
+            attempts:trace.attempts || [],
+          }};
+          return;
+        }
+
         let result: any;
         if (burst.independent) {
           // Lote de singletons: cada foto juzgada por mérito propio, sin límite de un
@@ -616,7 +643,7 @@ export default async function(req: Request): Promise<Response> {
         // Fallback técnico conservador (no simula decisión IA). Se registra el motivo
         // para que la traza/logs permitan auditar POR QUÉ falló la IA del burst.
         console.log(`[rawAiSmartSelect] burst=${burstId} fallo de IA: ${String(e?.message || e)}`);
-        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { total_ms: Date.now() - burstStarted, ia_calls: iaCalls, finalist_ids: [], final_ran: false, fallback: true, provider: trace.provider || trace.active_provider || null, model: trace.model || null, active_provider: trace.active_provider ?? null, configured_model: trace.configured_model ?? null, final_provider: null, final_model: null, provider_failover: false, failover_reason: String(e?.message || e).slice(0, 300), attempts: Array.isArray(trace.attempts) ? trace.attempts : [], upload_ms: null, request_ms: trace.request_ms ?? null, base64_convert_ms: trace.base64_convert_ms ?? null, parse_ms: trace.parse_ms ?? null, http_status: trace.http_status ?? null, tokens_in: trace.tokens_in ?? null, tokens_out: trace.tokens_out ?? null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
+        groups[burstId] = { ...technicalFallback(candidateIds, technicals), _meta: { total_ms: Date.now() - burstStarted, ia_calls: iaCalls, finalist_ids: [], final_ran: false, fallback: true, failure_kind: e?.failure_kind || null, provider: trace.provider || trace.active_provider || null, model: trace.model || null, active_provider: trace.active_provider ?? null, configured_model: trace.configured_model ?? null, final_provider: null, final_model: null, provider_failover: false, failover_reason: String(e?.message || e).slice(0, 300), attempts: Array.isArray(trace.attempts) ? trace.attempts : [], upload_ms: null, request_ms: trace.request_ms ?? null, base64_convert_ms: trace.base64_convert_ms ?? null, parse_ms: trace.parse_ms ?? null, http_status: trace.http_status ?? null, tokens_in: trace.tokens_in ?? null, tokens_out: trace.tokens_out ?? null, endpoint: null, error: String(e?.message || e).slice(0, 300) } };
       }
     });
 
