@@ -726,6 +726,12 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     // Alibaba enables thinking by default; culling needs the final bounded JSON.
     // Keep this vendor parameter scoped to the verified Alibaba endpoint.
     if (isAlibaba(base)) body.enable_thinking = false;
+    // NVIDIA documents max reasoning by default; bound culling deliberation.
+    if (opts.task === "seleccion" && /integrate\\.api\\.nvidia\\.com/i.test(base) && model === "z-ai/glm-5.3-flash") {
+      body.reasoning_effort = "low";
+      body.chat_template_kwargs = { clear_thinking: true };
+      if (opts.response_json_schema?.properties?.winner_id) body.max_tokens = 2048;
+    }
     // response_format: cuando el llamador pide un JSON schema, se fuerza al modelo a
     // devolver JSON (no texto libre). Sin esto, algunos modelos devuelven texto con
     // bloques de razonamiento que parseJsonContent no puede extraer → valores vacíos.
