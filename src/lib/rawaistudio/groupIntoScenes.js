@@ -1,4 +1,4 @@
-import { phashDistance } from "./perceptualHash";
+import { phashDistance } from "./perceptualHash.js";
 function nameOf(p) { return p.fingerprint?.filename || p.file?.name || ""; }
 function sequence(p) { const m = /(\d+)(?=\.[^.]+$)/.exec(nameOf(p)); return m ? Number(m[1]) : null; }
 function timeOf(p) {
