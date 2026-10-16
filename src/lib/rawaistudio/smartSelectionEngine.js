@@ -129,326 +129,86 @@ function technicalFallbackForGroup(group) {
 }
 
 // withPreview -> { keep: Set<id>, meta: Map<id, {...}> }
-export async function runAiBurstSelection(withPreview, onProgress, { shouldCancel = () => false, onBatch } = {}) {
-  const trace = {
-    started_at: new Date().toISOString(),
-    started_ms: Date.now(),
-    photo_count: withPreview.length,
-    stages: {},
-    bursts: [],
-  };
-  trace.stages.grouping = { start_ms: Date.now() };
-  // Common preflight for every provider. Never upscale a placeholder or label it AI.
-  const unreadable = [];
-  for (const photo of withPreview) {
-    if (shouldCancel()) return { keep: new Set(), meta: new Map(), trace };
-    const prepared = await prepareSelectionPreview(photo.preview, photo.file, extractRawPreview);
-    if (prepared) photo.preview = prepared;
-    else unreadable.push(photo.file?.name || photo.fingerprint?.filename || photo.id);
-  }
-  if (unreadable.length) {
-    const error = new Error(`Hay ${unreadable.length} vistas previas ilegibles en este bloque (${unreadable.slice(0, 3).join(", ")}). Usa «Reparar vistas previas» con la carpeta original. Las selecciones ya guardadas se conservan; no se han enviado estas imágenes a ningún proveedor.`);
-    error.selectionDiagnostics = { failure_stage: "preview_preflight", unreadable_count: unreadable.length };
-    throw error;
-  }
-  const valid = withPreview.filter((p) => p.preview && !p.preview.isPlaceholder);
-  const groups = groupIntoScenes(valid);
-  trace.stages.grouping.end_ms = Date.now();
-  trace.stages.grouping.duration_ms = trace.stages.grouping.end_ms - trace.stages.grouping.start_ms;
-  trace.stages.grouping.scene_count = groups.length;
-  trace.stages.grouping.real_bursts = groups.filter((g) => g.files.length > 1).length;
-  trace.stages.grouping.singletons = groups.filter((g) => g.files.length === 1).length;
-  trace.stages.grouping.corrupt = withPreview.length - valid.length;
-
-  // Fotos corruptas (sin preview analizable): REVIEW, no se seleccionan ni se mandan a la IA.
-  const keep = new Set();
-  const meta = new Map();
-  withPreview.filter((p) => !p.preview || p.preview.isPlaceholder).forEach((p) => {
-    meta.set(p.id, {
-      groupId: `unreadable-${p.id}`, groupSize: 1, status: "REVIEW",
-      scores: null, rejectReasons: ["PREVIEW_UNAVAILABLE"],
-      reason: "Preview no disponible para análisis",
-      confidence: 0, category: null, groupRank: 1, complementary: false, category_note: "",
-      analysisComplete: false, missingDimensions: [], previewWarning: true,
-    });
-  });
-
-  // Ráfagas reales (misma escena, >1 foto) se analizan comparativamente (1 llamada IA
-  // cada una). Las fotos sueltas (singleton — escenas de 1 foto, muy comunes en sesiones
-  // con tomas espaciadas >3s) se AGRUPAN en lotes independientes: la IA juzga cada foto
-  // por su mérito propio en una sola llamada, reduciendo el nº de llamadas de N (una por
-  // foto) a N/INDEPENDENT_BATCH. Se preserva el groupId original de cada singleton para
-  // que la cobertura/dedup sigan funcionando por escena.
-  // Cinco fotos independientes como máximo; una ráfaga por petición HTTP para
-  // acotar la espera y evitar acumular varias respuestas lentas del navegador web.
-  const INDEPENDENT_BATCH = 5;
-  const realGroups = groups.filter((g) => g.files.length > 1);
-  const singletonGroups = groups.filter((g) => g.files.length === 1);
-  const bursts = realGroups.map((g) => ({ id: g.id, files: g.files, independent: false, sceneOf: null }));
-  for (let i = 0; i < singletonGroups.length; i += INDEPENDENT_BATCH) {
-    const batch = singletonGroups.slice(i, i + INDEPENDENT_BATCH);
-    bursts.push({
-      id: `ind-${i / INDEPENDENT_BATCH}`,
-      files: batch.map((g) => g.files[0]),
-      independent: true,
-      sceneOf: new Map(batch.map((g) => [g.files[0].id, g.id])),
-    });
-  }
-  const deferredErrors = [];
-  let consecutiveServiceFailures = 0;
-  let processedPhotos = withPreview.length - valid.length;
-  onProgress?.(processedPhotos, withPreview.length);
-
-  // Instrumentación de concurrencia (solo medición; no cambia el pool ni el orden).
-  let activeNow = 0;
-  let maxActive = 0;
-  const concurrencySamples = [];
-
-  // AGRUPACIÓN DE RÁFAGAS POR LLAMADA HTTP: envía BURSTS_PER_CALL ráfagas en una sola
-  // petición a rawAiSmartSelect. El backend ya soporta múltiples ráfagas por petición
-  // (las procesa con MAX_CONCURRENT_LLM en paralelo). Esto reduce los round trips HTTP
-  // (auth, JSON, connection setup) por factor BURSTS_PER_CALL, acelerando el culling.
-  const BURSTS_PER_CALL = 1;
-  const burstChunks = [];
-  for (let i = 0; i < bursts.length; i += BURSTS_PER_CALL) {
-    burstChunks.push(bursts.slice(i, i + BURSTS_PER_CALL));
-  }
-
-  trace.stages.ai_analysis = { start_ms: Date.now(), bursts_total: bursts.length };
-  await runPool(burstChunks, BATCH_CONCURRENCY, async (chunk) => {
-    if (shouldCancel()) return;
-    const chunkStart = Date.now();
-    activeNow += 1;
-    if (activeNow > maxActive) maxActive = activeNow;
-    concurrencySamples.push({ t_ms: Date.now() - trace.started_ms, active: activeNow });
-    const concAtStart = activeNow;
-    // Prepara el payload de TODAS las ráfagas del chunk en una sola petición.
-    const burstsPayload = [];
-    const prepPhotosByBurst = new Map();
-    for (const burst of chunk) {
-      const photosPayload = [];
-      const prepPhotos = [];
-      for (const f of burst.files) {
-        const p = f.preview || {};
-        const dataUrl = p.dataUrl || "";
-        const mimeMatch = /^data:([^;]+);/.exec(dataUrl);
-        const b64 = p.base64 || "";
-        photosPayload.push({
-          id: f.id,
-          preview_base64: b64,
-          technical: {
-            sharpness: f.technical?.sharpness ?? 0,
-            exposureScore: f.technical?.exposureScore ?? 0.5,
-            corrupt: !!f.technical?.corrupt,
-          },
-        });
-        prepPhotos.push({
-          id: f.id,
-          mime: mimeMatch ? mimeMatch[1] : "image/jpeg",
-          width: p.width || null,
-          height: p.height || null,
-          base64_chars: b64.length,
-          image_bytes_approx: b64.length ? Math.round((b64.length * 3) / 4) : null,
-        });
-      }
-      burstsPayload.push({ burst_id: burst.id, independent: burst.independent, photos: photosPayload });
-      prepPhotosByBurst.set(burst.id, prepPhotos);
-    }
-    const invokeStartMs = Date.now();
-    let invokeDurationMs = null;
-    let chunkError = null;
-    let responseData = null;
-    try {
-      const response = await invokeSelectionWithRecovery(payload => base44.functions.invoke("rawAiSmartSelect", payload), { bursts: burstsPayload }, { shouldCancel });
-      responseData = response?.data;
-    } catch (e) {
-      chunkError = e;
-    }
-    invokeDurationMs = Date.now() - invokeStartMs;
-    if (shouldCancel()) return;
-    if (chunkError) throw new Error(`Selección interrumpida: ${chunkError.message || "El servidor no respondió"}`);
-    for (const burst of chunk) {
-      const group = responseData?.groups?.[burst.id];
-      const ids = new Set((group?.rankings || []).map(r => String(r.id)));
-      if (!group || group._meta?.fallback || burst.files.some(f => !ids.has(String(f.id))) || group.rankings.some(r => r.analysis_complete !== true)) {
-        const failure = new Error(`El proveedor no completó la ráfaga de ${burst.files.length} fotos: ${group?._meta?.error || group?._meta?.failover_reason || "respuesta incompleta"}. No se ha aplicado una selección técnica como resultado IA.`);
-        failure.selectionDiagnostics = {
-          provider_used: group?._meta?.active_provider || group?._meta?.provider || null,
-          model_used: group?._meta?.model || group?._meta?.configured_model || null,
-          burst_size: burst.files.length, http_status: group?._meta?.http_status ?? null,
-          total_ms: group?._meta?.total_ms ?? invokeDurationMs,
-          attempts: (group?._meta?.attempts || []).map(a => ({model:a.model,ok:a.ok,http_status:a.http_status,latency_ms:a.latency_ms})),
-        };
-        if (transientSelectionFailure({ groups: { [burst.id]: group } })) {
-          consecutiveServiceFailures++;
-          deferredErrors.push(failure);
-          activeNow = Math.max(0, activeNow - 1);
-          // A provider outage must not produce thousands of failing requests.
-          if (consecutiveServiceFailures >= 3) {
-            failure.message = "El proveedor sigue sin responder tras varios reintentos. Se han conservado las fotos guardadas. " + failure.message;
-            throw failure;
-          }
-          return; // Keep this burst pending; let other bursts run.
-        }
-        throw failure;
-      }
-    }
-    consecutiveServiceFailures = 0;
-    // Procesa el resultado de cada ráfaga del chunk.
-    for (const burst of chunk) {
-      const groupIdFor = (f) => (burst.independent ? (burst.sceneOf?.get(f.id) || burst.id) : burst.id);
-      const groupSizeFor = () => (burst.independent ? 1 : burst.files.length);
-      let burstProvider = null, burstModel = null, burstFallback = false, burstIaCalls = 0;
-      let beActiveProvider = null, beConfiguredModel = null, beFinalProvider = null, beFinalModel = null;
-      let beProviderFailover = false, beFailoverReason = null, beAttempts = [];
-      let beUploadMs = null, beRequestMs = null, beBase64Ms = null, beParseMs = null;
-      let beHttpStatus = null, beTokensIn = null, beTokensOut = null, beEndpoint = null;
-      const prepPhotos = prepPhotosByBurst.get(burst.id) || [];
-      try {
-        if (chunkError) throw chunkError;
-        const g = responseData?.groups?.[burst.id];
-        burstProvider = g?._meta?.provider || null;
-        burstModel = g?._meta?.model || null;
-        burstFallback = !!g?._meta?.fallback;
-        burstIaCalls = g?._meta?.ia_calls || 0;
-        beUploadMs = g?._meta?.upload_ms ?? null;
-        beRequestMs = g?._meta?.request_ms ?? null;
-        beBase64Ms = g?._meta?.base64_convert_ms ?? null;
-        beParseMs = g?._meta?.parse_ms ?? null;
-        beHttpStatus = g?._meta?.http_status ?? null;
-        beTokensIn = g?._meta?.tokens_in ?? null;
-        beTokensOut = g?._meta?.tokens_out ?? null;
-        beEndpoint = g?._meta?.endpoint ?? null;
-        beActiveProvider = g?._meta?.active_provider ?? null;
-        beConfiguredModel = g?._meta?.configured_model ?? null;
-        beFinalProvider = g?._meta?.final_provider ?? null;
-        beFinalModel = g?._meta?.final_model ?? null;
-        beProviderFailover = !!g?._meta?.provider_failover;
-        beFailoverReason = g?._meta?.failover_reason ?? null;
-        beAttempts = Array.isArray(g?._meta?.attempts) ? g?._meta.attempts : [];
-        const rankings = Array.isArray(g?.rankings) ? g.rankings : [];
-        const byId = new Map(rankings.map((r) => [String(r.id), r]));
-        const category = g?.category || null;
-        const reason = g?.reason || null;
-        const keepIds = new Set((g?.keep_ids || []).map(String));
-        burst.files.forEach((f, i) => {
-          const r = byId.get(f.id);
-          const status = r?.status || "REVIEW";
-          const groupRank = burst.independent ? 1 : (typeof r?.rank === "number" ? r.rank : i + 1);
-          const selectable = status === "SELECT" || status === "TOP_PICK";
-          if (selectable) keep.add(f.id);
-          meta.set(f.id, {
-            poseKey: r?.pose_key || null,
-            groupId: groupIdFor(f),
-            groupSize: groupSizeFor(),
-            status,
-            scores: r?.scores || null,
-            rejectReasons: r?.reject_reasons || [],
-            reason,
-            confidence: r?.scores?.confidence ?? null,
-            confidenceTier: r?.confidence_tier || "UNCERTAIN_REVIEW",
-            comparedWith: burst.independent ? [] : burst.files.map((f2) => f2.id).filter((id2) => id2 !== f.id),
-            category,
-            groupRank,
-            complementary: !burst.independent && keepIds.size > 1 && keepIds.has(f.id) && status !== "TOP_PICK",
-            category_note: r?.note || "",
-            analysisComplete: r?.analysis_complete ?? false,
-            missingDimensions: r?.missing_dimensions || [],
-            previewWarning: false,
-          });
-        });
-      } catch {
-        burstFallback = true;
-        const fb = technicalFallbackForGroup(burst);
-        fb.forEach((m, i) => {
-          const f = burst.files[i];
-          if (m.status === "SELECT" || m.status === "TOP_PICK") keep.add(f.id);
-          meta.set(f.id, {
-            poseKey: null,
-            groupId: groupIdFor(f), groupSize: groupSizeFor(), status: m.status,
-            scores: m.scores, rejectReasons: m.rejectReasons, reason: m.reason,
-            confidence: m.confidence, confidenceTier: "UNCERTAIN_REVIEW", comparedWith: [],
-            category: m.category, groupRank: burst.independent ? 1 : m.groupRank,
-            complementary: m.complementary, category_note: m.category_note,
-            analysisComplete: m.analysisComplete, missingDimensions: m.missing_dimensions,
-            previewWarning: false,
-          });
-        });
-      }
-      trace.bursts.push({
-        burst_id: burst.id, independent: burst.independent, photo_count: burst.files.length,
-        start_ms: chunkStart, end_ms: Date.now(), duration_ms: Date.now() - chunkStart,
-        provider: burstProvider, model: burstModel, ia_calls: burstIaCalls, fallback: burstFallback,
-        active_provider: beActiveProvider, configured_model: beConfiguredModel,
-        final_provider: beFinalProvider, final_model: beFinalModel,
-        provider_failover: beProviderFailover, failover_reason: beFailoverReason,
-        attempts: beAttempts,
-        concurrency_at_start: concAtStart,
-        prep: { duration_ms: 0, photos: prepPhotos },
-        transport: { invoke_ms: invokeDurationMs, upload_ms: beUploadMs, base64_convert_ms: beBase64Ms },
-        gemini: { request_ms: beRequestMs, http_status: beHttpStatus, endpoint: beEndpoint, tokens_in: beTokensIn, tokens_out: beTokensOut },
-        parse: { duration_ms: beParseMs },
-      });
-      processedPhotos += burst.files.length;
-      onProgress?.(processedPhotos, withPreview.length);
-    }
-    if (onBatch) {
-      const batchPhotos = chunk.flatMap(burst => burst.files);
-      const batchMeta = new Map(batchPhotos.map(photo => [photo.id, { ...meta.get(photo.id) }]));
-      const batchKeep = new Set();
-      applyBurstSelectionPolicy(batchKeep, batchMeta, batchPhotos);
-      await onBatch({ keep: batchKeep, meta: batchMeta });
-    }
-    activeNow = Math.max(0, activeNow - 1);
-    concurrencySamples.push({ t_ms: Date.now() - trace.started_ms, active: activeNow });
-  }, () => {});
-  if (shouldCancel()) return { keep: new Set(), meta: new Map(), trace, canceled: true };
-  trace.stages.ai_analysis.end_ms = Date.now();
-  trace.stages.ai_analysis.duration_ms = trace.stages.ai_analysis.end_ms - trace.stages.ai_analysis.start_ms;
-  trace.stages.ai_analysis.max_concurrency = maxActive;
-  trace.stages.ai_analysis.concurrency_limit = BATCH_CONCURRENCY;
-  trace.stages.ai_analysis.concurrency_samples = concurrencySamples;
-
-  if (deferredErrors.length) return { keep, meta, trace, deferred_errors: deferredErrors };
-
-  // DEDUP entre grupos: pHash detecta candidatos; la IA compara visualmente (momento,
-  // expresión, composición, sujeto) y solo rebaja si es un duplicado REAL. Diferencia
-  // significativa de momento/expresión/composición → NO se consideran duplicados.
-  trace.stages.dedup = { start_ms: Date.now() };
-  // La cobertura por ráfaga prevalece: no descartar representantes entre grupos.
-  trace.stages.dedup.end_ms = Date.now();
-  trace.stages.dedup.duration_ms = trace.stages.dedup.end_ms - trace.stages.dedup.start_ms;
-
-  // ORDEN: dedup → cobertura por grupo → mínimo 1 TOP_PICK global.
-  trace.stages.coverage = { start_ms: Date.now() };
-  const coverage = applyBurstSelectionPolicy(keep, meta, withPreview);
-  trace.stages.coverage.end_ms = Date.now();
-  trace.stages.coverage.duration_ms = trace.stages.coverage.end_ms - trace.stages.coverage.start_ms;
-  trace.stages.coverage.promotions = coverage.promotions?.length || 0;
-  trace.stages.coverage.exceptional_groups = coverage.exceptional_groups || [];
-
-  trace.stages.fallback = { start_ms: Date.now() };
-  const fallback = ensureAtLeastOneTopPick(keep, meta, withPreview);
-  trace.stages.fallback.end_ms = Date.now();
-  trace.stages.fallback.duration_ms = trace.stages.fallback.end_ms - trace.stages.fallback.start_ms;
-  trace.stages.fallback.used = !!fallback.selection_fallback;
-  trace.stages.fallback.exceptional = !!fallback.exceptional;
-
-  trace.ended_ms = Date.now();
-  trace.total_duration_ms = trace.ended_ms - trace.started_ms;
-  trace.result = {
-    kept: keep.size,
-    statuses: Array.from(meta.values()).reduce((acc, m) => { acc[m.status] = (acc[m.status] || 0) + 1; return acc; }, {}),
-    confidence_tiers: Array.from(meta.values()).reduce((acc, m) => { const t = m.confidenceTier || "UNCERTAIN_REVIEW"; acc[t] = (acc[t] || 0) + 1; return acc; }, {}),
-  };
-  return {
-    keep, meta,
-    selection_fallback: fallback.selection_fallback,
-    fallback_reason: fallback.fallback_reason,
-    selection_coverage_fallback: coverage.selection_coverage_fallback,
-    coverage_promotions: coverage.promotions,
-    trace,
-  };
+export async function runAiBurstSelection(withPreview, onProgress, {shouldCancel=()=>false,onBatch}={}) {
+ const trace={started_at:new Date().toISOString(),started_ms:Date.now(),photo_count:withPreview.length,stages:{},bursts:[],decision_contract:"burst-winner-v2"};
+ const keep=new Set(),meta=new Map(),deferredErrors=[];
+ const planned=withPreview.every(p=>p.selectionBurstId);
+ let groups;
+ if(planned){
+   const map=new Map();
+   for(const p of withPreview){if(!map.has(p.selectionBurstId))map.set(p.selectionBurstId,{id:p.selectionBurstId,files:[]});map.get(p.selectionBurstId).files.push(p);}
+   groups=[...map.values()];
+ } else groups=groupIntoScenes(withPreview);
+ trace.stages.grouping={scene_count:groups.length,real_bursts:groups.filter(g=>g.files.length>1).length,singletons:groups.filter(g=>g.files.length===1).length};
+ let done=0,consecutiveFailures=0;
+ for(const group of groups){
+   if(shouldCancel())return {keep,meta,trace,canceled:true};
+   let result, lastMeta={};
+   const start=Date.now();
+   try {
+     for(const photo of group.files){
+       const prepared=await prepareSelectionPreview(photo.preview,photo.file,extractRawPreview);
+       if(!prepared) {
+         const error=new Error(`Vista previa ilegible: ${photo.file?.name || photo.id}. Usa «Reparar vistas previas».`);
+         error.selectionDiagnostics={failure_stage:"preview_preflight",unreadable_count:1};
+         throw error;
+       }
+       photo.preview=prepared;
+     }
+     const byId=new Map(group.files.map(p=>[String(p.id),p]));
+     let candidates=[...byId.keys()];
+     if(candidates.length!==group.files.length)throw new Error("Identidades duplicadas en la ráfaga");
+     // Transport at most eight previews per request. Intermediate winners are NOT saved.
+     do {
+       const next=[];
+       for(let offset=0;offset<candidates.length;offset+=8){
+         if(shouldCancel())return {keep,meta,trace,canceled:true};
+         const ids=candidates.slice(offset,offset+8);
+         const response=await invokeSelectionWithRecovery(payload=>base44.functions.invoke("rawAiSmartSelect",payload),{
+           decision_contract:"burst-winner-v2",
+           bursts:[{burst_id:group.id,photos:ids.map(id=>({id,preview_base64:byId.get(id).preview.base64}))}]
+         },{shouldCancel});
+         const g=response?.data?.groups?.[group.id];
+         lastMeta=g?._meta || {};
+         const compared=g?.comparisons?.flatMap(round=>round.compared_ids) || [];
+         if(!g || lastMeta.fallback || g.decision_contract!=="burst-winner-v2" ||
+             !ids.includes(g.winner_id) || g.keep_ids?.length!==1 || g.keep_ids[0]!==g.winner_id ||
+             compared.length!==ids.length || new Set(compared).size!==ids.length || ids.some(id=>!compared.includes(id))) {
+           throw new Error(lastMeta.error || "El proveedor no devolvió una comparación completa y una única ganadora");
+         }
+         next.push(g.winner_id);result=g;
+       }
+       candidates=next;
+     }while(candidates.length>1);
+     if(shouldCancel())return {keep,meta,trace,canceled:true};
+     const winner=candidates[0];
+     const batchMeta=new Map(group.files.map(p=>[p.id,{
+       groupId:group.id,groupSize:group.files.length,status:String(p.id)===winner?"TOP_PICK":"REVIEW",
+       groupRank:String(p.id)===winner?1:2,scores:null,confidence:null,confidenceTier:"COMPARATIVE_WINNER",
+       reason:result.reason,category_note:String(p.id)===winner?result.reason:"Alternativa de la misma ráfaga",
+       analysisComplete:true,comparisonComplete:true,missingDimensions:[],rejectReasons:[],
+       comparedWith:group.files.filter(other=>other.id!==p.id).map(other=>other.id),complementary:false,
+     }]));
+     const batchKeep=new Set();applyBurstSelectionPolicy(batchKeep,batchMeta,group.files);
+     // A whole burst is committed only after its final comparison succeeds.
+     await onBatch?.({keep:batchKeep,meta:batchMeta});
+     for(const id of batchKeep)keep.add(id);
+     for(const [id,m]of batchMeta)meta.set(id,m);
+     done+=group.files.length;consecutiveFailures=0;onProgress?.(done,withPreview.length);
+     trace.bursts.push({burst_id:group.id,photo_count:group.files.length,winner_id:winner,provider:lastMeta.provider,model:lastMeta.model,duration_ms:Date.now()-start,fallback:false});
+   }catch(error){
+     if(shouldCancel())return {keep,meta,trace,canceled:true};
+     error.selectionDiagnostics={...error.selectionDiagnostics,provider_used:lastMeta.provider,model_used:lastMeta.model,http_status:lastMeta.http_status,
+       burst_id:group.id,burst_size:group.files.length,failure_kind:lastMeta.failure_kind || "burst_comparison",pending_photo_ids:group.files.map(p=>p.id)};
+     deferredErrors.push(error);consecutiveFailures++;
+     trace.bursts.push({burst_id:group.id,photo_count:group.files.length,fallback:true,error:error.message});
+     // Keep isolated bad bursts pending, but stop a systemic outage.
+     if(consecutiveFailures>=3) {error.message="Tres ráfagas consecutivas no se pudieron comparar. Resultados anteriores conservados. "+error.message;throw error;}
+   }
+ }
+ trace.ended_ms=Date.now();trace.total_duration_ms=trace.ended_ms-trace.started_ms;
+ trace.result={kept:keep.size,processed:meta.size,pending:withPreview.length-meta.size};
+ return {keep,meta,trace,deferred_errors:deferredErrors,selection_fallback:false};
 }
 
 function ctxOf(m) {
