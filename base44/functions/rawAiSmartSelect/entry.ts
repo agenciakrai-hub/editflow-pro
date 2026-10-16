@@ -510,7 +510,7 @@ export default async function(req: Request): Promise<Response> {
         );
         const uploadMs = Date.now() - tUpload0;
 
-        if (body?.decision_contract === 'burst-winner-v2') {
+        if (body?.decision_contract === 'burst-winner-v2' || audit) {
           const result = await compareBurstWinner(candidateIds, async (ids: string[]) => {
             iaCalls++;
             return await invokeVision(base44, {
