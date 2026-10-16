@@ -505,14 +505,18 @@ export default function NuevoProyectoPage() {
     }));
   };
 
-  const runAiSelection = async () => {
+  const runAiSelection = async (restartByBursts = false) => {
+    restartByBursts = restartByBursts === true;
+    const checkpoint = restartByBursts ? null : resumeCheckpoint;
+    if (checkpoint && checkpoint.stage_progress?.selection_version !== "burst-winner-v2") { toast({title:"Usa «Rehacer por ráfagas» para aplicar el nuevo método a toda la carpeta."}); return; }
     if (resumeError) { toast({ title: "No se pudo comprobar el trabajo anterior. Recarga antes de iniciar otra selección.", variant: "destructive" }); return; }
     if (resumeLoading) { toast({ title: "Comprobando selecciones guardadas. Espera un momento." }); return; }
     let marked = items.filter((it) => selectedIds.has(it.id));
-    if (resumeCheckpoint) {
+    if (restartByBursts) marked = [...items];
+    if (checkpoint) {
       try {
         const saved = await listFingerprintsByFolder(existing?.folderId || folderIdParam);
-        marked = pendingSelectionItems(items, saved, resumeCheckpoint);
+        marked = pendingSelectionItems(items, saved, checkpoint);
       } catch (error) {
         toast({ title: "No se pudo preparar la continuación", description: error.message, variant: "destructive" }); return;
       }
@@ -539,8 +543,8 @@ export default function NuevoProyectoPage() {
       projectId: selectionProjectId,
       folderId: selectionFolderId,
       items,
-      selectedIds: resumeCheckpoint ? new Set(items.map(it => it.id)) : selectedIds,
-      resumeFrom: resumeCheckpoint,
+      selectedIds: checkpoint || restartByBursts ? new Set(items.map(it => it.id)) : selectedIds,
+      resumeFrom: checkpoint,
       onProgress: (job) => {
         if (!mountedRef.current) return;
         setAiDone(job.done);
@@ -827,9 +831,9 @@ export default function NuevoProyectoPage() {
           </button>
           {resumeCheckpoint && !aiRunning && (
             <div role="status" className="mb-3 rounded-md border border-border p-3 text-sm">
-              <p>{resumeCheckpoint.stage_progress.completed_fingerprint_ids.length} fotos ya guardadas. La continuación conserva sus resultados y solo analiza las pendientes.</p>
-              <button disabled={repairing || saving || resumeLoading} onClick={runAiSelection} className="mt-2 rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50">
-                Continuar selección pendiente
+              <p>{resumeCheckpoint.stage_progress?.selection_version === "burst-winner-v2" ? `${resumeCheckpoint.stage_progress.completed_fingerprint_ids.length} fotos guardadas. Solo se compararán las ráfagas pendientes.` : "Nuevo método: una sola ganadora por ráfaga. Rehacer compara toda la carpeta y sustituye cada grupo únicamente después de recibir una decisión válida."}</p>
+              <button disabled={repairing || saving || resumeLoading} onClick={() => runAiSelection(resumeCheckpoint.stage_progress?.selection_version !== "burst-winner-v2")} className="mt-2 rounded-md bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50">
+                {resumeCheckpoint.stage_progress?.selection_version === "burst-winner-v2" ? "Continuar selección pendiente" : "Rehacer por ráfagas"}
               </button>
             </div>
           )}
