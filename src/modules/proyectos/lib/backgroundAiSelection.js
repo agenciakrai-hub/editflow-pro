@@ -9,6 +9,7 @@
 // usuario vuelve a la página, el componente se suscribe al job y muestra el progreso
 // en vivo, o los resultados ya guardados si terminó mientras estaba fuera.
 
+import { groupIntoScenes, packSceneChunks } from "@/lib/rawaistudio/groupIntoScenes";
 import { selectBursts } from "@/lib/ai/aiGateway";
 import { selectionUpdates } from "./selectionPersistence";
 import { getCachedPreviews, getCachedPreview, cachePreviews } from "./previewCache";
@@ -106,10 +107,13 @@ async function runSelection(job, marked, onComplete, onError) {
   let savedFingerprints;
   let savedFingerprintIds = new Set(job.resumeFrom?.stage_progress?.completed_fingerprint_ids || []);
   let targetFingerprintIds = [];
+  let burstPlan = [];
   try {
     savedFingerprints = await listFingerprintsByFolder(job.folderId);
     if (job.resumeFrom) {
       const fresh = await base44.entities.AlbumAISelection.get(job.resumeFrom.id);
+      if (fresh.stage_progress?.selection_version !== "burst-winner-v2") throw new Error("La selección anterior usa otro método. Usa «Rehacer por ráfagas» para comparar también las fotos ya analizadas.");
+      burstPlan = fresh.stage_progress.burst_plan || [];
       if (!["failed", "canceled"].includes(fresh.status)) throw new Error("El trabajo anterior no está detenido");
       marked = pendingSelectionItems(job.items, savedFingerprints, fresh);
       savedFingerprintIds = new Set(fresh.stage_progress?.completed_fingerprint_ids || []);
@@ -119,6 +123,11 @@ async function runSelection(job, marked, onComplete, onError) {
       targetFingerprintIds = marked.map(it => byKey.get(fileIdentity(it)));
       if (targetFingerprintIds.some(id => !id)) throw new Error("No se pudo identificar cada archivo guardado");
     }
+    if (!job.resumeFrom) {
+      const ids = new Map(savedFingerprints.map(fp => [fileIdentity(fp),fp.id]));
+      const enriched = marked.map(it => ({...it,fingerprint:savedFingerprints.find(fp=>fileIdentity(fp)===fileIdentity(it)) || it.fingerprint}));
+      burstPlan = groupIntoScenes(enriched).map(group=>({id:group.id,photo_ids:group.files.map(it=>ids.get(fileIdentity(it)))}));
+    }
     if (!marked.length) throw new Error("No quedan fotos pendientes en este trabajo");
     job.total = marked.length;
     notify(job);
@@ -127,6 +136,8 @@ async function runSelection(job, marked, onComplete, onError) {
     onError?.(error); activeJobs.delete(key); return;
   }
   const checkpointProgress = () => ({
+    selection_version: "burst-winner-v2",
+    burst_plan: burstPlan,
     photos_done: savedFingerprintIds.size,
     completed_fingerprint_ids: [...savedFingerprintIds],
     target_fingerprint_ids: targetFingerprintIds,
@@ -170,21 +181,19 @@ async function runSelection(job, marked, onComplete, onError) {
   }).catch(() => {});
 
   try {
-    // PROCESO POR LOTES (chunks): con carpetas de 4000-20000 fotos, cargar todas
-    // las previews base64 en memoria a la vez agota el navegador (Error 5). Se
-    // ordenan las fotos por hora de captura (para no partir escenas/ráfagas entre
-    // chunks) y se procesan en lotes de CHUNK_SIZE, cargando solo las previews de
-    // cada lote desde IndexedDB. La memoria se mantiene acotada (~200 previews).
-    const CHUNK_SIZE = 200;
-    const sorted = [...marked].sort((a, b) => {
-      const at = a.captureTime ?? a.fingerprint?.capture_time ?? 0;
-      const bt = b.captureTime ?? b.fingerprint?.capture_time ?? 0;
-      return (at || 0) - (bt || 0);
-    });
-    const chunks = [];
-    for (let i = 0; i < sorted.length; i += CHUNK_SIZE) {
-      chunks.push(sorted.slice(i, i + CHUNK_SIZE));
+    // Plan once over folder metadata; load previews only for whole bursts.
+    const byFingerprint = new Map(savedFingerprints.map(fp=>[fp.id,fp]));
+    const byFile = new Map(marked.map(it=>[fileIdentity(it),it]));
+    const groups = [];
+    for (const plan of burstPlan) {
+      const pending = plan.photo_ids.filter(id=>!savedFingerprintIds.has(id));
+      if (!pending.length) continue;
+      if (pending.length!==plan.photo_ids.length) throw new Error("El punto de guardado contiene una ráfaga parcial. Se conserva para revisión.");
+      const files = pending.map(id=>byFile.get(fileIdentity(byFingerprint.get(id) || {})));
+      if (files.some(file=>!file)) throw new Error("Faltan archivos de una ráfaga pendiente");
+      groups.push({id:plan.id,files});
     }
+    const chunks = packSceneChunks(groups);
 
     const savedIds = new Set();
     const allKeep = new Set();
@@ -255,6 +264,7 @@ async function runSelection(job, marked, onComplete, onError) {
         }
         aiItems.push({
           id: it.id,
+          selectionBurstId: it.selectionBurstId,
           file: it.file,
           fingerprint: it.fingerprint,
           preview,
