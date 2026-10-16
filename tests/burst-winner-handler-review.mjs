@@ -16,6 +16,7 @@ const keys=['technical','sharpness','focus','face_quality','eye_quality','expres
 let mode="valid",requests=[];
 globalThis.fetch=async(_url,opts)=>{
  const body=JSON.parse(opts.body);requests.push(body);
+ if(String(_url).includes("nvidia")){assert.equal(body.reasoning_effort,"low");assert.deepEqual(body.chat_template_kwargs,{clear_thinking:true});assert.equal(body.max_tokens,2048);}else assert.equal(body.reasoning_effort,undefined);
  const ids=body.messages[0].content[0].text.match(/exact identifiers: ([^\n]+)/)[1].replace(/\.$/,"").split(", ");
  const answer={winner_id:mode==="unknown"?"alien":ids[1],compared_ids:mode==="missing"?ids.slice(1):ids,reason:"Ojos abiertos y mejor expresión"};
  return new Response(JSON.stringify({choices:[{finish_reason:"stop",message:{content:JSON.stringify(answer)}}]}),{status:200});
@@ -24,6 +25,9 @@ const request=()=>new Request("https://test.invalid",{method:"POST",body:JSON.st
 try{
  for(const endpoint of ["https://ws-test.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1","https://integrate.api.nvidia.com/v1","https://openrouter.ai/api/v1"]){
   rec.endpoint=endpoint;
+  rec.seleccion_models=[endpoint.includes("nvidia")?"z-ai/glm-5.3-flash":"qwen3.8-max"];
+  rec.available_models_meta=rec.seleccion_models.map(id=>({id,caps:{vision:true},source:"verified"}));
+  rec.free_quota_only=!endpoint.includes("nvidia");
   for(mode of ["valid","missing","unknown"]){
    requests=[];const response=await handler(request()),g=(await response.json()).groups.one;
    assert.equal(requests.length,1);assert.equal(g._meta.fallback,mode!=="valid");
