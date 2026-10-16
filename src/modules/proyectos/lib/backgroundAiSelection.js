@@ -226,6 +226,7 @@ async function runSelection(job, marked, onComplete, onError) {
     for (let ci = 0; ci < chunks.length; ci++) {
       if (job.canceled) return;
       const chunk = chunks[ci];
+      if (chunk.length > 200) throw new Error("Una ráfaga supera 200 fotos. Revisa su agrupación antes de cargarla; resultados anteriores conservados.");
       // Carga previews SOLO para este chunk desde IndexedDB.
       const chunkHashes = chunk.map((it) => it.fingerprint?.fingerprint_hash).filter(Boolean);
       let previewByHash = new Map();
