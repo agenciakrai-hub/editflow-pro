@@ -727,7 +727,7 @@ async function callCustom(base44: any, customId: string, opts: InvokeOpts): Prom
     // Keep this vendor parameter scoped to the verified Alibaba endpoint.
     if (isAlibaba(base)) body.enable_thinking = false;
     // NVIDIA documents max reasoning by default; bound culling deliberation.
-    if (opts.task === "seleccion" && /integrate\\.api\\.nvidia\\.com/i.test(base) && model === "z-ai/glm-5.3-flash") {
+    if (opts.task === "seleccion" && new URL(base).hostname === "integrate.api.nvidia.com" && model === "z-ai/glm-5.3-flash") {
       body.reasoning_effort = "low";
       body.chat_template_kwargs = { clear_thinking: true };
       if (opts.response_json_schema?.properties?.winner_id) body.max_tokens = 2048;
