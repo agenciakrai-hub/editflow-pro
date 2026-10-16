@@ -168,6 +168,11 @@ export async function runAiBurstSelection(withPreview, onProgress, {shouldCancel
        burst_id:group.id,burst_size:group.files.length,failure_kind:lastMeta.failure_kind || "burst_comparison",pending_photo_ids:group.files.map(p=>p.id)};
      deferredErrors.push(error);consecutiveFailures++;
      trace.bursts.push({burst_id:group.id,photo_count:group.files.length,fallback:true,error:error.message});
+     // A sustained rate limit affects the provider: do not send other bursts into it.
+     if(Number(lastMeta.http_status)===429) {
+       error.message="El proveedor sigue limitando las peticiones tras las pausas de recuperación. Resultados guardados conservados; continúa más tarde. "+error.message;
+       throw error;
+     }
      // Keep isolated bad bursts pending, but stop a systemic outage.
      if(consecutiveFailures>=3) {error.message="Tres ráfagas consecutivas no se pudieron comparar. Resultados anteriores conservados. "+error.message;throw error;}
    }
