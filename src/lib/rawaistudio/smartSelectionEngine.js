@@ -17,13 +17,13 @@ import { base44 } from "@/api/base44Client";
 import { extractRawPreview, placeholderPreview } from "./rawPreviewReader";
 import { groupIntoScenes } from "./groupIntoScenes";
 import { runPool } from "./promisePool";
-import { computePHash, phashDistance } from "./perceptualHash";
+import { computePHash } from "./perceptualHash";
 import { readCaptureTimeFromBytes } from "./captureTime";
 import { readCameraMetadataFromBytes, readAsShotWhiteBalance } from "./cameraMetadata";
 import { analyzeSkinTone } from "./skinToneAnalysis";
 import { decodePreviewImage } from "./previewDecodeCache";
 import { prepareSelectionPreview } from "./selectionPreviewValidation";
-import { invokeSelectionWithRecovery, transientSelectionFailure } from "./selectionServiceRecovery";
+import { invokeSelectionWithRecovery } from "./selectionServiceRecovery";
 
 // Concurrencia aumentada para acelerar el culling: más previews en paralelo (importación)
 // y más ráfagas analizadas simultáneamente (selección IA). Los VLM modernos y el backend
@@ -92,40 +92,6 @@ export async function extractPreviews(items, onProgress, onTiming) {
 
     return { ...item, preview, phash, captureTime, cameraInfo, technical, asShotWB, skinStats };
   }, () => { done += 1; onProgress?.(done); });
-}
-
-// Fallback técnico conservador para un grupo cuando la IA no está disponible.
-// Conserva la mejor candidata técnicamente válida como REVIEW (o SELECT si es
-// claramente superior); el resto a REVIEW. NUNCA simula decisión IA.
-function technicalFallbackForGroup(group) {
-  const files = group.files || [];
-  const valid = files.filter((f) => !f.technical?.corrupt);
-  let best = null;
-  let bestScore = -1;
-  for (const f of valid) {
-    const s = scoreOf(f);
-    if (s > bestScore) { bestScore = s; best = f; }
-  }
-  return files.map((f, i) => {
-    const isBest = best && f.id === best.id;
-    const clearlySuperior = isBest && bestScore > 0.4 && (best.preview?.exposureScore ?? 0) > 0.6;
-    return {
-      id: f.id,
-      rank: isBest ? 1 : i + 1,
-      status: isBest ? (clearlySuperior ? "SELECT" : "REVIEW") : "REVIEW",
-      reject_reasons: [],
-      note: "Evaluación IA no disponible — fallback técnico",
-      scores: null,
-      analysis_complete: false,
-      missing_dimensions: [],
-      reason: "AI_UNAVAILABLE_TECHNICAL_FALLBACK",
-      confidence: null,
-      category: null,
-      groupRank: isBest ? 1 : i + 1,
-      complementary: false,
-      category_note: "",
-    };
-  });
 }
 
 // withPreview -> { keep: Set<id>, meta: Map<id, {...}> }
@@ -209,165 +175,6 @@ export async function runAiBurstSelection(withPreview, onProgress, {shouldCancel
  trace.ended_ms=Date.now();trace.total_duration_ms=trace.ended_ms-trace.started_ms;
  trace.result={kept:keep.size,processed:meta.size,pending:withPreview.length-meta.size};
  return {keep,meta,trace,deferred_errors:deferredErrors,selection_fallback:false};
-}
-
-function ctxOf(m) {
-  if (!m) return {};
-  return { status: m.status, category: m.category, note: m.category_note || m.reason || "" };
-}
-
-// Detecta pares con pHash cercano entre grupos y pide a la IA una comparación visual.
-// Solo rebaja a REVIEW si la IA confirma duplicado real; conserva ambas en caso contrario.
-async function dedupAcrossGroups(keep, meta, withPreview, trace) {
-  const selectedIds = Array.from(keep);
-  const byId = new Map(withPreview.map((p) => [p.id, p]));
-  const pairs = [];
-  for (let i = 0; i < selectedIds.length; i++) {
-    const a = byId.get(selectedIds[i]);
-    if (!a?.phash) continue;
-    for (let j = i + 1; j < selectedIds.length; j++) {
-      const b = byId.get(selectedIds[j]);
-      if (!b?.phash) continue;
-      if (meta.get(a.id)?.groupId === meta.get(b.id)?.groupId) continue; // mismo grupo
-      const d = phashDistance(a.phash, b.phash);
-      if (d >= 0 && d <= DEDUP_PHASH_THRESHOLD) {
-        pairs.push({
-          pair_id: `pair_${i}_${j}`,
-          id_a: a.id, id_b: b.id,
-          preview_a_base64: a.preview?.base64, preview_b_base64: b.preview?.base64,
-          context_a: ctxOf(meta.get(a.id)),
-          context_b: ctxOf(meta.get(b.id)),
-        });
-      }
-    }
-  }
-  if (!pairs.length) return;
-  let dedupProvider = null, dedupModel = null, dedupFallback = false;
-  const dedupAttempts = [];
-  try {
-    const { data } = await base44.functions.invoke("rawAiDedupCompare", { pairs });
-    const decisions = data?.decisions || {};
-    for (const pair of pairs) {
-      const dec = decisions[pair.pair_id];
-      const pm = dec?._meta;
-      if (pm) {
-        if (dedupProvider === null && pm.provider) dedupProvider = pm.provider;
-        if (dedupModel === null && pm.model) dedupModel = pm.model;
-        if (pm.fallback) dedupFallback = true;
-        if (Array.isArray(pm.attempts)) dedupAttempts.push(...pm.attempts);
-      }
-      if (!dec || !dec.duplicate || !dec.demote) continue;
-      const loserId = dec.demote === "a" ? pair.id_a : pair.id_b;
-      keep.delete(loserId);
-      const m = meta.get(loserId);
-      if (m) {
-        m.status = "REVIEW";
-        m.rejectReasons = [...(m.rejectReasons || []), "DUPLICATE_NEAR_DUPLICATE_IN_SESSION"];
-        m.reason = dec.reason || "Casi-duplicado de otra foto seleccionada";
-      }
-    }
-  } catch {
-    // IA no disponible: no se rebaja nada (conservador). Se conservan ambas.
-  }
-  if (trace) {
-    trace.stages.dedup.provider = dedupProvider;
-    trace.stages.dedup.model = dedupModel;
-    trace.stages.dedup.fallback = dedupFallback;
-    trace.stages.dedup.attempts = dedupAttempts;
-    trace.stages.dedup.pairs = pairs.length;
-  }
-}
-
-// Puntuación utilizable para el fallback determinista: prioriza el overall de la IA
-// (ya producido por el motor); si no está disponible (p.ej. fallback técnico), usa la
-// métrica técnica local (sharpness + exposición). NUNCA llama a la IA.
-function fallbackScoreOf(m, p) {
-  const ov = m?.scores?.overall;
-  if (typeof ov === "number" && isFinite(ov)) return ov;
-  if (p) return scoreOf(p);
-  return 0;
-}
-
-// TOP_PICK determinista: SOLO puede proceder de una foto que la IA ya consideró
-// SELECT (promoción SELECT→TOP_PICK). Post-procesado puro del resultado IA existente:
-// no hace una segunda llamada a IA ni gasta créditos. Reglas:
-//   1. Si ya existe >=1 TOP_PICK → no hacer nada.
-//   2. Si 0 TOP_PICK pero hay SELECT → el mejor SELECT (overall de la IA) pasa a
-//      TOP_PICK. Nunca se toca un REJECT ni un REVIEW: la clasificación semántica del
-//      proveedor es intocable.
-//   3. Si no existe ninguna SELECT → NO se crea ningún TOP_PICK: caso excepcional
-//      (exceptional=true, reason=no_select_available) para revisión humana.
-// Devuelve { selection_fallback, fallback_reason, exceptional } y marca la foto promocionada.
-function ensureAtLeastOneTopPick(keep, meta, withPreview) {
-  const byId = new Map(withPreview.map((p) => [p.id, p]));
-  const entries = Array.from(meta.entries());
-
-  if (entries.some(([, m]) => m.status === "TOP_PICK")) {
-    return { selection_fallback: false, fallback_reason: null };
-  }
-
-  // TOP_PICK SOLO desde SELECT: nunca se promueve un REJECT ni un REVIEW.
-  const selects = entries.filter(([, m]) => m.status === "SELECT");
-  if (!selects.length) {
-    // Sin ninguna SELECT de la IA: NO se fabrica ningún TOP_PICK. Caso excepcional
-    // para revisión humana.
-    return { selection_fallback: false, fallback_reason: "no_select_available", exceptional: true };
-  }
-
-  // SELECT sin TOP_PICK: se elige deterministamente la mejor SELECT usando la
-  // información que ya devolvió la IA (overall; sin llamadas, sin créditos).
-  selects.sort((a, b) => fallbackScoreOf(b[1], byId.get(b[0])) - fallbackScoreOf(a[1], byId.get(a[0])));
-  const [id, m] = selects[0];
-  m.status = "TOP_PICK";
-  m.groupRank = 1;
-  m.rejectReasons = [];
-  keep.add(id);
-  m.selection_fallback = true;
-  m.fallback_reason = "no_top_pick";
-  return { selection_fallback: true, fallback_reason: "no_top_pick" };
-}
-
-// COBERTURA CON PROMOCIÓN TÉCNICA DE SEGURIDAD: la clasificación semántica (SELECT/
-// REVIEW/REJECT) la decide ÚNICAMENTE el proveedor configurado. Esta función solo actúa
-// cuando la IA NO dejó ninguna foto seleccionada en un grupo (normalmente porque falló:
-// fallback técnico mandó todo a REVIEW). En ese caso, promueve la MEJOR foto técnica del
-// grupo a SELECT (norma "una obligatoria por ráfaga") para que el fotógrafo siempre tenga
-// al menos una selección por ráfaga. NUNCA promueve un REJECT: si el grupo está todo
-// REJECT, todas permanecen REJECT. La mejor foto se elige por score técnico (sharpness +
-// exposición) o por el overall de la IA si está disponible — no simula una decisión IA.
-function ensureCoveragePerGroup(keep, meta, withPreview) {
-  const byId = new Map(withPreview.map((p) => [p.id, p]));
-  const byGroup = new Map();
-  for (const [id, m] of meta) {
-    if (!m || m.previewWarning) continue; // corrupt: no entró a la IA, se ignora aquí
-    const g = m.groupId || "ungrouped";
-    if (!byGroup.has(g)) byGroup.set(g, []);
-    byGroup.get(g).push([id, m]);
-  }
-  const promotions = [];
-  const exceptionalGroups = [];
-  for (const [groupId, items] of byGroup) {
-    const hasSelected = items.some(([, m]) => m.status === "TOP_PICK" || m.status === "SELECT");
-    if (hasSelected) continue;
-    // Grupo sin ninguna SELECT/TOP_PICK de la IA: promueve la mejor foto técnica a SELECT
-    // (norma "una obligatoria por ráfaga"). Excluye REJECT: si la IA descartó todas, se
-    // respetan sus descartes y no se promueve nada.
-    const candidates = items
-      .filter(([, m]) => m.status !== "REJECT")
-      .map(([id, m]) => ({ id, m, score: fallbackScoreOf(m, byId.get(id)) }))
-      .sort((a, b) => b.score - a.score);
-    if (candidates.length) {
-      const best = candidates[0];
-      best.m.status = "SELECT";
-      best.m.groupRank = 1;
-      best.m.selection_fallback = true;
-      best.m.fallback_reason = "no_ai_select_coverage";
-      keep.add(best.id);
-      promotions.push({ group: groupId, photo_id: best.id, reason: "NO_AI_SELECT_COVERAGE" });
-    }
-    exceptionalGroups.push({ group: groupId, reason: "NO_AI_SELECT_IN_GROUP", photo_count: items.length, promoted: candidates.length > 0 });
-  }
-  return { selection_coverage_fallback: promotions.length > 0, promotions, exceptional_groups: exceptionalGroups };
 }
 
 // ADAPTADOR: produce la forma que el Editor espera (aiSelected, selectedForEdit,
