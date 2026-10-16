@@ -17,7 +17,7 @@ function scope(p) {
 }
 // Plan metadata for the WHOLE folder before loading previews. A burst is never
 // split for transport or by a head pose. Anchor comparison prevents scene chaining.
-export function groupIntoScenes(items, {gapMs=8000, phashThreshold=16, maxSpanMs=30000}={}) {
+export function groupIntoScenes(items, {gapMs=10000, phashThreshold=16, maxSpanMs=60000}={}) {
  const sorted = [...items].sort((a,b) => scope(a).localeCompare(scope(b)) ||
    ((timeOf(a) ?? 0)-(timeOf(b) ?? 0)) ||
    nameOf(a).localeCompare(nameOf(b), undefined, {numeric:true}) || String(a.id).localeCompare(String(b.id)));
@@ -32,7 +32,7 @@ export function groupIntoScenes(items, {gapMs=8000, phashThreshold=16, maxSpanMs
    const seq = sequence(item), prevSeq = prev ? sequence(prev) : null;
    const adjacent = seq !== null && prevSeq !== null && seq-prevSeq >= 0 && seq-prevSeq <= 2;
    const hasTime = dt !== null;
-   const close = hasTime ? dt <= gapMs && time-current.firstTime <= maxSpanMs : adjacent;
+   const close = hasTime ? (dt <= gapMs || (dt <= 30000 && d >= 0 && d <= 6)) && time-current.firstTime <= maxSpanMs : adjacent;
    // Without reliable EXIF, both sequence adjacency and visual evidence are required.
    const similar = d >= 0 && d <= phashThreshold && anchorD >= 0 && anchorD <= phashThreshold;
    const same = current && scope(item)===current.scope && close && similar;
