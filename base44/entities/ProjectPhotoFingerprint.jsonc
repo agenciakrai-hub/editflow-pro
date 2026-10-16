@@ -42,6 +42,11 @@
       ],
       "default": "REVIEW"
     },
+    "selection_comparison": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Versi\u00f3n, r\u00e1faga, ganadora y motivo de la comparaci\u00f3n IA; sin puntuaciones inventadas."
+    },
     "marked": {
       "type": "boolean",
       "default": true,
