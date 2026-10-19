@@ -487,6 +487,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
       let provider = "";
       let model = "";
       const perPhotoAll = [];
+      const subBatchWinnerIds = [];
       const onRetry = (e) => {
         e5Metrics.retries++;
         if (isRateLimitError(e)) {
@@ -526,8 +527,13 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
             model: out.model,
             photos: sub.length,
           });
+          const subWinnerId = photoOfAlias.get(out.promoted);
+          if (!subWinnerId || !sub.some((m) => m.photo.id === subWinnerId)) {
+            throw new Error("E5 no devolvió una ganadora válida dentro de su sub-lote");
+          }
+          subBatchWinnerIds.push(subWinnerId);
           if (!promoted) {
-            promoted = photoOfAlias.get(out.promoted) || sub[0].photo.id;
+            promoted = subWinnerId;
             summary = out.group_summary;
             provider = out.provider;
             model = out.model;
@@ -541,16 +547,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
         // Para grupos > E5_MAX, hacer un showdown real entre los ganadores de cada
         // sub-lote; repetir por rondas hasta que exista una única ganadora global.
         const memberById = new Map(members.map((m) => [m.photo.id, m]));
-        let finalists = [];
-        for (let i = 0; i < members.length; i += E5_MAX) {
-          const sub = members.slice(i, i + E5_MAX);
-          const subIds = new Set(sub.map((m) => m.photo.id));
-          const ranks = perPhotoAll
-            .filter((pp) => subIds.has(pp.photo_id) && Number.isFinite(pp.group_rank))
-            .sort((a, b) => a.group_rank - b.group_rank);
-          const winnerId = ranks[0]?.photo_id || sub[0].photo.id;
-          finalists.push(winnerId);
-        }
+        let finalists = [...subBatchWinnerIds];
         let round = 0;
         while (finalists.length > 1) {
           checkAlive();
