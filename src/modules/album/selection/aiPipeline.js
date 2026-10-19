@@ -284,7 +284,9 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
         });
         batch.forEach((p, j) => {
           const d = (out?.decisions || []).find((x) => Number(x.pair) === j);
-          decisions.push(d ? d.same_moment !== false : true);
+          // Fail closed: una frontera solo se une si la IA confirma explícitamente same_moment=true.
+          // Respuesta ausente o incompleta => separar y evitar una ráfaga fusionada por error.
+          decisions.push(d ? d.same_moment === true : false);
         });
       }
       return decisions;
