@@ -536,10 +536,66 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
             if (photoOfAlias.has(pp.alias)) perPhotoAll.push({ ...pp, photo_id: photoOfAlias.get(pp.alias) });
           });
         }
-        // La promovida es la MEJOR de TODO el grupo (no solo del primer sub-lote):
-        // gana la foto con mejor group_rank entre todas las respuestas recibidas.
-        const ranked = perPhotoAll.filter((pp) => Number.isFinite(pp.group_rank)).sort((a, b) => a.group_rank - b.group_rank)[0];
-        if (ranked) promoted = ranked.photo_id;
+        // No comparar group_rank entre sub-lotes: cada modelo asigna rangos
+        // relativos a su propia comparación y un "1" no es comparable con otro "1".
+        // Para grupos > E5_MAX, hacer un showdown real entre los ganadores de cada
+        // sub-lote; repetir por rondas hasta que exista una única ganadora global.
+        const memberById = new Map(members.map((m) => [m.photo.id, m]));
+        let finalists = [];
+        for (let i = 0; i < members.length; i += E5_MAX) {
+          const sub = members.slice(i, i + E5_MAX);
+          const subIds = new Set(sub.map((m) => m.photo.id));
+          const ranks = perPhotoAll
+            .filter((pp) => subIds.has(pp.photo_id) && Number.isFinite(pp.group_rank))
+            .sort((a, b) => a.group_rank - b.group_rank);
+          const winnerId = ranks[0]?.photo_id || (photoOfAlias.get(aliasOf.get(promoted)) || sub[0].photo.id);
+          finalists.push(winnerId);
+        }
+        let round = 0;
+        while (finalists.length > 1) {
+          checkAlive();
+          round++;
+          const nextFinalists = [];
+          for (let i = 0; i < finalists.length; i += E5_MAX) {
+            const ids = finalists.slice(i, i + E5_MAX);
+            if (ids.length === 1) {
+              nextFinalists.push(ids[0]);
+              continue;
+            }
+            const candidates = ids.map((id) => {
+              const m = memberById.get(id);
+              if (!m?.thumb) throw new Error(`Showdown E5 sin vista previa para ${id}`);
+              return {
+                alias: aliasOf.get(id),
+                thumb: m.thumb,
+                capture_time: m.photo.capture_time,
+                local_tech: m.tech,
+                e4_summary: e4ByPhoto.get(id)?.dims || null,
+              };
+            });
+            const showdown = await withRetry(
+              () => callEngine("e5-group", { event_type: eventType, group_kind: g.kind, group: candidates }),
+              3, 2000, onRetry
+            );
+            e5Metrics.calls++;
+            e5Metrics.photosSent += candidates.length;
+            e5Metrics.perCall.push({
+              group: g.group_index, round, showdown: true, start: Date.now(),
+              end: Date.now(), durationMs: 0, provider: showdown.provider,
+              model: showdown.model, photos: candidates.length,
+            });
+            const winnerId = photoOfAlias.get(showdown.promoted);
+            if (!winnerId || !ids.includes(winnerId)) {
+              throw new Error("Showdown E5 no devolvió una ganadora perteneciente a los finalistas");
+            }
+            nextFinalists.push(winnerId);
+            summary = showdown.group_summary || summary;
+            provider = showdown.provider || provider;
+            model = showdown.model || model;
+          }
+          finalists = nextFinalists;
+        }
+        if (finalists.length === 1) promoted = finalists[0];
         const rec = {
           id: prev?.id,
           project_id: projectId,
