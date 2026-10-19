@@ -106,12 +106,16 @@ export async function buildGroups({ photos, signals, thumbOf, resolveContinuity 
         }))
       );
     } catch {
-      resolved = null; // sin visión: unión conservadora (no se parte una ráfaga dudosa)
+      // Fallo de visión = frontera no confirmada. Separar evita fusionar
+      // momentos distintos y entregar una ganadora falsa con apariencia de certeza.
+      resolved = null;
     }
   }
   const ambiguousDecision = new Map();
   ambiguousPairs.forEach((p, i) => {
-    const same = Array.isArray(resolved) && i < resolved.length ? resolved[i] !== false : true;
+    // Fail closed: solo unir si la visión confirma explícitamente same_moment.
+    // Un error o una respuesta incompleta no puede autorizar una fusión silenciosa.
+    const same = Array.isArray(resolved) && i < resolved.length && resolved[i] === true;
     ambiguousDecision.set(p.cur.id, same ? "join" : "break");
   });
 
