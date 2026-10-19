@@ -548,7 +548,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
           const ranks = perPhotoAll
             .filter((pp) => subIds.has(pp.photo_id) && Number.isFinite(pp.group_rank))
             .sort((a, b) => a.group_rank - b.group_rank);
-          const winnerId = ranks[0]?.photo_id || (photoOfAlias.get(aliasOf.get(promoted)) || sub[0].photo.id);
+          const winnerId = ranks[0]?.photo_id || sub[0].photo.id;
           finalists.push(winnerId);
         }
         let round = 0;
@@ -573,16 +573,18 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
                 e4_summary: e4ByPhoto.get(id)?.dims || null,
               };
             });
+            const showdownStart = Date.now();
             const showdown = await withRetry(
               () => callEngine("e5-group", { event_type: eventType, group_kind: g.kind, group: candidates }),
               3, 2000, onRetry
             );
+            const showdownEnd = Date.now();
             e5Metrics.calls++;
             e5Metrics.photosSent += candidates.length;
             e5Metrics.perCall.push({
-              group: g.group_index, round, showdown: true, start: Date.now(),
-              end: Date.now(), durationMs: 0, provider: showdown.provider,
-              model: showdown.model, photos: candidates.length,
+              group: g.group_index, round, showdown: true, start: showdownStart,
+              end: showdownEnd, durationMs: showdownEnd - showdownStart,
+              provider: showdown.provider, model: showdown.model, photos: candidates.length,
             });
             const winnerId = photoOfAlias.get(showdown.promoted);
             if (!winnerId || !ids.includes(winnerId)) {
