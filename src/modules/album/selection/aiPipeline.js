@@ -255,7 +255,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
   // que entra o sale) — en lotes de 12 pares. El tiempo NUNCA une por sí solo y
   // no hay tope de tamaño: las cadenas se rompen por continuidad (deriva del
   // ancla), no por un límite arbitrario. Los ids y el orden temporal no cambian.
-  trace.stages.e3 = { start_ms: Date.now(), vision_calls: [] };
+  trace.stages.e3 = { start_ms: Date.now(), vision_calls: [], fallback_pairs: 0 };
   const signals = new Map(items.filter((it) => it.signal).map((it) => [it.photo.id, it.signal]));
   const groups = await buildGroups({
     photos,
@@ -267,6 +267,7 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
       for (let i = 0; i < pairs.length; i += PAIR_BATCH) {
         const batch = pairs.slice(i, i + PAIR_BATCH);
         let out = null;
+        let callError = null;
         const callStart = Date.now();
         try {
           out = await withRetry(() =>
@@ -275,17 +276,21 @@ export async function runAiSelectionPipeline({ project, photos, resume = {}, onP
               pairs: batch.map((p) => ({ a: p.prevThumb, b: p.curThumb })),
             })
           );
-        } catch {
-          out = null; // sin visión disponible: unión conservadora (no se parte la ráfaga)
+        } catch (e) {
+          out = null;
+          callError = String(e?.message || e);
         }
         trace.stages.e3.vision_calls.push({
           start_ms: callStart, end_ms: Date.now(), duration_ms: Date.now() - callStart,
           pairs: batch.length, provider: out?.provider || null, model: out?.model || null,
+          ok: Array.isArray(out?.decisions) && out.decisions.length === batch.length,
+          error: callError,
         });
         batch.forEach((p, j) => {
           const d = (out?.decisions || []).find((x) => Number(x.pair) === j);
           // Fail closed: una frontera solo se une si la IA confirma explícitamente same_moment=true.
           // Respuesta ausente o incompleta => separar y evitar una ráfaga fusionada por error.
+          if (!d || typeof d.same_moment !== "boolean") trace.stages.e3.fallback_pairs++;
           decisions.push(d ? d.same_moment === true : false);
         });
       }
