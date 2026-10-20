@@ -53,7 +53,7 @@ export default function SelectionXmpExport({ selection, photos, projectName, dis
   return (
     <Button onClick={handleExport} disabled={disabled || exporting || count === 0} variant="outline" className="gap-2">
       {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-      Exportar XMP ({count})
+      Exportar sidecars XMP ({count})
     </Button>
   );
 }
