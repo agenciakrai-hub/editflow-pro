@@ -88,7 +88,7 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
                   <div className="flex h-full items-center justify-center text-neutral-400"><EyeOff className="h-5 w-5" /></div>
                 )}
                 <span className="absolute left-1 top-1 rounded-full bg-background/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase">
-                  {s.role}{s.tech_exception ? " · excepción técnica" : ""}
+                  {{ hero: "Destacada", key: "Destacada", support: "Seleccionada", detail: "Detalle" }[s.role] || s.role}{s.tech_exception ? " · excepción técnica" : ""}
                 </span>
                 {isOverride && <span className="absolute right-1 top-1 rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">override</span>}
               </div>
@@ -101,6 +101,7 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
                 </div>
                 {s.moment && <p className="truncate text-[10px] text-muted-foreground">{s.moment}</p>}
                 {s.reasons && <p className="line-clamp-2 text-[10px] text-muted-foreground">{s.reasons}</p>}
+                {s.confidence != null && Number.isFinite(Number(s.confidence)) && <p className={Math.max(0, Math.min(1, Number(s.confidence) > 1 ? Number(s.confidence) / 100 : Number(s.confidence))) < 0.6 ? "text-[10px] font-semibold text-amber-600" : "text-[10px] text-muted-foreground"}>{Math.max(0, Math.min(1, Number(s.confidence) > 1 ? Number(s.confidence) / 100 : Number(s.confidence))) < 0.6 ? "Revisar · confianza baja: " : "Confianza: "}{Math.round(Math.max(0, Math.min(1, Number(s.confidence) > 1 ? Number(s.confidence) / 100 : Number(s.confidence))) * 100)}%</p>}
                 <div className="flex flex-wrap gap-1 pt-1">
                   {OVERRIDES.map(({ action, label, icon: Icon }) => (
                     <button
