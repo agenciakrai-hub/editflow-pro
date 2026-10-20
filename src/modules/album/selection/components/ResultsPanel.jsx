@@ -13,10 +13,27 @@ const OVERRIDES = [
   { action: "block", label: "Bloquear", icon: Lock },
 ];
 
+const confidenceRatio = (value) => {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const n = Number(value);
+  return Math.max(0, Math.min(1, n > 1 ? n / 100 : n));
+};
+
 export default function ResultsPanel({ project, selectionJob, photos, onOverride, onAcceptAll, acceptAllBusy }) {
   const [thumbs, setThumbs] = useState({});
+  const [showLowConfidenceOnly, setShowLowConfidenceOnly] = useState(false);
   const photosById = new Map(photos.map((p) => [p.id, p]));
   const entries = selectionJob?.selection || [];
+  const lowConfidenceCount = entries.filter((s) => {
+    const confidence = confidenceRatio(s.confidence);
+    return confidence != null && confidence < 0.6;
+  }).length;
+  const visibleEntries = showLowConfidenceOnly
+    ? entries.filter((s) => {
+        const confidence = confidenceRatio(s.confidence);
+        return confidence != null && confidence < 0.6;
+      })
+    : entries;
 
   useEffect(() => {
     let alive = true;
@@ -49,6 +66,16 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
               IA: {selectionJob.stats.provider_used}
             </span>
           )}
+          {lowConfidenceCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowLowConfidenceOnly((value) => !value)}
+              aria-pressed={showLowConfidenceOnly}
+              className={showLowConfidenceOnly ? "rounded-md border border-amber-500 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700" : "rounded-md border border-border px-2.5 py-1 text-[11px] font-semibold text-muted-foreground"}
+            >
+              {showLowConfidenceOnly ? "Ver todas (" + entries.length + ")" : "Revisar baja confianza (" + lowConfidenceCount + ")"}
+            </button>
+          )}
           <button
             onClick={() => onAcceptAll?.()}
             disabled={acceptAllBusy || !entries.length}
@@ -75,7 +102,7 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
         </p>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {entries.map((s) => {
+        {visibleEntries.map((s) => {
           const photo = photosById.get(s.photo_id);
           const state = photo?.ai_state || "unreviewed";
           const isOverride = photo?.ai_override === "forced" || photo?.ai_override === "blocked";
@@ -101,7 +128,7 @@ export default function ResultsPanel({ project, selectionJob, photos, onOverride
                 </div>
                 {s.moment && <p className="truncate text-[10px] text-muted-foreground">{s.moment}</p>}
                 {s.reasons && <p className="line-clamp-2 text-[10px] text-muted-foreground">{s.reasons}</p>}
-                {s.confidence != null && Number.isFinite(Number(s.confidence)) && <p className={Math.max(0, Math.min(1, Number(s.confidence) > 1 ? Number(s.confidence) / 100 : Number(s.confidence))) < 0.6 ? "text-[10px] font-semibold text-amber-600" : "text-[10px] text-muted-foreground"}>{Math.max(0, Math.min(1, Number(s.confidence) > 1 ? Number(s.confidence) / 100 : Number(s.confidence))) < 0.6 ? "Revisar · confianza baja: " : "Confianza: "}{Math.round(Math.max(0, Math.min(1, Number(s.confidence) > 1 ? Number(s.confidence) / 100 : Number(s.confidence))) * 100)}%</p>}
+                {confidenceRatio(s.confidence) != null && <p className={confidenceRatio(s.confidence) < 0.6 ? "text-[10px] font-semibold text-amber-600" : "text-[10px] text-muted-foreground"}>{confidenceRatio(s.confidence) < 0.6 ? "Revisar · confianza baja: " : "Confianza: "}{Math.round(confidenceRatio(s.confidence) * 100)}%</p>}
                 <div className="flex flex-wrap gap-1 pt-1">
                   {OVERRIDES.map(({ action, label, icon: Icon }) => (
                     <button
